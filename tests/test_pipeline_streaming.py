@@ -467,6 +467,22 @@ def test_clipboard_with_streaming_disabled_is_not_refused() -> None:
     pipeline._validate_injection_backend(config)  # does not raise
 
 
+def test_run_service_reports_the_clipboard_streaming_conflict(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The user-facing "loud" half: the real entry point prints both setting names
+    # and the fix and returns a failure code instead of starting.
+    config = Config(injection=InjectionConfig(backend="clipboard"))
+
+    exit_code = pipeline.run_service(config, status_ui=NullStatusUI())
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "injection.backend" in captured.err
+    assert "streaming.enabled" in captured.err
+    assert "ydotool" in captured.err
+
+
 def test_build_service_structurally_refuses_streaming_with_a_non_typing_injector() -> None:
     # The backstop for a direct ``_build_service`` call: a streaming session
     # needs a TextTyper, and the clipboard injector deliberately is not one.
