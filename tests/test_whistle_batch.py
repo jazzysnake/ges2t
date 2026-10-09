@@ -421,9 +421,11 @@ def test_speech_at_the_measured_clip_level_still_transcribes(
 def test_a_buffer_just_above_the_rms_threshold_is_not_dropped(
     transcriber: WhistleTranscriber, fake_needle: FakeNeedleModule
 ) -> None:
-    # A square wave's AC RMS equals its amplitude, so this sits just above the
-    # floor while still being well below real speech.
-    amplitude = whistle.SILENCE_RMS_THRESHOLD * 1.5
+    # A square wave's AC RMS equals its amplitude. 0.00075 is a fixed 1.5x the
+    # committed SILENCE_RMS_THRESHOLD (0.0005): using the constant here would
+    # make the test follow any threshold change instead of pinning it.
+    amplitude = 0.00075
+    assert whistle.SILENCE_RMS_THRESHOLD < amplitude
     transcriber.load()
 
     transcriber.transcribe(_audio(0.2, value=amplitude))
