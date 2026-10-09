@@ -1,7 +1,7 @@
 # Dictation pipeline (batch): composition root and end-to-end wiring
 
 - **Priority:** P0
-- **Status:** in review
+- **Status:** done
 - **Complexity:** M
 - **Epic:** ../epic.md
 
