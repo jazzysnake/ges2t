@@ -44,28 +44,30 @@ Original orchestrator brief: `.pi/prompts/orchestrate-project.md`.
 
 ## 4. Current baselines on `main`
 
-- `uv run pytest` → **567 passed** (~2.7 s)
-- **`uv run mypy src/ges2t tests` → 0 errors (37 files)** — this is the required command. ADR 0019
+- `uv run pytest` → **589 passed** (~2.7 s)
+- **`uv run mypy src/ges2t tests` → 0 errors (39 files)** — this is the required command. ADR 0019
   was amended 2026-10-09: the old `mypy src/ges2t`-only check let a real violation through a
   completed review (see ticket 20).
-- `main` HEAD when last checked: `b4aa911` (ticket 23 closed). Merged this session: 24 `a6ba892`,
-  21 `11b1bf3`, 26 `ceee7a2`, 11 `338cdc2`, 22 `0a2074a`, **23 `0a2074a`→ its merge commit**;
-  all six worktrees removed.
+- `main` HEAD when last checked: `37e8937` (ticket 28 closed). Merged this session: 24 `a6ba892`,
+  21 `11b1bf3`, 26 `ceee7a2`, 11 `338cdc2`, 22 `0a2074a`, 23 `b4aa911`, 15 `2ba0a3a`, 28 `37e8937`.
 - 21 ADRs (0000–0020), **28 tickets**, 2 epics.
 
-## 5. Board state (20 of 28 done)
+## 5. Board state (22 of 28 done)
 
-**Done (20 of 28):** 1 project-scaffold · 2 core-interfaces-and-fakes · 3 config-loading ·
+**Done (22 of 28):** 1 project-scaffold · 2 core-interfaces-and-fakes · 3 config-loading ·
 4 whistle-engine-config · 5 model-store-and-verification · 6 audio-capture-pw-record ·
 7 ydotool-injector · 8 whistle-transcriber-adapter-batch · 9 service-state-machine-and-socket ·
 10 cli-surface-and-commands · 13 streaming-window-engine · 14 whistle-streaming-adapter ·
 20 type-check-whole-tree · 24 layout-detection-and-config (`a6ba892`) · 21 status-ui-outside-lock
 (`11b1bf3`) · 26 pin-cli-test-guarantees (`ceee7a2`) · 11 dictation-pipeline-batch (`338cdc2`) ·
-22 xkb-keycode-mapping (`0a2074a`) · **23 batched-key-emission** (`b4aa911`)
+22 xkb-keycode-mapping (`0a2074a`) · 23 batched-key-emission (`b4aa911`) ·
+**15 streaming-session** (`2ba0a3a`) · **28 injection-delay-default** (`37e8937`)
 
-**In review (see §6):** 17 tray-status-ui and 15 streaming-session — both had **changes requested**
-and are in a fix/re-review cycle (17 is on its fifth agent; see §7 on connection deaths) ·
-**25 clipboard-paste-injector** and **28 injection-delay-default** — dispatch just made
+**In review / in flight (see §6):** **17 tray-status-ui** — a third review returned `changes requested`
+because narrowing the fallback dropped thread-start failures, so a broken tray could stop ges2t
+starting at all (an ADR 0013 regression introduced by the previous fix; being fixed locally at
+`thread.start()`) · **25 clipboard-paste-injector** — implementer resumed after a connection death;
+its `clipboard.py` had been left uncommitted
 
 **To do:** 12 doctor-command (needs 17) · 16 streaming-wiring-and-e2e (needs 15) ·
 18 notifications-and-cancel (needs 17) · 19 user-documentation-and-setup-guide (needs everything)
