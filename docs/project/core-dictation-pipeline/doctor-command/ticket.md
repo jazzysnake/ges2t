@@ -53,6 +53,14 @@ warnings), ADR 0017 (model presence), ADR 0015 (socket/single instance).
       are listed again at the end with their fix lines, so the user does not have to scroll.
 - [ ] Exit code is `0` when there are no `FAIL`s (warnings are allowed) and non-zero when any
       check fails, consistent with ADR 0016.
+- **The PipeWire-session check is the mitigation for a real race in ticket 6.** Ticket 6's
+  review measured it: because a zero-sample recording is a legitimate outcome (start then stop
+  before any audio arrives), `stop()` within roughly **50 ms** of `start()` can swallow a
+  genuine "no session" failure and report a normal empty buffer instead of an error (measured:
+  at 0.0 s no raise, at 0.05 s raise). The heuristic is sound and the race is inherent to
+  treating zero samples as normal, so it is **not** fixed in the audio source; `doctor` is
+  where a broken session is caught, once, before dictation rather than during it. Make this
+  check unconditional and reliable.
 - **The audio-device check exists because a bad device cannot be detected any other way.**
   ADR 0008's amendment (2026-10-09) records that `pw-record --target` is only a hint and that an
   unresolved target silently falls back to the default microphone, exiting normally with empty
