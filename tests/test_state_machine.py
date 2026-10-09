@@ -145,6 +145,21 @@ def call_with_timeout(fn: Callable[[], _T], *, timeout: float) -> _T:
     return results[0]
 
 
+def shutdown_with_timeout(service: Service, *, timeout: float = 1.0) -> None:
+    """Call ``shutdown`` on a daemon thread, failing the suite if it wedges.
+
+    A deadlock test that fails by hanging CI is worse than no test: when the
+    bug is present the command thread is wedged on the state lock, so an
+    unbounded ``shutdown()`` would block on the same lock. Bounding it keeps
+    the failure a clean assertion.
+    """
+    thread = threading.Thread(target=service.shutdown, daemon=True)
+    thread.start()
+    thread.join(timeout=timeout)
+    if thread.is_alive():
+        raise AssertionError(f"shutdown did not return within {timeout:.1f}s")
+
+
 @dataclass
 class _Scenario:
     service: Service
@@ -304,6 +319,307 @@ def test_commands_are_answered_while_transcription_is_in_flight(
         assert not scenario.session.release_finish.is_set()
     finally:
         cleanup(scenario)
+
+
+# -- no collaborator is called under the state lock (ticket 21) ------
+#
+# This is the defect ticket 9's review reproduced: the tray is a ``StatusUI``
+# whose whole job is showing the current state, so reading ``service.state``
+# back from a status callback is the natural implementation. Called under the
+# non-reentrant lock it deadlocks, wedging the socket loop so the hotkey stops
+# responding with no error. These tests run each command on a bounded worker
+# thread, so the bug returns as a loud failure instead of a hung suite.
+
+
+class StateReadingStatusUI:
+    """A :class:`~ges2t.interfaces.StatusUI` that reads state on every call."""
+
+    def __init__(self) -> None:
+        self.service: Service | None = None
+        self.states: list[ServiceState] = []
+
+    def _read(self) -> None:
+        assert self.service is not None, "status UI used before it was wired"
+        self.states.append(self.service.state)
+
+    def idle(self) -> None:
+        self._read()
+
+    def recording(self) -> None:
+        self._read()
+
+    def transcribing(self) -> None:
+        self._read()
+
+    def error(self, message: str) -> None:
+        self._read()
+
+    def partial(self, text: str) -> None:
+        self._read()
+
+
+class StateReadingSession(FakeDictationSession):
+    """A session whose methods also read ``Service.state`` back."""
+
+    service: Service | None = None
+
+    def _read(self) -> None:
+        assert self.service is not None, "session used before it was wired"
+        self.service.state
+
+    def start(self) -> None:
+        self._read()
+        super().start()
+
+    def finish(self) -> str:
+        self._read()
+        return super().finish()
+
+    def cancel(self) -> None:
+        self._read()
+        super().cancel()
+
+
+def _wired_service(
+    tmp_path: Path,
+    session: FakeDictationSession,
+    status_ui: StateReadingStatusUI,
+) -> Service:
+    service = Service(
+        SessionScript([session]),
+        FakeInjector(),
+        status_ui,
+        tmp_path / "ges2t.sock",
+    )
+    status_ui.service = service
+    if isinstance(session, StateReadingSession):
+        session.service = service
+    return service
+
+
+def test_status_ui_reading_state_back_does_not_deadlock(tmp_path: Path) -> None:
+    status_ui = StateReadingStatusUI()
+    session = FakeDictationSession(text="hello", block_finish=True)
+    service = _wired_service(tmp_path, session, status_ui)
+    try:
+        # IDLE -> RECORDING: status_ui.recording() reads state.
+        first = call_with_timeout(lambda: service.handle("toggle"), timeout=1.5)
+        assert first.state is ServiceState.RECORDING
+        # RECORDING -> TRANSCRIBING: status_ui.transcribing() reads state.
+        second = call_with_timeout(lambda: service.handle("toggle"), timeout=1.5)
+        assert second.state is ServiceState.TRANSCRIBING
+        # TRANSCRIBING -> IDLE on the finish worker: status_ui.idle() reads
+        # state. If that ran under the lock the worker would never publish
+        # IDLE, so the bounded wait below fails instead of hanging.
+        session.release_finish.set()
+        wait_for(
+            lambda: status_ui.states[-1:] == [ServiceState.IDLE],
+            timeout=1.5,
+            description="status UI to observe the idle transition",
+        )
+        assert status_ui.states == [
+            ServiceState.RECORDING,
+            ServiceState.TRANSCRIBING,
+            ServiceState.IDLE,
+        ]
+    finally:
+        session.release_finish.set()
+        shutdown_with_timeout(service)
+
+
+def test_status_ui_reading_state_back_on_error_does_not_deadlock(
+    tmp_path: Path,
+) -> None:
+    status_ui = StateReadingStatusUI()
+    failing = FakeDictationSession(start_error=RuntimeError("no audio device"))
+    service = _wired_service(tmp_path, failing, status_ui)
+    try:
+        # IDLE -> ERROR: status_ui.error() reads state under the same lock
+        # ``_set_state`` used to hold.
+        response = call_with_timeout(lambda: service.handle("toggle"), timeout=1.5)
+        assert response.state is ServiceState.ERROR
+        assert status_ui.states == [ServiceState.ERROR]
+    finally:
+        shutdown_with_timeout(service)
+
+
+def test_session_reading_state_back_does_not_deadlock(tmp_path: Path) -> None:
+    status_ui = StateReadingStatusUI()
+    session = StateReadingSession(text="")
+    service = _wired_service(tmp_path, session, status_ui)
+    try:
+        # ``session.start()`` runs on the command path and must not be called
+        # while the state lock is held.
+        response = call_with_timeout(lambda: service.handle("toggle"), timeout=1.5)
+        assert response.state is ServiceState.RECORDING
+    finally:
+        shutdown_with_timeout(service)
+
+
+# -- a raising StatusUI must not abort a transition (B1) -------------
+#
+# The display drain runs in ``_transition_scope``'s ``finally``, which sits
+# outside ``handle``'s defensive ``try/except``. Display is best-effort and a
+# raising callback must never change the state machine's outcome nor skip the
+# deferred side effect that runs after the scope (``worker.start()``,
+# ``session.cancel()``, ``shutdown``). Otherwise ``RECORDING + toggle`` with a
+# raising ``status_ui.transcribing`` leaves the service wedged in
+# ``TRANSCRIBING`` answering ``busy`` forever -- the same "hotkey stops
+# responding with no error" class this ticket exists to prevent. Every command
+# below runs on a bounded worker thread so a regression fails loudly instead of
+# hanging the suite.
+
+
+class RaisingStatusUI(FakeStatusUI):
+    """A :class:`~ges2t.interfaces.StatusUI` that raises on chosen callbacks.
+
+    The real call is recorded first (``super()``), then the configured
+    callbacks raise ``RuntimeError``; ``raised`` names the callbacks that did
+    raise, so a test can prove the display failure was actually exercised.
+    """
+
+    def __init__(self, *, raise_on: Sequence[str] = ()) -> None:
+        super().__init__()
+        self._raise_on = set(raise_on)
+        self.raised: list[str] = []
+
+    def _maybe_raise(self, name: str) -> None:
+        if name in self._raise_on:
+            self.raised.append(name)
+            raise RuntimeError(f"status_ui.{name} exploded")
+
+    def idle(self) -> None:
+        super().idle()
+        self._maybe_raise("idle")
+
+    def recording(self) -> None:
+        super().recording()
+        self._maybe_raise("recording")
+
+    def transcribing(self) -> None:
+        super().transcribing()
+        self._maybe_raise("transcribing")
+
+    def error(self, message: str) -> None:
+        super().error(message)
+        self._maybe_raise("error")
+
+    def partial(self, text: str) -> None:
+        super().partial(text)
+        self._maybe_raise("partial")
+
+
+def _raising_service(
+    tmp_path: Path, session: FakeDictationSession, *, raise_on: Sequence[str]
+) -> tuple[Service, RaisingStatusUI]:
+    status_ui = RaisingStatusUI(raise_on=raise_on)
+    service = Service(
+        SessionScript([session]),
+        FakeInjector(),
+        status_ui,
+        tmp_path / "ges2t.sock",
+    )
+    return service, status_ui
+
+
+def test_raising_status_ui_transcribing_does_not_wedge_the_service(
+    tmp_path: Path,
+) -> None:
+    session = FakeDictationSession(text="")
+    service, status_ui = _raising_service(
+        tmp_path, session, raise_on=["transcribing"]
+    )
+    try:
+        assert service.handle("toggle").state is ServiceState.RECORDING
+        # RECORDING -> TRANSCRIBING: status_ui.transcribing() raises while the
+        # deferred worker.start() is still pending.
+        response = call_with_timeout(lambda: service.handle("toggle"), timeout=1.5)
+        assert response.ok is True
+        assert response.state is ServiceState.TRANSCRIBING
+        assert status_ui.raised == ["transcribing"]
+        # The deferred side effect still ran: finish() was actually called.
+        wait_for(
+            lambda: "finish" in session.calls,
+            timeout=1.5,
+            description="the finish worker to start",
+        )
+        wait_for(
+            lambda: service.state is ServiceState.IDLE,
+            timeout=1.5,
+            description="the service to return to idle",
+        )
+        # ... and it is not wedged in TRANSCRIBING answering 'busy' forever.
+        follow = call_with_timeout(
+            lambda: service.handle("status"), timeout=1.5
+        )
+        assert follow.ok is True
+        assert follow.state is ServiceState.IDLE
+        assert follow.error != "busy"
+    finally:
+        shutdown_with_timeout(service)
+
+
+def test_raising_status_ui_recording_does_not_change_a_start(
+    tmp_path: Path,
+) -> None:
+    session = FakeDictationSession(text="")
+    service, status_ui = _raising_service(tmp_path, session, raise_on=["recording"])
+    try:
+        response = call_with_timeout(lambda: service.handle("toggle"), timeout=1.5)
+        assert response.ok is True
+        assert response.state is ServiceState.RECORDING
+        assert service.state is ServiceState.RECORDING
+        assert session.calls.count("start") == 1
+        assert status_ui.raised == ["recording"]
+    finally:
+        shutdown_with_timeout(service)
+
+
+def test_raising_status_ui_error_does_not_mask_a_start_failure(
+    tmp_path: Path,
+) -> None:
+    failing = FakeDictationSession(start_error=RuntimeError("no audio device"))
+    service, status_ui = _raising_service(tmp_path, failing, raise_on=["error"])
+    try:
+        response = call_with_timeout(lambda: service.handle("toggle"), timeout=1.5)
+        assert response.ok is False
+        assert response.state is ServiceState.ERROR
+        assert response.error == "start-failed"
+        assert status_ui.raised == ["error"]
+        assert service.state is ServiceState.ERROR
+    finally:
+        shutdown_with_timeout(service)
+
+
+def test_raising_status_ui_idle_still_cancels_the_session(tmp_path: Path) -> None:
+    session = FakeDictationSession(text="must not be typed")
+    service, status_ui = _raising_service(tmp_path, session, raise_on=["idle"])
+    try:
+        assert service.handle("toggle").state is ServiceState.RECORDING
+        response = call_with_timeout(lambda: service.handle("cancel"), timeout=1.5)
+        assert response.ok is True
+        assert response.state is ServiceState.IDLE
+        assert status_ui.raised == ["idle"]
+        assert "cancel" in session.calls
+        assert service.state is ServiceState.IDLE
+    finally:
+        shutdown_with_timeout(service)
+
+
+def test_raising_status_ui_does_not_skip_shutdown_cleanup(tmp_path: Path) -> None:
+    session = FakeDictationSession(text="")
+    service, status_ui = _raising_service(tmp_path, session, raise_on=["idle"])
+    assert service.handle("toggle").state is ServiceState.RECORDING
+    # shutdown() must return rather than raise, and must still cancel the
+    # session and join the background threads.
+    call_with_timeout(service.shutdown, timeout=1.5)
+    assert status_ui.raised == ["idle"]
+    assert "cancel" in session.calls
+    assert service.state is ServiceState.IDLE
+    worker = service._worker
+    partials = service._partials_thread
+    assert worker is None or not worker.is_alive()
+    assert partials is None or not partials.is_alive()
 
 
 # -- rapid / out-of-order commands (ADR 0004) ------------------------

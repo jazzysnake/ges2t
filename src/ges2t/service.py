@@ -11,12 +11,17 @@ its tests honest (ADR 0010, ADR 0014).
 
 Threading
 ---------
-One :class:`threading.Lock` guards **state transitions only**. ``session.finish()``
-is *never* called while the lock is held: it runs on a short-lived worker thread
-started by ``toggle``/``ptt-stop``, so the socket loop answers the next command
-immediately. Holding the lock across transcription is the classic deadlock in
-this design (ADR 0015), and the tests assert the loop stays responsive while a
-finish is in flight.
+One :class:`threading.Lock` guards **state transitions only**, and **no
+collaborator is ever called while it is held**. ``session.finish()`` runs on a
+short-lived worker thread started by ``toggle``/``ptt-stop``, so the socket
+loop answers the next command immediately; creating/starting a session and
+``session.cancel()`` are deferred past the locked section; and ``status_ui`` is
+invoked from :meth:`Service._transition_scope` *after* the lock is released.
+Holding the lock across transcription is the classic deadlock in this design
+(ADR 0015), and a ``StatusUI`` such as the tray (ADR 0013) that reads
+``service.state`` back would deadlock on the non-reentrant lock if it were
+called under it. The tests assert both the loop's responsiveness and the
+no-collaborator-under-lock rule.
 
 Partial text from ``session.partials()`` is forwarded to
 ``status_ui.partial()`` on its own thread. It is display-only and is never
@@ -25,6 +30,8 @@ injected (ADR 0011).
 
 from __future__ import annotations
 
+import contextlib
+import functools
 import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -140,7 +147,10 @@ class _Decision:
     state: ServiceState
     error: str | None = None
     message: str | None = None
-    after: Callable[[], None] | None = None
+    #: A side effect to run after the lock is released. It may return a
+    #: replacement decision (a deferred start that fails turns an optimistic
+    #: ``RECORDING`` into ``ERROR``); ``None`` means the decision stands.
+    after: Callable[[], _Decision | None] | None = None
 
 
 class Service:
@@ -185,6 +195,7 @@ class Service:
         self._status_ui = status_ui
         self._socket_path = socket_path
         self._lock = threading.Lock()
+        self._pending_display: list[Callable[[], None]] | None = None
         self._state = ServiceState.IDLE
         self._session: DictationSession | None = None
         self._pending_start = False
@@ -208,11 +219,12 @@ class Service:
     def handle(self, command: str) -> CommandResponse:
         """Apply one command and return the response to send to the client.
 
-        State transitions happen under the lock; any blocking side effect (the
-        transcription worker, ``session.cancel()``) is deferred until after the
-        lock is released.
+        State transitions happen under the lock; every collaborator call — the
+        ``status_ui`` display, creating/starting a session, ``session.cancel()``,
+        and the transcription worker — is deferred until after the lock is
+        released (ticket 21).
         """
-        with self._lock:
+        with self._transition_scope():
             try:
                 decision = self._dispatch_locked(command)
             except Exception as exc:  # defensive: no command may kill the loop
@@ -225,7 +237,9 @@ class Service:
                     message=message,
                 )
         if decision.after is not None:
-            decision.after()
+            replacement = decision.after()
+            if replacement is not None:
+                decision = replacement
         return CommandResponse(
             ok=decision.ok,
             state=decision.state,
@@ -245,7 +259,7 @@ class Service:
         state = self._state
         if state is ServiceState.IDLE:
             if verb is Command.TOGGLE or verb is Command.PTT_START:
-                return self._start_session_locked()
+                return self._begin_start_locked()
             return self._reject("not-recording", "the service is not recording")
 
         if state is ServiceState.RECORDING:
@@ -269,28 +283,44 @@ class Service:
 
         return self._reject("unknown-command", f"unknown command: {command!r}")
 
-    # -- transitions (all called with the lock held) ----------------------
+    # -- transitions ------------------------------------------------------
+    # The ``*_locked`` helpers run with the lock held and never touch a
+    # collaborator; :meth:`_commit_start` runs without it.
 
     def _reject(self, code: str, message: str) -> _Decision:
         return _Decision(ok=False, state=self._state, error=code, message=message)
 
-    def _start_session_locked(self) -> _Decision:
+    def _begin_start_locked(self) -> _Decision:
+        """Reserve a start; the session is created and started after the lock.
+
+        Creating the session and calling ``session.start()`` are collaborator
+        calls, so they run in :meth:`_commit_start` (the decision's ``after``),
+        never while the lock is held.
+        """
+        return _Decision(
+            ok=True, state=ServiceState.RECORDING, after=self._commit_start
+        )
+
+    def _commit_start(self) -> _Decision:
+        """Create and start a session without the lock, then commit under it."""
         try:
             session = self._session_factory()
             session.start()
         except Exception as exc:
             message = f"could not start recording: {exc}"
-            self._set_state(ServiceState.ERROR, message)
+            with self._transition_scope():
+                self._set_state(ServiceState.ERROR, message)
             return _Decision(
                 ok=False,
                 state=ServiceState.ERROR,
                 error="start-failed",
                 message=message,
             )
-        self._session = session
-        self._pending_start = False
-        self._set_state(ServiceState.RECORDING)
-        self._start_partials_locked(session)
+        with self._transition_scope():
+            self._session = session
+            self._pending_start = False
+            self._set_state(ServiceState.RECORDING)
+            self._start_partials_locked(session)
         return _Decision(ok=True, state=ServiceState.RECORDING)
 
     def _begin_transcription_locked(self) -> _Decision:
@@ -369,35 +399,74 @@ class Service:
         self._complete_transcription()
 
     def _complete_transcription(self) -> None:
-        with self._lock:
+        with self._transition_scope():
             pending = self._pending_start
             self._pending_start = False
-            if pending:
-                # A toggle arrived while transcribing: honour it now, once, and
-                # never stack a second recording on top of an in-flight one.
-                self._start_session_locked()
-            else:
+            if not pending:
                 self._set_state(ServiceState.IDLE)
+        if pending:
+            # A toggle arrived while transcribing: honour it now, once, and
+            # never stack a second recording on top of an in-flight one. The
+            # session is created and started with the lock released.
+            self._commit_start()
 
     def _fail(self, message: str) -> None:
-        with self._lock:
+        with self._transition_scope():
             self._session = None
             self._pending_start = False
             self._stop_partials_locked()
             self._set_state(ServiceState.ERROR, message)
 
+    @contextlib.contextmanager
+    def _transition_scope(self) -> Iterator[None]:
+        """Hold the state lock and run queued ``status_ui`` calls after it.
+
+        :meth:`_set_state` only records the new state and queues the matching
+        :class:`~ges2t.interfaces.StatusUI` call here; the scope invokes it once
+        the lock is released. That is what lets a tray read ``service.state``
+        from inside a status callback without deadlocking on the non-reentrant
+        lock (ticket 21).
+        """
+        display: list[Callable[[], None]] = []
+        try:
+            with self._lock:
+                self._pending_display = display
+                try:
+                    yield
+                finally:
+                    self._pending_display = None
+        finally:
+            for action in display:
+                try:
+                    action()
+                except Exception:
+                    # Display is best-effort, exactly like the partials policy in
+                    # ``_start_partials_locked``: a ``StatusUI`` that raises while
+                    # merely reporting a transition must never abort the deferred
+                    # side effect that runs after this scope (``worker.start()``,
+                    # ``session.cancel()``, ``shutdown``) nor change the state
+                    # machine's outcome. Only display callbacks are swallowed here;
+                    # a raising ``session.start()/finish()/cancel()`` or
+                    # ``injector.inject()`` still moves the service to ``ERROR``.
+                    continue
+
     def _set_state(self, state: ServiceState, error_message: str | None = None) -> None:
+        """Record ``state`` and queue its display call; never calls ``status_ui``.
+
+        Must be called with the lock held inside a :meth:`_transition_scope`.
+        """
+        pending = self._pending_display
+        assert pending is not None, "_set_state called outside a transition scope"
         self._state = state
         if state is ServiceState.IDLE:
-            self._status_ui.idle()
+            pending.append(self._status_ui.idle)
         elif state is ServiceState.RECORDING:
-            self._status_ui.recording()
+            pending.append(self._status_ui.recording)
         elif state is ServiceState.TRANSCRIBING:
-            self._status_ui.transcribing()
+            pending.append(self._status_ui.transcribing)
         else:
-            self._status_ui.error(
-                error_message if error_message is not None else "unknown error"
-            )
+            message = error_message if error_message is not None else "unknown error"
+            pending.append(functools.partial(self._status_ui.error, message))
 
     def _start_partials_locked(self, session: DictationSession) -> None:
         stop = threading.Event()
@@ -430,7 +499,7 @@ class Service:
 
     def shutdown(self) -> None:
         """Cancel any in-progress session and stop the background threads."""
-        with self._lock:
+        with self._transition_scope():
             session = self._session
             self._session = None
             self._pending_start = False
