@@ -37,6 +37,7 @@ warnings), ADR 0017 (model presence), ADR 0015 (socket/single instance).
       | Model verified | `--verify`: sha256 mismatch | `ges2t setup` (re-download) |
       | Engine present | `libneedle.so` missing or the wrong size | `ges2t setup` |
       | `cactus-needle` importable | the package cannot be imported | `uv sync` |
+      | Engine/package versions | always reported; **WARN** if the installed `cactus-needle` version differs from the pinned one | the pinned vs installed versions |
       | Config valid | TOML error or bad-typed value | the file path and the offending key |
       | Engine config valid | a `WhistleConfigError` from the selected engine's block (ticket 4 raises a **distinct** type from the generic `ConfigError`, deliberately — see its `001-comment.md`) | the block name, key and allowed range |
       | Config warnings | unknown keys anywhere (generic **and** the selected engine block — ADR 0009) | which keys were ignored |
@@ -61,6 +62,16 @@ warnings), ADR 0017 (model presence), ADR 0015 (socket/single instance).
   treating zero samples as normal, so it is **not** fixed in the audio source; `doctor` is
   where a broken session is caught, once, before dictation rather than during it. Make this
   check unconditional and reliable.
+- **Report the installed engine and package versions, and warn on skew.** Ticket 14's review
+  flagged a real risk (**R1**): the streaming decoder is coupled to `cactus-needle==3.1.3`'s
+  exact generator shape (one dict per `next()`, terminal tail dict, and the engine's own
+  `stop()`). The test fake encodes that same shape, so a package upgrade could break the real
+  seam **while the suite stays green**. `pyproject.toml` pins the version exactly, which makes
+  an upgrade deliberate rather than accidental, but nothing currently asserts it at runtime.
+  `doctor` should print the installed package version and the engine `.so` version, and WARN
+  when either differs from the pins in ADR 0017 — that turns silent behavioural drift into a
+  visible line of output. Do **not** add a runtime version assertion inside the adapter (that
+  would fail dictation for a cosmetic mismatch); `doctor` is the right place.
 - **The audio-device check exists because a bad device cannot be detected any other way.**
   ADR 0008's amendment (2026-10-09) records that `pw-record --target` is only a hint and that an
   unresolved target silently falls back to the default microphone, exiting normally with empty
