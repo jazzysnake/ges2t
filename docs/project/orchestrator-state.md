@@ -4,6 +4,7 @@
 > so a compacted or fresh orchestrator can resume without re-deriving anything. Delete it at
 > close-out. The authoritative sources are always: `docs/project/README.md` (the board),
 > `docs/adr/` (decisions), and each ticket's `ticket.md` + `NNN-comment.md` + `NNN-review.md`.
+> **If this file disagrees with the board, the board wins.**
 
 ## 1. Project in one paragraph
 
@@ -18,14 +19,15 @@ Original orchestrator brief: `.pi/prompts/orchestrate-project.md`.
 ## 2. Orchestrator role and hard rules
 
 - **Never implement.** Planning artifacts under `docs/` and git merges only. All implementation and
-  all review is done by subagents.
+  all review is done by subagents. The single exception is an explicit user request to implement.
 - **Every `Agent` call: `model: "deepseek/deepseek-flash"`, `subagent_type: "general-purpose"`.**
 - **You are the merge authority.** Only you merge into `main`, only after a review passes.
 - **Escalate to the user** on blocked tickets, scope changes, destructive/consequential actions, and
   any decision that would invalidate an existing ADR. Do not silently work around a blocker.
-- Ask before anything externally visible: injecting keystrokes, writing to the user's clipboard,
-  running `sudo`, enabling services, installing packages.
-- **Trust but verify:** read the actual diff/worktree before merging; a subagent's report describes
+- **Ask before anything externally visible**: injecting keystrokes, writing to the user's clipboard,
+  **sending a desktop notification**, running `sudo`, stopping/starting a service, installing
+  packages, **recording from the microphone**, and **opening any window on the user's screen**.
+- **Trust but verify**: read the actual diff/worktree before merging; a subagent's report describes
   intent, not outcome.
 
 ## 3. Environment (verified on this machine)
@@ -36,207 +38,173 @@ Original orchestrator brief: `.pi/prompts/orchestrate-project.md`.
 | Keyboard layout | **`hu` (Hungarian)** — `X11 Layout: hu`, `VC Keymap: hu`. `~/.config/kxkbrc` has **no `LayoutList`** |
 | Python | **3.14.7** at `/usr/bin/python3`; `uv` 0.12.23 |
 | Venv requirement | **`uv venv --system-site-packages --python /usr/bin/python3` THEN `uv sync`.** A bare `uv sync` on a fresh checkout creates a venv with `include-system-site-packages = false` **and** picks uv's managed 3.13, silently losing `gi`. There is **no** `[tool.uv]` setting for this (upstream astral-sh/uv#5737 is open) |
-| `ydotoold` | **active AND enabled** (user enabled it 2026-10-09). Socket `/run/user/1000/.ydotool_socket`, mode 0600 |
+| `ydotoold` | **active AND enabled**. Socket `/run/user/1000/.ydotool_socket`. The systemd unit is **`ydotool.service`** — `ydotoold` is only the daemon binary (a ticket once said otherwise; corrected) |
 | `/dev/uinput` | `crw-rw----+ root:input` — user `matee` is in `input` and can write it |
-| Models | Already downloaded to `~/.local/share/ges2t/`: `models/whistle/2.0.0/whistle.cact` (16,919,407 B), `engine/3.2.0/libneedle.so` (1,581,448 B) |
-| Speech test clips | `/tmp/whinspect/` — `clip5.wav` (5 s), `clip30.wav` (30 s), etc. **Never commit audio.** May be cleaned by /tmp reaping; if gone, use `pw-record` |
-| Not installed | `wtype`, `dotool`, `numpy` (numpy is deliberately absent) |
+| Models | In `~/.local/share/ges2t/`: `models/whistle/2.0.0/whistle.cact` (16,919,407 B), `engine/3.2.0/libneedle.so` (1,581,448 B) |
+| Speech test clips | `/tmp/whinspect/` — `clip5.wav`, `clip30.wav`, `2/3/4.wav`, `cny16`, `jfk`, … **Never commit audio.** May be reaped; regenerate with `pw-record` |
+| Tray | `python-gobject` 3.56.3, `gtk3` 3.24.52, `libappindicator` 12.10.1 all installed; `assert_appindicator_backend()` **passes** here |
+| Clipboard | `wl-copy` / `wl-paste` present (wl-clipboard 2.3.0) |
+| Not installed | `wtype`, `dotool`, `numpy` (numpy is deliberately absent — never add it) |
+| **User's usual environment** | They use it in a **car with the window open** as well as indoors — i.e. **a noisy, low-frequency-rich environment is a normal use case**. This mattered enormously for ticket 29/31 (see §10) |
 
 ## 4. Current baselines on `main`
 
-- `uv run pytest` → **639 passed** (~1.9 s)
-- **`uv run mypy src/ges2t tests` → 0 errors (45 files)** — this is the required command. ADR 0019
-  was amended 2026-10-09: the old `mypy src/ges2t`-only check let a real violation through a
-  completed review (see ticket 20).
-- `main` HEAD when last checked: `ca545f0`. Merged this session: 24, 21, 26, 11, 22, 23, 15, 28,
-  17 (four review rounds), 16. **Four agents were in flight when this was written** (12, 18, 25, 29),
-  so expect `main` to have advanced by the time you read this — **the board is authoritative.**
-- 21 ADRs (0000–0020), **28 tickets**, 2 epics.
+- `uv run pytest` → **767 passed**
+- **`uv run mypy src/ges2t tests` → 0 errors (49 files)** — this is the required command. ADR 0019
+  was amended: the old `mypy src/ges2t`-only check let a real violation through a completed review
+  (ticket 20).
+- Quick health check available to anyone: **`uv run ges2t doctor`** (ticket 12) — 22 checks,
+  exit `0` with no `FAIL`s. It reports the resolved keymap and its source, the tray backend, the
+  engine/package versions, `ydotoold`, `/dev/uinput`, and the recommended KDE bindings. **Run it
+  first on resume** — it is faster than reading the environment table above.
+- 21 ADRs (0000–0020), **31 tickets**, 2 epics.
 
-## 5. Board state (24 of 29 done)
+## 5. Board state (27 of 31 done)
 
-**Done (24 of 29):** 1 project-scaffold · 2 core-interfaces-and-fakes · 3 config-loading ·
-4 whistle-engine-config · 5 model-store-and-verification · 6 audio-capture-pw-record ·
-7 ydotool-injector · 8 whistle-transcriber-adapter-batch · 9 service-state-machine-and-socket ·
-10 cli-surface-and-commands · 13 streaming-window-engine · 14 whistle-streaming-adapter ·
-20 type-check-whole-tree · 24 layout-detection-and-config (`a6ba892`) · 21 status-ui-outside-lock
-(`11b1bf3`) · 26 pin-cli-test-guarantees (`ceee7a2`) · 11 dictation-pipeline-batch (`338cdc2`) ·
-22 xkb-keycode-mapping (`0a2074a`) · 23 batched-key-emission (`b4aa911`) · 15 streaming-session
-(`2ba0a3a`) · 28 injection-delay-default (`37e8937`) · **17 tray-status-ui** (four review rounds) ·
-**16 streaming-wiring-and-e2e**
+**Done (27):** 1–18, 20, 21, 22, 23, 24, 26, 27, 28, 29. Highlights and merge commits:
+- 11 `338cdc2` pipeline/composition root · 12 `036d1e2` doctor · 15 `2ba0a3a` streaming session ·
+  16 streaming wiring · 17 tray (four review rounds) · 18 `829937a` notifications ·
+  20 type-check · 21 `11b1bf3` status-ui deadlock · 22 `0a2074a` keymap ·
+  23 `b4aa911` batched emission · 24 `a6ba892` layout/config · 26 `ceee7a2` cli test guarantees ·
+  27 layout test guarantees · 28 `37e8937` delay default · 29 `f9df8a0` silence gate
 
-**In review / in flight (see §6):** **29 silence-gate** — the review ruled the RMS+duration gate
-**narrows but does NOT fix** the user's bug, so the implementer is rebuilding it as a frame-level
-sustained-energy gate · **12 doctor-command** and **18 notifications-and-cancel** — implemented, in
-review · **25 clipboard-paste-injector** — implemented, in review
-
-**To do:** 19 user-documentation-and-setup-guide (the last ticket; needs everything)
-
-**28 injection-delay-default** is new and was filed from ticket 23's measurement: `0`/`6`/`12` ms were
-measured and only `0` (47.9 ms, byte-perfect) fits ADR 0001's budget, so the shipped default of `12`
-(3.1 s) would have shipped the product **over its own budget**. Fixing it is a one-value change to
-ticket 24's `DEFAULT_KEY_DELAY_MS`.
-
-Modules already on `main`: `interfaces.py`, `config.py`, `model_store.py`, `service.py`,
-`socket_proto.py`, `streaming.py`, `cli.py`, `audio/pw_record.py`, `injectors/ydotool.py`,
-**`injectors/layout.py`** (ticket 24), **`pipeline.py`** (ticket 11),
-`transcribers/{whistle_config,whistle}.py`, `tests/fakes.py`, **`injectors/keymap.py`** (ticket 22).
-In flight, not yet merged: `pipeline.py` (ticket 17 modifies it), `streaming_session.py` (ticket 15),
-`ui/{status,tray}.py` (ticket 17).
+**Remaining (4):**
+| # | Ticket | State |
+|---|---|---|
+| **25** | clipboard-paste-injector | **implemented, in review** — `clipboard.py` + `build_injector` backend selection; the reviewer's first job is confirming nothing ever wrote the user's real clipboard |
+| **19** | user-documentation-and-setup-guide | **not started** — the last core ticket; deliberately last because it documents final behaviour |
+| **30** | tray-failure-diagnostics | filed follow-up; needs a read-only socket verb (**requires an ADR 0016 amendment**) |
+| **31** | speech-gate-recalibration | **PARKED by the user** — branch `feat/speech-gate-recalibration` exists, evidence complete, **not merged**; see §10 |
 
 ## 6. In-flight agents (collect these first on resume)
 
-Check each worktree's `git log`, then read the ticket + its `001-comment.md` / `002-review.md`.
+Check each worktree's `git log`, then read the ticket + its `NNN-comment.md` / `NNN-review.md`.
 **Verify the work yourself before merging.** If an agent died, the work is usually committed or the
 worktree is dirty-but-complete — recover from artifacts, do not re-run blindly.
 
-| Ticket | Worktree (`/home/matee/Workspace/Personal/ges2t/.worktrees/…`) | Branch | Task |
+| Ticket | Worktree | Branch | Task |
 |---|---|---|---|
-| 23 | `batched-key-emission` | `feat/batched-key-emission` | **Implement** — batched `ydotool key`; measurement needs authorisation |
-| 17 | `tray-status-ui` | `feat/tray-status-ui` | **Review** of `fea1ecb` |
-| 15 | `streaming-session` | `feat/streaming-session` | **Review** of `2d64f83` |
-| 27 | `pin-layout-test-guarantees` | `feat/pin-layout-test-guarantees` | **Review** of `911db7b` |
+| 25 | `.worktrees/clipboard-paste-injector` | `feat/clipboard-paste-injector` | **Review** in progress (real-clipboard safety first) |
+| 31 | `.worktrees/speech-gate-recalibration` | `feat/speech-gate-recalibration` | **Review** in progress; branch to be **left unmerged and parked** |
 
-Tickets 21, 24, 26, 11 and 22 are merged and their worktrees removed. Note ticket 26's branch will hit an **add/add conflict on
-ticket.md** plus a row-26 conflict at merge (it was cut before the ticket folder and board row were
-committed to `main`); resolve to the branch's version — `ticket.md` `in review`, row 26 `in review`.
-Use three-dot diffs (`git diff main...<branch>`): several branches were cut before ticket 10 merged.
+Everything else is merged and its worktree removed. Use three-dot diffs
+(`git diff main...<branch>`): many branches were cut before later merges.
 
 ## 7. Workflow discipline (the protocol that has been working)
 
-**Implementer brief must contain:** the ticket path; "read the ticket and every artifact it links
-(epic, ADRs, related tickets) first"; worktree + branch instructions
-(`git worktree add .worktrees/<slug> -b feat/<slug>`; **never commit to `main`**; **do not remove the
-worktree** — the reviewer needs it); the ADR 0019 style rules verbatim; the exact verify commands;
-a `NNN-comment.md` requirement; status → `in review` (or `blocked`); the board row update; commit;
-report back (branch, worktree, files, real command output, anything the orchestrator must know).
+**Implementer brief:** the ticket path; "read the ticket and every artifact it links (epic, ADRs,
+related tickets) first"; worktree + branch (`git worktree add .worktrees/<slug> -b feat/<slug>`;
+**never commit to `main`**; **do not remove the worktree**); the ADR 0019 style rules verbatim; the
+exact verify commands; a `NNN-comment.md`; status → `in review` (or `blocked`); **only its own board
+row**; **commit after each working step**; report real output, not summaries.
 
-**Reviewer brief must contain:** read ticket + epic + ADRs + **every** comment; run the checks
-(**do not trust ticked boxes**); **do not touch the implementation** (only write the review
-artifact); `NNN-review.md` with verdict / per-criterion findings / **evidence (commands + real
-output)** / risks / explicitly-what-could-not-be-verified; commit; report verdict + blocking
-findings.
+**Reviewer brief:** read ticket + epic + ADRs + **every** comment; run the checks (**do not trust
+ticked boxes**); **do not touch the implementation or the tests**; `NNN-review.md` with verdict /
+per-criterion findings / **evidence (commands + real output)** / risks / an explicit
+**could-not-verify** list; commit; report.
 
-**Enforcement patterns to always demand of reviewers (learned the hard way):**
+### Enforcement patterns — demand these of every reviewer
 
-1. **Prove invariants mechanically, not by reading.** E.g. ticket 21's reviewer replaced the lock
-   with an owner-tracking lock and instrumented every collaborator call — 0 violations. "I read the
-   diff" is not evidence.
-2. **Falsify every claim and every new test**: break the thing the test guards, watch it **fail**,
-   then revert completely. A test never seen to fail is not a test. (This caught: a vacuous
-   `sys.modules` assertion, a laziness test that passes with a top-level import, exit-code tests
-   that compare against their own constants, and a `mypy` check that didn't cover tests.)
-3. **No unbounded waits in tests.** Use `join(timeout)` so a regression **fails loudly instead of
-   hanging**. Mutation-testing runs need a **per-run timeout** — an unbounded mutation harness
-   wedged for 87 minutes once and had to be killed.
-4. **Clean up**: kill spawned processes, remove stray sockets and probe files, confirm
-   `git status` clean. A dead reviewer left `src/ges2t/_probe.py` behind once.
-5. Run **`uv run mypy src/ges2t tests`** and confirm the config bites via an unannotated-function
-   probe.
-6. For injection tickets: **no keystrokes without asking the user**; no newlines in payloads; report
-   the lowest delay that loses no characters rather than a flattering number.
+1. **Prove invariants mechanically, not by reading.** Ticket 21's reviewer replaced the lock with an
+   owner-tracking lock and instrumented every collaborator call. "I read the diff" is not evidence.
+2. **Falsify every claim and every new test**: break the guarded behaviour, watch it **fail**, revert
+   completely. A test never seen to fail is not a test.
+3. **A check that cannot fail is worse than no check** — it reads as verification. Found repeatedly:
+   a `mypy` scope that excluded `tests/`; a laziness test blind to import-time imports; exit-code
+   tests comparing against their own constants; a vacuous `sys.modules` assertion; a
+   `timeout=None` that left the suite green; **a `doctor` check that printed a green `OK` with
+   nothing to read**; and a dedup test whose clock advanced by *the constant under mutation*
+   (`X == X`). Watch for this pattern everywhere, including in **shipped user-facing output**.
+4. **No unbounded waits.** Use `join(timeout)`. Mutation runs need a **per-run timeout** — an
+   unbounded harness wedged for 87 minutes once.
+5. **A hanging suite is worse than a failing one: check that the process *exits*.** Ticket 15's
+   reviewer found the sharpest case: a mutation printed `1 failed, 20 passed in 2.17s` and then
+   **pytest never exited** (`exit 124` under a cap) because a leaked **non-daemon** worker blocked
+   `threading._shutdown`. A bound on the *call* cannot kill a leaked thread. Verify with
+   `timeout <n> uv run pytest` and **check the status**.
+6. **Clean up**: kill spawned processes, remove stray sockets and probe files, confirm `git status`
+   clean. A dead reviewer once left `src/ges2t/_probe.py` behind.
+7. **Never commit a modified `src/` after probing.** Check `git diff --stat` before committing; a
+   reviewer once left `pipeline.py` in its deliberately-mutated state, which would have shipped a
+   **deliberately broken** file that the tests were *designed* to pass against.
 
-**Numbers/artifact convention:** artifacts inside a ticket folder share one numbering sequence
-(`001-comment.md`, `002-review.md`, …). List the folder and take the next free number; never reuse
-or renumber.
-
-**On changes requested:** resume the *same* implementer with the findings, then re-review. (If
-`resume` fails with "agent not found", spawn a fresh implementer scoped to *verify and extend the
-existing work* — never to rewrite it.)
-
-**A fix can introduce its own regression — re-review the new paths, not just the finding.** Ticket
-21 fixed a reproduced deadlock and thereby *created* a worse bug: the display drain moved into a
-`finally` outside the defensive `try/except`, so a raising `status_ui` callback skipped a deferred
-side effect and left the service **permanently wedged in `TRANSCRIBING`** (every later command
-returned `busy`) — the same "hotkey silently stops responding" class the ticket existed to fix.
-So when a change-requested fix comes back, the re-review must inspect the **new code paths it
-introduced** and their exception behaviour, not merely confirm that the original finding is gone.
-Corollary for briefs: when a fix makes something best-effort, **say explicitly what must stay
-fatal** — otherwise one silent failure is traded for another.
-
-**Do not build a ticket's default on a ticket that depends on it.** Ticket 24's `key_delay_ms`
-default was specified as "chosen from ticket 23's measurement", but ticket 23 *depends on* ticket 24,
-so the default could not exist yet. The implementer made it a single provisional constant and
-flagged the contradiction — the right call. Watch for this when writing DoD lines that cite a
-downstream ticket's output.
-
-**Enforcement is where the real bugs were found — keep raising the bar.** The defects that
-mattered were almost never found by a test: a US-only keymap that corrupted every non-US layout
-(all 274 tests passed), a `mypy` check that did not cover tests, a laziness test that passed with a
-top-level forbidden import, exit-code tests that compared against their own constants, and a
-`sys.modules` assertion that was vacuous because the module was never installed. Each was caught by
-someone **trying to falsify a claim**. Ask reviewers for that explicitly every time.
-
-**Two caching traps that make a probe lie — clear both after every mutation.**
+### Two caching traps that make a probe lie — clear both after every mutation
 
 1. **`mypy` caches stale errors.** A mutation that leaves a file the **same byte length** can be
-   restored by `git checkout` without invalidating `.mypy_cache`, so you read **stale** errors and
-   can reach the wrong conclusion. Run `rm -rf .mypy_cache` before trusting any mypy result after a
-   mutation or revert. (Found by ticket 11's reviewer.)
-2. **Stale bytecode.** Restoring a mutated `src` file with `cp` **within the same second** leaves a
-   `.pyc` that Python accepts, so the "restored" run silently executes the **mutation**. Delete
-   `__pycache__` too. (Found by ticket 15's reviewer, who was fooled by it once.)
+   restored by `git checkout` without invalidating `.mypy_cache`, so you read stale errors.
+2. **Stale bytecode.** Restoring a mutated file with `cp` **within the same second** leaves a `.pyc`
+   Python accepts, so the "restored" run silently executes the **mutation**.
 
-**A hanging suite is worse than a failing one — check that the run *exits*.** Ticket 15's reviewer
-found the sharpest version yet: under a lock mutation the test phase printed
-`1 failed, 20 passed in 2.17s` and then **pytest never exited** (`exit 124` under a 20 s cap), because
-a leaked **non-daemon** worker blocked `threading._shutdown`. So the run reported a failure and then
-wedged the terminal, and a call-level `join(timeout)` does **not** help — a bound on the *call*
-cannot kill a leaked thread. When requiring "no unbounded waits", verify the **process exits**
-(use `timeout <n> uv run pytest` and check the status), not merely that the tests report a result.
-- **Never take over the user's screen without asking.** A live-injection probe needed a focused
-  scratch terminal, and the `konsole` windows it opened **hid the user's chat** and startled them.
-  The probe did produce the project's strongest evidence on the `hu` bug — a **byte-exact 17/17**
-  round trip — so the lesson is not "don't probe" but **"ask for that specific side effect up
-  front"**: permission to inject keystrokes is *not* permission to take over the display, and an
-  agent should also state how long a window will be up. Current rule: any ticket whose verification
-  needs a **human voice** or a **visible GUI surface** has that step marked **user-owned**
-  (tickets 11 and 17) — the agent prepares a script and hands it over.
-- **Long agent runs die on connection errors, and context dies with them.** Three runs were lost in
-  one session (ticket 15's reviewer twice, ticket 23's implementer once), all at 600–1160 s. The
-  work is not lost if it was *committed*; it **is** lost if a reviewer was still holding findings in
-  context. Mitigations: (a) for any long task, tell the agent to **write its artifact to disk
-  incrementally** and append after each check, so a death costs at most one check; (b) `resume`
-  preserves context and is much cheaper than restarting, but **an agent can be cleaned up and be
-  unresumable** — then dispatch a **fresh** agent scoped to *"verify and extend the existing work,
-  never rewrite it"*, and say explicitly that the work already exists and where; (c) instruct
-  implementers to **commit the code before attempting anything risky or slow** (e.g. an authorised
-  measurement), so an infrastructure death cannot leave valuable work uncommitted.
+→ After every probe: `rm -rf .mypy_cache __pycache__`.
+
+### Other hard-won rules
+
+- **Artifact numbering:** files inside a ticket folder share one sequence (`001-comment.md`,
+  `002-review.md`, `003-comment.md`, …). List the folder, take the next free number, **never
+  renumber or rewrite** — append addenda instead.
+- **On changes requested:** resume the *same* implementer; then re-review. If `resume` says "agent
+  not found", dispatch a **fresh** agent scoped to *"verify and extend the existing work, never
+  rewrite it"*, and say explicitly that the work exists and where.
+- **A fix can introduce its own regression — re-review the new paths, not just the finding.** Three
+  times this session: ticket 21's deadlock fix wedged the service in `TRANSCRIBING`; ticket 15's
+  daemon fix opened a shutdown data-loss window (examined and accepted); ticket 17's fallback
+  narrowing stopped catching **thread-start** failures, so a broken tray could stop ges2t starting —
+  the very thing ADR 0013 forbids. Corollary: when a fix makes something best-effort, **state
+  explicitly what must stay fatal**.
+- **Don't build a ticket's default on a ticket that depends on it** (ticket 24's `key_delay_ms`
+  awaited ticket 23's measurement, but 23 depended on 24).
+- **Never take over the user's screen without asking.** A probe's `konsole` windows hid the user's
+  chat. Permission to inject keystrokes is **not** permission to take over the display. Any ticket
+  whose verification needs a **human voice** or a **visible GUI surface** has that step marked
+  **user-owned** — the agent prepares a script and hands it over. Tickets 11, 17, 18, 25, 29 and 31
+  all have such steps.
+- **Anything that touches the user's machine needs its own explicit ask**, however benign it looks:
+  keystrokes, the clipboard (`wl-copy` **destroys what they had copied**), desktop notifications (a
+  popup), **the microphone** (privacy), stopping a service (`ydotoold` breaks their dictation while
+  stopped). Agents must **prove** they didn't: a `PATH` shim recording invocations was used to show
+  **zero** real notifications were sent.
+- **Long agent runs die on connection errors, and context dies with them.** Many runs were lost
+  (600–1760 s). Mitigations: (a) tell long-running agents to **write their artifact to disk
+  incrementally**, appending after each check, so a death costs at most one check; (b) `resume`
+  preserves context but agents get **cleaned up and become unresumable** — then dispatch fresh,
+  scoped to extend; (c) implementers must **commit after each working step**, so a death cannot lose
+  work. This paid off repeatedly: ticket 25's module, tests and wiring all survived separate deaths.
+- **When a lot of agents are in flight, check for file collisions before dispatching.** Tickets 16
+  and 18 both edit `run_service`/`pipeline.py`; 18 was deliberately held until 16 merged. A **code**
+  conflict between two agents' implementations is not something to adjudicate in a hurry.
 
 ## 8. Merge procedure (and the mistake to avoid)
 
-1. Confirm the review file says **pass** and the ticket is `in review`.
-2. `git merge --no-ff feat/<slug> -m "Merge ticket <n>: <slug> … verdict pass (NNN-review.md)."`
-3. **If `README.md` conflicts — it usually does — resolve mechanically:** keep the correct status for
-   every row on both sides (usually `done` wins for already-merged tickets, and the branch's own row
-   becomes `in review`).
-4. Flip `ticket.md` status to `done`, update the board row, commit on `main`.
-5. `git worktree remove --force .worktrees/<slug>` and `git branch -d feat/<slug>`.
-6. Re-run `uv run pytest` and `uv run mypy src/ges2t tests` on `main`, plus
-   `uv sync` and the link check (below).
+1. Confirm the review says **pass** and the ticket is `in review`.
+2. `git merge --no-ff feat/<slug> -m "Merge ticket <n>: <slug> — verdict pass (NNN-review.md)."`
+   Run this as **its own command**, then check `git diff --name-only --diff-filter=U`.
+3. **`README.md` usually conflicts — resolve mechanically:** keep the correct status for **every row
+   on both sides** (already-merged tickets stay `done`; the branch's own row becomes `in review`).
+   Branches are often cut before later merges, so their rows for *other* tickets are stale — never
+   take a branch's row for someone else's ticket.
+4. Flip `ticket.md` → `done`, update the board row, commit on `main`.
+5. `git worktree remove --force .worktrees/<slug> && git branch -d feat/<slug>`.
+6. Re-verify on `main`: `uv run pytest -q`, `rm -rf .mypy_cache __pycache__ && uv run mypy src/ges2t tests`,
+   the link check (below), and `git status`.
 
-**⚠️ Two ways this has been got wrong — both shipped a committed `README.md` containing conflict
-markers.**
+**⚠️ Two ways this has been got wrong — both committed a `README.md` containing conflict markers.**
 
-1. *Chaining.* Running the merge and the follow-up steps on separate shell lines meant the
-   follow-ups ran even though the merge had conflicted. Run the merge as **its own command**, check
-   `git diff --name-only --diff-filter=U`, and only then continue.
-2. *Interleaving tool calls — hit again on ticket 26.* Issuing the `edit` that resolves the markers
-   and the `bash` that runs `git add` **in the same tool block** let them interleave: `git add`
-   staged the file *before* the edit landed, so the commit captured the **unresolved** version while
-   the working tree looked correct. The check then passed, because it grepped the working tree, not
-   the index. **Never put `git add`/`git commit` in the same block as an `edit`.** Do the edits,
-   then run the git commands in a **separate** step.
+1. *Chaining.* The merge conflicted, the follow-up commands on later shell lines still ran, and the
+   markers got committed. Hence rule 2.
+2. *Interleaving tool calls.* Issuing the marker-resolving `edit` and the `git add` in the **same
+   tool block** let them interleave: `git add` staged the file *before* the edit landed, so the
+   commit captured the **unresolved** version while the working tree looked correct — and the check
+   passed because it grepped the working tree, not the index. **Never put `git add`/`git commit` in
+   the same block as an `edit`.**
 
-**Verify the committed object, not the working tree.** After any merge or conflict resolution,
-assert against `HEAD`, not the filesystem: `git show HEAD:docs/project/README.md | grep -n '^<<<<<<<'`
-and `git grep -n '^<<<<<<<' HEAD -- docs` must both be empty. A clean `git status` proves nothing if
-the index was staged from the wrong moment. If it slips through, `git commit --amend --no-edit`
-repairs a merge at the tip while preserving both parents.
+**Verify the committed object, not the working tree.** After any merge: `git grep -n '^<<<<<<<' HEAD -- docs`
+must be empty, and `git rev-list --parents -n1 HEAD` must show **2 parents**. A clean `git status`
+proves nothing if the index was staged at the wrong moment. If it slips through,
+`git commit --amend --no-edit` repairs a merge at the tip and preserves both parents.
 
-**Link check** (run after any docs change; must report 0). Note the negative lookbehind also
-excludes `.`, because an **ellipsis** in prose (``.../001-comment.md``) contains `../` and a
-naive pattern flags it as a broken parent link — that happened once and cost a false alarm:
+**Link check** (run after any docs change; must report 0). The negative lookbehind also excludes `.`
+because an **ellipsis** in prose (``.../001-comment.md``) contains `../` and a naive pattern flags it
+as a broken link — that false alarm cost time once:
 
 ```bash
 python3 - <<'PY'
@@ -248,170 +216,151 @@ print(f"{len(bad)} broken references"); [print(" ", f, t) for f, t in bad]
 PY
 ```
 
-## 9. The injection saga (most important open thread)
+## 9. The injection saga — RESOLVED, and confirmed in live use
 
-**Discovery:** the user's manual verification — not any test — found that `ydotool type` **corrupts
-text on a non-US layout**. With layout `hu`: `0`→`ö`, `-`→`ü`, `y`→`z`, matching
-`xkbcli how-to-type --layout hu` exactly. Root cause: `ydotool` 1.0.4 resolves text via a
-**hardcoded US-position table and silently drops non-ASCII**. **Unfixable by config** (no
-`--keymap`, no keymap files, no env var; last upstream release 2023; layout-aware typing is an open
-PR). All 274 tests passed while this was broken, because the fake runner asserts the payload reaches
-`ydotool`'s stdin — which it does. **This is exactly what ADR 0014's manual-verification carve-out
-exists for.**
+**Discovery:** the user's manual verification — not any test — found `ydotool type` **corrupts text on
+a non-US layout**: on `hu`, `0`→`ö`, `-`→`ü`, `y`→`z`. Root cause: `ydotool` resolves text via a
+**hardcoded US-position table** and silently drops non-ASCII. **Unfixable by config.** All 274 tests
+passed while it was broken, because the fake runner asserts the payload reaches `ydotool`'s stdin —
+which it does. Exactly what ADR 0014's manual-verification carve-out exists for.
 
-**Second discovery (measured):** `ydotool type` costs **~40 ms/char** (4.99 s for 124 chars;
-2.76 s at `--key-delay 2`; ~16–18 ms/char floor even at delay 0). Cause: `type` **sleeps twice per
-character** (20+20 ms defaults — the man page's "12 ms" is stale). **`ydotoold` itself never
-sleeps.** So the floor is client-side and may be avoidable by batching.
+**Decisions (ADR 0020 + amended ADR 0003):** keep `ydotool` as transport but **never call
+`ydotool type`**; map characters ourselves via **libxkbcommon** (ctypes, no new dependency) against
+the **live compositor keymap** from `xkbcli dump-keymap-wayland`; emit via a **batched
+`ydotool key`**; **skip-and-warn** on unreachable codepoints; make **clipboard-paste a configured
+alternative**, never an automatic fallback. `wtype` is a dead end (KWin lacks
+`zwp_virtual_keyboard_v1`); `dotool` is AUR-only.
 
-**Decisions taken (ADR 0020 + ADR 0003 amended):**
-- Keep **`ydotool` as transport** but **never call `ydotool type`**; compute the key events
-  ourselves.
-- Mapping engine = **`libxkbcommon`** (already installed; what KWin uses) via **ctypes** (no new
-  dependency), against the **live compositor keymap** from `xkbcli dump-keymap-wayland` (here
-  `pc_hu_inet(evdev)_capslock(ctrl_modifier)`). Generic over any XKB layout — **no hardcoded `hu`**.
-- Emission = **batched `ydotool key`** with a precomputed event list.
-- **Unreachable codepoints** (e.g. emoji) → **skip + warn**, never garbage.
-- **Clipboard-paste becomes a real configured alternative** (`injection.backend = "ydotool" |
-  "clipboard"`), still **not** an automatic fallback.
-- **`wtype` is a dead end** (KWin lacks `zwp_virtual_keyboard_v1`); **`dotool`** is AUR-only →
-  fallback backend only.
+**The measurement (ticket 23) — the gate resolved in our favour.** 125-char phrase, byte-compared
+against the capture:
 
-**✅ TICKET 23 MEASURED IT — THE GATE RESOLVED IN OUR FAVOUR.** Batched `ydotool key`, 125-char
-phrase, byte-compared against the capture:
-
-| delay ms | wall ms | ms/char | byte-perfect | within budget |
+| delay ms | wall ms | ms/char | byte-perfect | within ADR 0001 budget |
 |---:|---:|---:|:--:|:--|
 | 12 | 3100.7 | 24.81 | yes | **no** |
 | 6 | 1595.4 | 12.76 | yes | **no** |
 | **0** | **47.9** | **0.38** | **yes** | **yes** |
 
-Against a ~4.99 s baseline that is a **~104× speedup**, and it meets ADR 0001's budget by 20×. So
-**latency work is finished** and the option to type committed text *during* dictation was **NOT
-built** — ADR 0011's "nothing is injected until release" rule stands unchanged.
+~104× faster than the ~4.99 s baseline, meeting the budget 20×. So **latency work is finished**, and
+the option to type committed text *during* dictation was **NOT built** — ADR 0011's "nothing is
+injected until release" stands unchanged. The cost is linear (`delay × 2 × 126` events — `ydotool key`
+sleeps once per event, *down and up*), so any non-zero delay reintroduces 252 sleeps; that is why
+**ticket 28 set the shipped default to `0`** (at `12` the product would have shipped **over its own
+budget**). Honest caveats: the capture target was a **pty**, not a real editor, and the numbers are
+not independently reproducible (captures deleted) — the reviewer audited the evidence and recomputed
+the md5 and the linear model rather than re-running it.
 
-The cost is linear (`delay × 2 × 126` events — `ydotool key` sleeps once per event, down *and* up,
-not per character), so **any non-zero delay reintroduces 252 sleeps**; that is why ticket 28 sets the
-default to `0`. Caveat to keep honest: the capture target was a **pty**, not a real editor, and the
-numbers are **not independently reproducible** (the captures were deleted) — the reviewer audited
-the evidence and recomputed the md5 and the linear model rather than re-running it.
+**⚠️ One keycode trap, already fixed:** the reverse lookup originally matched on
+`xkb_keysym_to_utf32` equality, which let **keypad/`XF86Numeric` aliases** win — they need no
+modifier, so they outranked the real key. On a keyboard without a numpad that means `= / + * # .`
+and **every digit on `fr`** typed **nothing**. Fixed by ranking canonical keysyms ahead of aliases
+(not rejecting aliases — `de`'s `…′″` need them). Post-fix: **0 disagreements against
+`xkbcli how-to-type` across 5 keymaps** (plus a 432-char sweep at 0).
 
-## 10. Open items not yet ticketed / to watch
+**User-confirmed in live use:** `hu` mapping correct by voice, including `y`/`z` and digits — the
+exact characters both keymap bugs broke.
 
-### The silence hallucination (ticket 29) — the premise was wrong, twice corrected
+## 10. The silence saga — three attempts, and the biggest lesson in the project
 
-The user toggled recording on and off **without speaking** and got **`thank you`** typed. Investigating
-it produced three findings, each of which overturned the previous explanation:
+The user toggled recording **on and off without speaking** and got **`thank you`** typed. Three
+attempts, each overturning the last explanation:
 
-1. **"Near-silent audio" was the wrong premise.** All-zeros and low-level noise return `''` at every
-   level tested. Nothing in `src/` had any silence/amplitude/RMS/VAD handling, and the zero-samples rule
-   never fired (`../batched-key-emission`'s sibling reasoning: a live mic captures plenty of quiet
-   samples). So an input-side gate is right, but *"silence"* was the wrong name for the trigger.
-2. **The real triggers** are **flat DC**, **50 Hz mains hum**, and **short transients** — one 5 ms click
-   in 500 ms returns `'Thank you.'`. The realistic gesture (silence with **key clicks at both ends**,
-   0.3–3 s — which a hotkey toggle inevitably produces) returns `'you'`/`'Bye.'`/`'Thank you.'`.
-3. **RMS alone cannot fix it.** `AC RMS ≥ 0.0005` (mean-removed) plus `≥ 100 ms` fixes DC and the
-   accidental double-tap, but a realistic silent toggle measures **0.0013–0.0032 AC RMS — 2.6–6.5×
-   over the threshold** — so it still hallucinates. To pass the gate a click peak would have to be
-   `< ~0.0077`, far quieter than a real key click. **Verdict: narrowed, not fixed.** The correct
-   mechanism is a **frame-level / sustained-energy gate** (a click is one ~20 ms frame; speech is
-   many), which is what the follow-up is building.
+1. **Ticket 29 attempt 1 — "near-silent audio hallucinates".** Wrong. Digital silence and low-level
+   noise return `''` at every level. The real synthetic triggers are **flat DC**, **50 Hz hum**, and
+   **short transients** (one 5 ms click → `'Thank you.'`).
+2. **Ticket 29 attempt 2 — a whole-buffer RMS floor.** Fixed DC and the accidental double-tap but
+   the reviewer **did the arithmetic** and showed a realistic silent toggle (which contains the
+   **hotkey's own key clicks**) measures 2.6–6.5× the threshold — it fixed only inputs that never
+   failed. Replaced by a **frame-level sustained-energy gate** (a click is 1–2 × 20 ms frames; speech
+   is many; bar = 3 consecutive frames). That gate **is merged** and is what ships today. Its review's
+   verdict is the honest framing: **"merge the code; do not call it 'silence solved'"**.
+3. **Ticket 31 (`feat/speech-gate-recalibration`) — PARKED, unmerged.** The user *still* got
+   `Thank you.`, so a dedicated diagnostic ran. **Not a stale service, not mains hum, not command
+   output** (that hunch was tested and ruled out: the string is provably the engine's return value,
+   traced `Service` → session → engine → injector). The cause: **the user's "silence" is not silent.**
+   Twenty-two real captures measure **AC RMS 0.036–0.26 — as loud as the speech clips
+   (0.047–0.14)** — because the device emits a **broadband ≈20–25 Hz drift at amplitude ≈0.04**. So
+   the amplitude gate correctly classifies it as speech and the model hallucinates on it.
+   Ticket 31 replaces amplitude with a **speech-band energy ratio** (fraction of AC energy above
+   200 Hz ≥ 0.15): idle measures **0.001–0.065**, speech **0.762–0.980** — an order of magnitude
+   apart, and **level-invariant**. It also *measured and rejected* the simpler fix (a steeper
+   high-pass still passed idle: 12–122 active frames at 300 Hz).
+   **Why it is not merged:** the user asked to pause it, and **their situation explained the whole
+   mystery** — they were **in a car with the window open**, i.e. wind and road rumble are almost
+   certainly the "20–25 Hz drift". So the failure is **environment-dependent** (in a quiet room the
+   original gate probably worked all along), *and* the new gate's measured cost (quiet speech needs
+   gain ≥ 0.4 where the engine reads down to 0.1) was measured **with that noise present** — in the
+   very environment where they dictate. Merging it could **drop real dictation**, which is worse than
+   the bug. **Absence of absolute silence is not a use case they have.**
 
-**Lesson worth keeping:** two rounds of "well-evidenced, well-argued" work still missed the user's
-actual bug, and only a reviewer **doing the arithmetic** (RMS of a realistic click-laden buffer vs the
-threshold) showed the fix was aimed at inputs that never failed in the first place. "This ticket is
-rigorous" is not the same as "this ticket fixes the reported symptom".
+### ⚠️ THE LESSON — put this first when briefing any future audio/signal work
 
-**Unresolved unless measured:** whether 50 Hz hum is a live trigger on this microphone. It is **AC**,
-so mean-removal does not touch it. The implementer must either fix it with a filter it can show does
-**not** attenuate speech, or record it as a known remaining trigger with its measured level.
+**"Verified against constructed inputs" is not "works on real inputs".** Every gate threshold above
+was derived from **synthetic** signals — digital silence, synthesised clicks, a 50 Hz tone — and
+reviewed rigorously **against those synthetic claims**. Nobody fed the **actual device's** audio
+through the gate until the user toggled it. Two rounds of well-evidenced, correctly-reviewed work
+aimed at the wrong mechanism, and the fix only became real when a diagnostic **measured the real
+captures**.
 
-### Other open items
+**Corollary, and it applies far beyond audio:** *"this ticket is rigorous" is not the same as "this
+ticket fixes the reported symptom."* When a ticket exists to fix a user-visible symptom, the
+acceptance test must include **the user's actual case**, measured — not a synthetic stand-in for it.
 
-- **`cactus-needle==3.1.3` vs engine pin `3.2.0`** — pre-existing skew, documented in ticket 8's
-  review. Ticket 12 (`doctor`) is already required to report both versions and warn on drift,
-  because the streaming decoder is coupled to 3.1.3's exact generator shape (one dict per `next()`,
-  terminal tail dict) and the test fake encodes the same shape — so an upgrade could break the real
-  seam **while the suite stays green**.
-- **Ticket 21 B1 — RESOLVED**, merged at `11b1bf3` (review `003` pass). The display drain is now
-  best-effort **per callback**; a raising `session.start()`/`finish()`/`cancel()` or
-  `injector.inject()` still moves the service to `ERROR` (the re-review proved it, and showed the
-  fix *reduced* masking rather than adding it). **Open consequence, do not lose it:** the
-  containment is silent, so a `StatusUI` that always raises would stop updating with no signal at
-  all — the ADR 0013 silent-degradation class. The re-review ruled it **non-blocking but a required
-  follow-up**, now written into ticket **17** (`TrayStatusUI` must record its own failures) and
-  ticket **12** (`doctor`/`status` must surface them).
-- **Ticket 12 is the dumping ground for environment checks** — it already must check: config
-  validity + warnings, model/engine presence, PipeWire session (the mitigation for ticket 6's
-  ~50 ms zero-sample race), `ydotoold`, `/dev/uinput`, tray backend (`appindicator`, not `_xorg`),
-  audio device present in the node list, engine/package versions, and print the recommended KDE
-  key bindings.
-- **Ticket 6's unknown `--target` requirement was removed** (ADR 0008 amended): `--target` is only a
-  PipeWire hint and falls back silently, so a bad device cannot be detected in the audio source.
-- Minor accepted nits: test 3 in `test_whistle_config.py` covers non-finite only on
-  `window_seconds`; `001-comment.md` files contain a few harmless wording nits.
+## 11. What the user has personally verified (do not re-litigate)
 
-## 11. User preferences and escalation rules
+Recorded in `docs/project/core-dictation-pipeline/dictation-pipeline-batch/003-comment.md`:
+
+- End-to-end dictation into an editor and a terminal — **pass**
+- **`hu` mapping correct** (`y`/`z`, digits) — **pass** (the workstream's whole point)
+- `ges2t cancel` mid-recording, tray `Quit` (→ `SIGTERM`) — **pass**
+- Long phrases (20+ words) — **pass**
+- **Quiet and mumbled speech transcribes**; imperfect model output on mumbled speech is **accepted**
+  (a ~16 MB model; "good enough" is the bar)
+- **Silence → `thank you`** — the bug in §10, still open as far as the shipped code goes
+- `ges2t doctor` runs and works — **pass**
+- Tray icon visible in Plasma and state stepping — **pass** (check the **overflow "⌃" area**; Plasma
+  collapses new tray icons by default, so a missing icon may just be hidden)
+- **Their verification was on the BATCH session** — streaming became the default in ticket 16
+  *afterwards*, so the basics were worth a repeat pass on the streaming path (partials now show in
+  the tray tooltip, a new visible behaviour).
+
+## 12. User preferences and escalation rules
 
 - **Tickets must be small enough for a capable junior developer in one session.** Split anything
   that is really two tickets.
-- **Type hints everywhere** (including `-> None`), **interface-typed signatures** (protocols in
-  parameters, not just inheritance), and **classes instead of positional tuples** — ADR 0019, and
-  it *must* be enforced with `mypy src/ges2t tests`.
-- The user wants **explanations, not just status**: when something changes the plan, explain *why*
-  and what it costs. They push back well and have corrected the orchestrator's framing more than
-  once; welcome that.
-- The user **escalates on ADRs**: amendments to accepted ADRs should be surfaced explicitly, with the
-  measured evidence, rather than quietly edited.
-- Verified user decisions so far: Python MVP; Wayland-only; hotkey via compositor-bound CLI command;
-  `ydotool` injection; config in TOML at `~/.config/ges2t/config.toml` with a generic layer + engine
-  selector + engine-specific blocks; streaming **is** v1; no post-processing except one trailing
-  space; tray via `pystray`'s **AppIndicator** backend with system-site-packages; `ges2t setup` is
-  the **only** networked path; accepted the closed-engine risk; **agreed to all three injection
-  workstreams and to a generic, configurable keymap** (not hardcoded `hu`).
+- **Type hints everywhere** (including `-> None`), **interface-typed signatures** (Protocols in
+  parameters, not just inheritance), **classes instead of positional tuples** — ADR 0019, enforced
+  with `mypy src/ges2t tests`.
+- **The user wants explanations, not just status**: when something changes the plan, explain *why*
+  and what it costs. They push back well and have corrected the orchestrator's framing repeatedly —
+  welcome it.
+- **They escalate on ADRs:** amendments must be surfaced explicitly with measured evidence, never
+  edited quietly. Ticket 30 (a new socket verb) **requires an ADR 0016 amendment** — that is flagged
+  in the ticket, not slipped in.
+- **They are not precious about scope**: they have repeatedly said not to get stuck, and to ship
+  what is good enough. When they say a thing is not a use case, believe them and park it — with the
+  reasoning written down so it is not silently reopened.
+- Verified decisions: Python MVP; Wayland-only; hotkey via compositor-bound CLI command; `ydotool`
+  injection; TOML config at `~/.config/ges2t/config.toml` (generic layer + engine selector +
+  engine-specific blocks); streaming **is** v1; no post-processing except one trailing space; tray via
+  `pystray`'s **AppIndicator** backend with `--system-site-packages`; `ges2t setup` is the **only**
+  networked path; closed-engine risk accepted; generic configurable keymap (never hardcoded `hu`);
+  injection delay default `0`; **minimum recording duration 100 ms** (their specified value).
 
-## 12. Remaining work order (dependency-respecting)
+## 13. Remaining work and order
+
+**Ticket 19 (docs + setup guide) is the last core ticket and goes last, on purpose** — it documents
+final behaviour, and writing it earlier means documenting behaviour that then changes.
 
 ```
-22 (fixing) ─┐
-24 (merged) ─┼─→ 23 (batch + MEASURE — the decision gate) ─→ 25 (clipboard)
-             │
-11 (merged) ─┴─→ 17 (tray, dispatched) ─→ 18 (notify) ─→ 19 (docs)
-                15 (session, dispatched) ─→ 16 (wiring)
-                12 (doctor — hold until 22 merges)
-26 (merged), 27 (dispatched) — test-guarantee pinning
+25 (in review) ─→ merge
+31 (reviewed, PARKED — do not merge without the user's quiet-room + noisy-environment result)
+
+19 (docs)      — needs everything else settled first
+30 (tray diagnostics) — optional, P2; needs the ADR 0016 amendment
 ```
 
-**Ticket 11's latency result sharpens ticket 23's gate:** the framework portion (socket RTT +
-capture stop/drain + handoff) is **~3.6–3.8 ms**, independently re-measured by the reviewer. The
-entire latency problem is therefore **injection** (~40 ms/char ≈ 4.8 s for ~120 chars today). So
-23's gate is one clean question — does batched `ydotool key` get a 20-word phrase under 1 s? If yes,
-latency work ends; if no, bring the user the incremental-injection choice rather than deciding it.
-
-**Accepted non-blocking gap (ticket 11, no ticket filed):** swapping the session factory's arguments
-is caught by **mypy** but not at runtime. Deliberately not ticketed — unlike the earlier gaps
-(`mypy` not covering tests, the vacuous laziness test, exit codes compared to themselves), a real
-check *does* cover it and any real run would fail loudly.
-
-**Ticket 11 owns `src/ges2t/pipeline.py` (the composition root), and several later tickets edit that
-same file.** Its DoD was amended before dispatch, because three of its criteria were invalidated by
-ADR 0020 or cannot be done by an agent at all: (i) its `--key-delay` item is **superseded** — ticket
-23 owns injection latency now, so 11 records the *before* number instead of tuning a delay that is
-no longer used; (ii) its manual end-to-end test needs a **human voice** and is therefore the
-**user's** step, with the implementer preparing the script; (iii) its character-correctness and
-<1 s criteria **cannot pass until ticket 23 lands** on a `hu` layout, so they are recorded as known
-in-flight defects rather than blockers. Ticket 11 must not inject keystrokes.
-
-**Sequencing traps — check these before dispatching anything:**
-- ~~**17 must follow 11**~~ — **satisfied**: 11 is merged, and 17 was dispatched after it.
-- **12 should follow 22**, since it now checks `libxkbcommon` loadability and the resolved keymap.
-- **23 and 25 both rework `build_injector`**, which 11 created — read ticket 11's `001-comment.md`
-  before dispatching 23 so the backend-selection contract is consistent. 11's reviewer noted 16 must
-  thread `config`/streaming settings into the **private** `_session_factory`, leaving the public
-  `run_service` signature unchanged.
-- 15/16 depend on 9 + 14 (done) **and 11** (done). 19 is the final ticket: README + setup guide +
-  systemd.
-
-**Epic 1's exit test** (not yet satisfied): `ges2t toggle` → speak → `ges2t toggle` types correct
-text into a **text editor** and a **terminal**; silence types nothing; framework overhead < 1 s
-excluding model time — and now also **with correct characters on a non-US layout**.
+**Epic 1's exit test** — `ges2t toggle` → speak → `ges2t toggle` types correct text into a **text
+editor** and a **terminal**; silence types nothing; framework overhead < 1 s excluding model time;
+correct characters on a non-US layout. **The user has run essentially all of this and it passes
+except the silence case** (§10). The remaining honest gap to "I use it daily" is the silence
+hallucination on a noisy input, which is parked at the user's direction.
