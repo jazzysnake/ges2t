@@ -235,8 +235,9 @@ def _build_ydotool_injector(config: Config) -> Injector:
 def _build_clipboard_injector(config: Config) -> Injector:
     """Build the clipboard-paste injector (ticket 25, ADR 0003 amended).
 
-    ``[injection.clipboard]`` supplies ``paste_keys`` (default ``["ctrl+v"]``;
-    most terminals need ``ctrl+shift+v``); an absent block means all defaults
+    ``[injection.clipboard]`` supplies ``paste_keys`` (default
+    ``["ctrl+shift+v"]``, ticket 38; an application that does not bind it needs
+    ``paste_keys = ["ctrl+v"]``); an absent block means all defaults
     (``.get(..., {})``, ADR 0009). The block's unknown-key warnings are carried
     on the injector's ``last_warnings`` for ``ges2t doctor`` to surface instead
     of being swallowed.

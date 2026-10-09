@@ -37,17 +37,30 @@ the text is otherwise unmodified. One implementation, two emitters.
 
 The paste chord
 ---------------
-``[injection.clipboard] paste_keys`` defaults to ``["ctrl+v"]`` and accepts a
-list of chord spellings such as ``"ctrl+shift+v"``. Each name is resolved to the
+``[injection.clipboard] paste_keys`` defaults to ``["ctrl+shift+v"]``
+(ticket 38) and accepts a list of chord spellings. Each name is resolved to the
 **plain Linux input-event code** of the physical key: ``KEY_LEFTCTRL`` is 29 and
 ``KEY_V`` is 47, so ``ctrl+v`` is emitted exactly as
 
     ydotool key -d <ms> 29:1 47:1 47:0 29:0
 
-presses left-to-right, releases right-to-left. **Most terminals need
-``ctrl+shift+v``** -- that is the known cost of this mechanism for terminal
-users, so the fact is documented here, in the config reference, and in the error
-message for an unknown key name rather than left as a mystery.
+presses left-to-right, releases right-to-left (``KEY_LEFTSHIFT`` is 42, so the
+default ``ctrl+shift+v`` becomes ``29:1 42:1 47:1 47:0 42:0 29:0``).
+
+Why ``ctrl+shift+v`` is the default, and its honest cost
+-------------------------------------------------------
+It is the **only chord with real evidence behind it**: the user's manual
+verification of ticket 25 passed with it in every target they tried -- nvim, and
+in their experience browsers and regular editors -- so one configuration covered
+both an editor *and* a terminal (``ctrl+v`` does not paste in most terminals).
+The cost is that this is a **different binding, not a superset**: an application
+that leaves ``ctrl+shift+v`` unbound pastes **nothing**, so set
+``paste_keys = ["ctrl+v"]`` instead. In most GUI toolkits ``ctrl+shift+v`` means
+*paste as plain text*, which for dictation is desirable rather than a surprise --
+no rich formatting is carried in. Do **not** list both chords as a fallback: the
+injector emits **every** configured chord, so that would paste twice. This is
+documented here, in the config reference, and in the error message for an
+unknown key name rather than left as a mystery.
 
 The runner seam
 ---------------
@@ -568,8 +581,14 @@ class ClipboardPasteInjector:
     """An :class:`~ges2t.interfaces.Injector` backed by ``wl-copy`` + paste (ticket 25).
 
     ``paste_keys`` comes from ``[injection.clipboard]`` (ticket 24 owns the
-    config plumbing) and defaults to ``["ctrl+v"]``; **most terminals need
-    ``["ctrl+shift+v"]``**. ``trailing_space`` is the ADR 0012 preference
+    config plumbing) and defaults to ``["ctrl+shift+v"]`` (ticket 38) -- the
+    only chord with manual-verification evidence, and one that pastes in both
+    an editor and a terminal. The honest caveat: an application that does not
+    bind ``ctrl+shift+v`` pastes **nothing**, so set
+    ``paste_keys = ["ctrl+v"]`` there; in most GUI toolkits ``ctrl+shift+v``
+    means *paste as plain text*, which for dictation is desirable. Do **not**
+    list both chords -- the injector emits every configured chord and would
+    paste twice. ``trailing_space`` is the ADR 0012 preference
     (``ui.trailing_space``). ``key_delay_ms`` becomes ``ydotool key -d`` for the
     chord, reusing ticket 23's transport so the chord is layout-safe.
     ``restore_delay_s`` is the bounded delay before the previous selection is put
@@ -587,7 +606,7 @@ class ClipboardPasteInjector:
     def __init__(
         self,
         *,
-        paste_keys: Sequence[str] = ("ctrl+v",),
+        paste_keys: Sequence[str] = ("ctrl+shift+v",),
         trailing_space: bool = True,
         key_delay_ms: int = DEFAULT_KEY_DELAY_MS,
         restore_delay_s: float = CLIPBOARD_RESTORE_DELAY_SECONDS,
