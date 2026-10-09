@@ -293,11 +293,105 @@ def test_size_mismatch_is_reported_when_only_the_size_is_wrong(
     assert not model_path().exists()
 
 
-def test_progress_callback_receives_lines(data_home: Path, fake_pins: None) -> None:
-    messages: list[str] = []
-    ensure_model(fetcher=RecordingFetcher(MODEL_BYTES), progress=messages.append)
-    assert any("downloading" in line for line in messages)
-    assert any("installed" in line for line in messages)
+def test_progress_callback_receives_fractions(data_home: Path, fake_pins: None) -> None:
+    fractions: list[float] = []
+    ensure_model(fetcher=RecordingFetcher(MODEL_BYTES), progress=fractions.append)
+    assert fractions == [0.0, 1.0]
+
+
+def test_progress_callback_is_optional(data_home: Path, fake_pins: None) -> None:
+    # ``progress=None`` means "do not report", and must stay the default.
+    assert ensure_model(fetcher=RecordingFetcher(MODEL_BYTES)) == model_path()
+
+
+def test_present_artifact_reports_complete(data_home: Path, fake_pins: None) -> None:
+    destination = model_path()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(b"\x00" * MODEL_TEST_PIN.size)
+    fractions: list[float] = []
+
+    assert ensure_model(fetcher=RecordingFetcher(b""), progress=fractions.append) == destination
+
+    assert fractions == [1.0]
+
+
+def test_progress_callback_exceptions_do_not_abort_acquisition(
+    data_home: Path, fake_pins: None
+) -> None:
+    seen: list[float] = []
+
+    def broken(fraction: float) -> None:
+        seen.append(fraction)
+        raise RuntimeError("progress sink exploded")
+
+    result = ensure_model(fetcher=RecordingFetcher(MODEL_BYTES), progress=broken)
+
+    assert result == model_path()
+    assert result.read_bytes() == MODEL_BYTES
+    assert seen == [0.0, 1.0]
+
+
+class FakeResponse:
+    """A minimal stand-in for the object ``urllib.request.urlopen`` returns."""
+
+    def __init__(self, payload: bytes, content_length: str | None) -> None:
+        self._stream = io.BytesIO(payload)
+        self.headers: dict[str, str] = (
+            {} if content_length is None else {"Content-Length": content_length}
+        )
+
+    def read(self, size: int) -> bytes:
+        return self._stream.read(size)
+
+    def __enter__(self) -> FakeResponse:
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+
+def test_download_reports_content_length_fractions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = b"0123456789"
+    monkeypatch.setattr(model_store, "_CHUNK_SIZE", 4)
+    monkeypatch.setattr(
+        model_store.urllib.request,
+        "urlopen",
+        lambda request: FakeResponse(payload, "10"),
+    )
+    fractions: list[float] = []
+    destination = tmp_path / "artifact.bin"
+
+    model_store._download(
+        "https://example.invalid/x", destination, progress=fractions.append
+    )
+
+    # 10/10 == 1.0 is deliberately left to ``_ensure``; the downloader only
+    # emits the strictly-intermediate fractions.
+    assert fractions == [0.4, 0.8]
+    assert destination.read_bytes() == payload
+
+
+def test_download_without_content_length_reports_no_fractions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = b"0123456789"
+    monkeypatch.setattr(model_store, "_CHUNK_SIZE", 4)
+    monkeypatch.setattr(
+        model_store.urllib.request,
+        "urlopen",
+        lambda request: FakeResponse(payload, None),
+    )
+    fractions: list[float] = []
+    destination = tmp_path / "artifact.bin"
+
+    model_store._download(
+        "https://example.invalid/x", destination, progress=fractions.append
+    )
+
+    assert fractions == []
+    assert destination.read_bytes() == payload
 
 
 # --- ensure_engine: extraction ------------------------------------------------

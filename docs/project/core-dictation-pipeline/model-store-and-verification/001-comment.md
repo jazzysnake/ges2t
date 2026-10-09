@@ -192,3 +192,75 @@ pin values as data; and the XDG default/fallback plus the exact storage layout.
   outside the repo); `git status` is clean of them.
 - No HTTP dependency was added to `pyproject.toml`. The ADR 0018 audit is clean: the only
   `urllib` hits in `src/` are inside `model_store.py`.
+
+## Follow-up fix (pre-review): progress callback shape
+
+The orchestrator found a real type mismatch at the ticket-8 seam.
+`ges2t.interfaces.ProgressCallback` is `Callable[[float], None]` (a fraction), while
+this module had defined its own `ProgressCallback = Callable[[str], None]` (a message).
+Ticket 8 passes the interface callback straight into
+`model_store.ensure_model(progress=...)`, so the two shapes had to agree structurally.
+The probe below made `mypy` prove the defect: with the old alias it failed at the
+integration point (`expected "Callable[[str], None] | None"`, got
+`Callable[[float], None]`).
+
+What changed (one concern only):
+
+- `model_store.ProgressCallback` is now `Callable[[float], None]`, matching the
+  interface **structurally**. The alias stays local; `model_store.py` still does **not**
+  import `ges2t.interfaces`, preserving the anti-coupling rule (importable with no backend,
+  no dependency on the pipeline vocabulary).
+- `_report(progress, message)` became `_report(progress, fraction)`.
+- `_ensure` emits the lifecycle: `0.0` when a download starts, `1.0` when the artifact is
+  already present, and `1.0` after verification and atomic install.
+- The real downloader (`_download`, wired through `_downloader`) reads the response
+  `Content-Length` and reports `downloaded / total` clamped to `[0.0, 1.0]` per chunk. The
+  terminal `1.0` is left to `_ensure`, so a caller sees one monotonic run ending in exactly
+  one `1.0` (injected fakes that never touch `_download` also get `0.0` … `1.0`).
+
+### Behaviour when `Content-Length` is missing
+
+**No intermediate fractions are emitted.** With no total there is no honest
+`downloaded / total`; inventing an estimate would be worse than silence. A missing *or
+malformed* header is treated as unknown, never as zero. The caller still gets the real
+lifecycle endpoints — `0.0` at the start and `1.0` after install — because `_ensure` owns
+those and does not depend on `Content-Length`.
+
+### Progress callback exception policy
+
+Callback exceptions are **swallowed** (`except Exception`) inside `_report`: a broken
+progress sink must never abort an otherwise successful acquisition. Only `Exception` is
+caught, so `KeyboardInterrupt`/`SystemExit` still propagate. Progress stays optional;
+`progress=None` remains the default. Both are tested.
+
+### Verification (real output)
+
+```
+$ uv run pytest
+65 passed in 0.23s
+
+$ uv run pytest tests/test_model_store.py -q
+29 passed in 0.11s
+
+$ uv run mypy src/ges2t
+Success: no issues found in 4 source files
+```
+
+Integration probe (throwaway, **deleted before commit** so `git status` is clean of it):
+with `main`'s `src/ges2t/interfaces.py` and a probe file added temporarily,
+
+```python
+def run(progress: ProgressCallback) -> None:
+    ensure_model(progress=progress)
+```
+
+`uv run mypy src/ges2t` reported `Success: no issues found in 6 source files`. With the old
+`str` alias the same probe reported:
+
+```
+src/ges2t/model_store.py:503: error: Argument 1 has incompatible type "float"; expected "str"  [arg-type]
+src/ges2t/_probe_progress.py:14: error: Argument "progress" to "ensure_model" has incompatible type "Callable[[float], None]"; expected "Callable[[str], None] | None"  [arg-type]
+```
+
+Nothing else changed: pins, atomic install, storage layout, `env_overrides()`, the size-only
+fast path, and `ArtifactPin` typing are untouched.

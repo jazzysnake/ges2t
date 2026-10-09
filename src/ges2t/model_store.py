@@ -39,6 +39,7 @@ import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 __all__ = [
     "DEFAULT_DATA_DIRECTORY_NAME",
@@ -165,8 +166,12 @@ SUPPORTED_ENGINE_PLATFORMS: frozenset[str] = frozenset({"linux-x86_64"})
 #: tests replace so the suite performs no network I/O.
 Fetcher = Callable[[str, Path], None]
 
-#: Receives short, human-readable progress lines, one call per milestone.
-ProgressCallback = Callable[[str], None]
+#: Receives the completed fraction in ``[0.0, 1.0]`` as an artifact is
+#: downloaded and installed. This is structurally identical to
+#: ``ges2t.interfaces.ProgressCallback``; the alias is kept local on purpose so
+#: this module never imports the interfaces module (it must stay importable with
+#: no backend and no dependency on the pipeline vocabulary).
+ProgressCallback = Callable[[float], None]
 
 
 # --- Errors -------------------------------------------------------------------
@@ -288,7 +293,8 @@ def ensure_model(
 
     Returns immediately when a file of the pinned byte size already exists (no
     download, no hash — ADR 0017). Otherwise downloads atomically, verifies, and
-    installs. ``fetcher`` is the test seam; ``progress`` receives status lines.
+    installs. ``fetcher`` is the test seam; ``progress`` receives the completed
+    fraction in ``[0.0, 1.0]`` (see :data:`ProgressCallback`).
     """
     _require_supported_platform()
     return _ensure(
@@ -337,12 +343,12 @@ def _ensure(
     every write stays inside :func:`default_data_dir`.
     """
     if _present_with_pinned_size(destination, pin.size):
-        _report(progress, f"{pin.name}: already present at {destination} ({pin.size} bytes)")
+        _report(progress, 1.0)
         return destination
 
     destination.parent.mkdir(parents=True, exist_ok=True)
-    fetch = fetcher if fetcher is not None else _download
-    _report(progress, f"{pin.name}: downloading {pin.url}")
+    fetch = fetcher if fetcher is not None else _downloader(progress)
+    _report(progress, 0.0)
 
     fetched = _temporary_path(destination)
     extracted: Path | None = None
@@ -368,10 +374,7 @@ def _ensure(
         if extracted is not None:
             _remove(extracted)
 
-    _report(
-        progress,
-        f"{pin.name}: installed {destination} ({pin.size} bytes, sha256 verified)",
-    )
+    _report(progress, 1.0)
     return destination
 
 
@@ -386,20 +389,64 @@ def _present_with_pinned_size(path: Path, expected_size: int) -> bool:
     return path.is_file() and path.stat().st_size == expected_size
 
 
-def _download(url: str, destination: Path) -> None:
+def _downloader(progress: ProgressCallback | None) -> Fetcher:
+    """Return the real :data:`Fetcher`, wired to stream ``progress`` fractions."""
+
+    def fetch(url: str, destination: Path) -> None:
+        _download(url, destination, progress=progress)
+
+    return fetch
+
+
+def _download(
+    url: str,
+    destination: Path,
+    *,
+    progress: ProgressCallback | None = None,
+) -> None:
     """Fetch ``url`` into ``destination`` with the stdlib, following redirects.
 
     Hugging Face's ``/resolve/`` URLs redirect to a CDN; the default
     :mod:`urllib.request` opener follows 3xx redirects, which is why this works
     with no HTTP dependency (ADR 0018).
+
+    When the response carries a ``Content-Length``, each chunk reports
+    ``downloaded / total`` clamped to ``[0.0, 1.0]``. The terminal ``1.0`` is
+    deliberately left to :func:`_ensure`, which emits it only once the artifact
+    has been verified and installed, so what the caller sees is one monotonic
+    run ending in a single ``1.0``. When ``Content-Length`` is missing we emit
+    **no** intermediate fractions: an invented estimate would be worse than
+    silence, and the caller still gets ``0.0`` at the start and ``1.0`` on
+    completion.
     """
     request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     with urllib.request.urlopen(request) as response, destination.open("wb") as handle:
+        total = _content_length(response)
+        downloaded = 0
         while True:
             chunk = response.read(_CHUNK_SIZE)
             if not chunk:
                 break
             handle.write(chunk)
+            downloaded += len(chunk)
+            if total:
+                fraction = min(downloaded / total, 1.0)
+                if fraction < 1.0:
+                    _report(progress, fraction)
+
+
+def _content_length(response: Any) -> int | None:
+    """Return the response's ``Content-Length`` as an int, or ``None`` if absent.
+
+    A missing *or malformed* header is treated as unknown, never as zero.
+    """
+    raw_total = response.headers.get("Content-Length")
+    if raw_total is None:
+        return None
+    try:
+        return int(raw_total)
+    except ValueError:
+        return None
 
 
 def _extract_member(archive: Path, member: str, destination: Path) -> None:
@@ -444,7 +491,15 @@ def _remove(path: Path) -> None:
         pass
 
 
-def _report(progress: ProgressCallback | None, message: str) -> None:
-    """Forward a progress line when a callback was supplied."""
+def _report(progress: ProgressCallback | None, fraction: float) -> None:
+    """Forward the completed fraction when a callback was supplied.
+
+    Exceptions raised by the callback are swallowed: a broken progress sink must
+    never abort an otherwise successful acquisition. Only ``Exception`` is
+    caught, so ``KeyboardInterrupt`` and ``SystemExit`` still propagate.
+    """
     if progress is not None:
-        progress(message)
+        try:
+            progress(fraction)
+        except Exception:
+            pass
