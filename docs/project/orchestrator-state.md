@@ -44,27 +44,28 @@ Original orchestrator brief: `.pi/prompts/orchestrate-project.md`.
 
 ## 4. Current baselines on `main`
 
-- `uv run pytest` → **483 passed** (~1.5 s)
+- `uv run pytest` → **491 passed** (~1.9 s)
 - **`uv run mypy src/ges2t tests` → 0 errors (32 files)** — this is the required command. ADR 0019
   was amended 2026-10-09: the old `mypy src/ges2t`-only check let a real violation through a
   completed review (see ticket 20).
-- `main` HEAD at time of writing: `f135868` (ticket 27 filed). Ticket 24 merged at `a6ba892`.
+- `main` HEAD when last checked: `37a1c09` (ticket 21 closed). Ticket 24 merged at `a6ba892`,
+  ticket 21 at `11b1bf3`; both worktrees removed.
 - 21 ADRs (0000–0020), **27 tickets**, 2 epics.
 
-## 5. Board state (13 of 26 done)
+## 5. Board state (15 of 27 done)
 
 **Done (14 of 27):** 1 project-scaffold · 2 core-interfaces-and-fakes · 3 config-loading ·
 4 whistle-engine-config · 5 model-store-and-verification · 6 audio-capture-pw-record ·
 7 ydotool-injector · 8 whistle-transcriber-adapter-batch · 9 service-state-machine-and-socket ·
 10 cli-surface-and-commands · 13 streaming-window-engine · 14 whistle-streaming-adapter ·
-20 type-check-whole-tree · **24 layout-detection-and-config** (merged `a6ba892`, review `002` pass)
+20 type-check-whole-tree · 24 layout-detection-and-config (merged `a6ba892`) ·
+**21 status-ui-outside-lock** (merged `11b1bf3`, review `003` pass)
 
-**In review / in flight (see §6):** 21 status-ui-outside-lock (changes requested, B1 fix running) ·
-22 xkb-keycode-mapping (implementing, nothing committed yet) · 24 layout-detection-and-config
-(implementation committed `5332885`, reviewer running) · 26 pin-cli-test-guarantees (implementing,
-nothing committed yet)
+**In review / in flight (see §6):** 22 xkb-keycode-mapping (implementation `d58a50d`, reviewer
+running **with an authorized live-injection probe**) · 26 pin-cli-test-guarantees (implementation
+`99ff8fb`, reviewer running) · 11 dictation-pipeline-batch (implementer dispatched)
 
-**To do:** 11 dictation-pipeline-batch · 12 doctor-command · 15 streaming-session ·
+**To do:** 12 doctor-command · 15 streaming-session ·
 16 streaming-wiring-and-e2e · 17 tray-status-ui · 18 notifications-and-cancel ·
 19 user-documentation-and-setup-guide · 23 batched-key-emission · 25 clipboard-paste-injector ·
 **27 pin-layout-test-guarantees** (filed from ticket 24's review: both detectors' non-zero-exit
@@ -74,7 +75,8 @@ tickets 20 and 26. The guards themselves were hand-verified, so it is a **test**
 
 Modules already on `main`: `interfaces.py`, `config.py`, `model_store.py`, `service.py`,
 `socket_proto.py`, `streaming.py`, `cli.py`, `audio/pw_record.py`, `injectors/ydotool.py`,
-`transcribers/{whistle_config,whistle}.py`, `tests/fakes.py`.
+**`injectors/layout.py`** (ticket 24), `transcribers/{whistle_config,whistle}.py`, `tests/fakes.py`.
+`injectors/keymap.py` (ticket 22) and `pipeline.py` (ticket 11) are in review, not yet merged.
 
 ## 6. In-flight agents (collect these first on resume)
 
@@ -84,11 +86,11 @@ worktree is dirty-but-complete — recover from artifacts, do not re-run blindly
 
 | Ticket | Worktree (`/home/matee/Workspace/Personal/ges2t/.worktrees/…`) | Branch | Task |
 |---|---|---|---|
-| 21 | `status-ui-outside-lock` | `feat/status-ui-outside-lock` | **Re-review** of the B1 fix (`080a2a4`) |
 | 22 | `xkb-keycode-mapping` | `feat/xkb-keycode-mapping` | **Review** of `d58a50d`, incl. an authorized `ydotool key` round-trip probe |
 | 26 | `pin-cli-test-guarantees` | `feat/pin-cli-test-guarantees` | **Review** of `99ff8fb` |
+| 11 | `dictation-pipeline-batch` | `feat/dictation-pipeline-batch` | **Implement** — the composition root |
 
-Ticket 24 merged and its worktree removed. Note ticket 26's branch will hit an **add/add conflict on
+Tickets 21 and 24 are merged and their worktrees removed. Note ticket 26's branch will hit an **add/add conflict on
 ticket.md** plus a row-26 conflict at merge (it was cut before the ticket folder and board row were
 committed to `main`); resolve to the branch's version — `ticket.md` `in review`, row 26 `in review`.
 Use three-dot diffs (`git diff main...<branch>`): several branches were cut before ticket 10 merged.
@@ -230,10 +232,14 @@ held in reserve pending the measurement. **Do not build it speculatively.**
   because the streaming decoder is coupled to 3.1.3's exact generator shape (one dict per `next()`,
   terminal tail dict) and the test fake encodes the same shape — so an upgrade could break the real
   seam **while the suite stays green**.
-- **Ticket 21 B1** — a raising `status_ui` callback aborts the deferred side effect, permanently
-  wedging the service in `TRANSCRIBING`. Fix = make the **display** drain best-effort only; a
-  raising `session.start()`/`finish()`/`injector.inject()` must keep failing loudly. Ticket 17's
-  tray is what will trip this.
+- **Ticket 21 B1 — RESOLVED**, merged at `11b1bf3` (review `003` pass). The display drain is now
+  best-effort **per callback**; a raising `session.start()`/`finish()`/`cancel()` or
+  `injector.inject()` still moves the service to `ERROR` (the re-review proved it, and showed the
+  fix *reduced* masking rather than adding it). **Open consequence, do not lose it:** the
+  containment is silent, so a `StatusUI` that always raises would stop updating with no signal at
+  all — the ADR 0013 silent-degradation class. The re-review ruled it **non-blocking but a required
+  follow-up**, now written into ticket **17** (`TrayStatusUI` must record its own failures) and
+  ticket **12** (`doctor`/`status` must surface them).
 - **Ticket 12 is the dumping ground for environment checks** — it already must check: config
   validity + warnings, model/engine presence, PipeWire session (the mitigation for ticket 6's
   ~50 ms zero-sample race), `ydotoold`, `/dev/uinput`, tray backend (`appindicator`, not `_xorg`),
@@ -266,15 +272,29 @@ held in reserve pending the measurement. **Do not build it speculatively.**
 ## 12. Remaining work order (dependency-respecting)
 
 ```
-21 (fix B1) ─┐
-22 ──────────┼─→ 23 (batch + MEASURE) ─→ 25 (clipboard)
-24 ──────────┘
-26 (independent)
-11 (pipeline/E2E) ─→ 12 (doctor) · 15 (session) · 16 (wiring) · 17 (tray) · 18 (notify) ─→ 19 (docs)
+22 (in review) ─┐
+24 (merged) ─────┼─→ 23 (batch + MEASURE — the decision gate) ─→ 25 (clipboard)
+                │
+11 (pipeline) ──┴─→ 12 (doctor) · 15 (session) · 16 (wiring) · 17 (tray) ─→ 18 (notify) ─→ 19 (docs)
+26, 27 (test-guarantee pinning; independent)
 ```
 
-Tickets 15/16 depend on 9 + 14 (done) and 11. Ticket 17 depends on **21** (the deadlock fix) as
-well as 10/11. Ticket 19 is the final ticket and owns the README + setup guide + systemd unit.
+**Ticket 11 owns `src/ges2t/pipeline.py` (the composition root), and several later tickets edit that
+same file.** Its DoD was amended before dispatch, because three of its criteria were invalidated by
+ADR 0020 or cannot be done by an agent at all: (i) its `--key-delay` item is **superseded** — ticket
+23 owns injection latency now, so 11 records the *before* number instead of tuning a delay that is
+no longer used; (ii) its manual end-to-end test needs a **human voice** and is therefore the
+**user's** step, with the implementer preparing the script; (iii) its character-correctness and
+<1 s criteria **cannot pass until ticket 23 lands** on a `hu` layout, so they are recorded as known
+in-flight defects rather than blockers. Ticket 11 must not inject keystrokes.
+
+**Sequencing traps — check these before dispatching anything:**
+- **17 must follow 11**, not run beside it: 17 *moves* `NullStatusUI` out of `pipeline.py`, which 11
+  creates (17's own "depends on" list says so).
+- **12 should follow 22**, since it now checks `libxkbcommon` loadability and the resolved keymap.
+- **23 and 25 both rework `build_injector`**, which 11 creates — read ticket 11's `001-comment.md`
+  before dispatching 23 so the backend-selection contract is consistent.
+- 15/16 depend on 9 + 14 (done) **and 11**. 19 is the final ticket: README + setup guide + systemd.
 
 **Epic 1's exit test** (not yet satisfied): `ges2t toggle` → speak → `ges2t toggle` types correct
 text into a **text editor** and a **terminal**; silence types nothing; framework overhead < 1 s
