@@ -19,7 +19,7 @@ from collections.abc import Callable, Iterator, Sequence
 
 import pytest
 
-from ges2t.interfaces import AudioBuffer, TranscriptionSegment
+from ges2t.interfaces import AudioBuffer, LiveText, TranscriptionSegment
 from ges2t.streaming import StreamingDecoder, StreamingPass, drive
 
 __all__ = ["FakeStreamingDecoder"]
@@ -151,6 +151,32 @@ class PendingPoisonDecoder:
         return "tail"
 
 
+class PendingOnlyAdvanceDecoder:
+    """A decoder whose ``pending`` changes while the committed delta stops.
+
+    The first pass commits ``"confirmed"``; every later pass commits the empty
+    delta, so the driver's cumulative committed transcript must stay fixed while
+    only the pending tail changes. This is the decoder ticket 33's "a change
+    confined to pending does not advance committed" invariant is pinned against.
+    """
+
+    def __init__(self) -> None:
+        self.process_calls = 0
+        self.flush_calls = 0
+
+    def process(self, buffer: AudioBuffer) -> StreamingPass:
+        self.process_calls += 1
+        committed = "confirmed" if self.process_calls == 1 else ""
+        return StreamingPass(
+            committed=committed,
+            pending=" candidate" + " more" * (self.process_calls - 1),
+        )
+
+    def flush(self) -> str:
+        self.flush_calls += 1
+        return ""
+
+
 def make_audio(
     seconds: Sequence[float], *, sample_rate: int = SAMPLE_RATE
 ) -> list[AudioBuffer]:
@@ -194,7 +220,7 @@ def run(
     *,
     window_seconds: float,
     chunk_seconds: float,
-    on_partial: Callable[[str], None] | None = None,
+    on_partial: Callable[[LiveText], None] | None = None,
 ) -> list[TranscriptionSegment]:
     """Consume ``drive`` fully and return every yielded segment."""
     return list(
@@ -317,6 +343,102 @@ def test_uneven_tail_that_crosses_the_window_flushes_remaining_audio_once() -> N
 
 
 # --------------------------------------------------------------------------- #
+# The committed/pending split (ticket committed-delta-interface)
+# --------------------------------------------------------------------------- #
+
+
+def test_committed_is_cumulative_and_append_only_across_segments() -> None:
+    """(a): successive committed values only ever grow by appending."""
+    buffers = make_varied_audio(12.0, chunk_seconds=1.0)
+    decoder = FakeStreamingDecoder(WORDS_68, total_samples=total_samples(buffers))
+
+    segments = run(decoder, buffers, window_seconds=5.0, chunk_seconds=1.0)
+
+    previous = ""
+    for segment in segments:
+        committed = segment.live.committed
+        assert committed.startswith(previous), (previous, committed)
+        assert len(committed) >= len(previous)
+        previous = committed
+    assert segments[-1].live.committed == " ".join(WORDS_68)
+
+    # The split is real, not a copy of the display: whenever there is a pending
+    # tail the committed value is strictly shorter than ``committed + pending``,
+    # so the committed prefix never swallows speculative text.
+    with_pending = [segment for segment in segments if segment.live.pending]
+    assert with_pending
+    assert all(segment.live.committed != segment.text for segment in with_pending)
+
+
+def test_final_segment_is_cumulative_and_reaches_the_whole_transcript() -> None:
+    """(b): the final segment is the concatenation of the committed parts."""
+    buffers = make_varied_audio(12.0, chunk_seconds=1.0)
+    decoder = FakeStreamingDecoder(WORDS_68, total_samples=total_samples(buffers))
+
+    segments = run(decoder, buffers, window_seconds=5.0, chunk_seconds=1.0)
+    final = segments[-1]
+
+    assert final.is_final is True
+    assert final.live.pending == ""
+    # Cumulative, not a delta: the whole utterance, not just the last flush.
+    assert final.live.committed == final.text == " ".join(WORDS_68)
+
+    # That whole transcript is exactly the concatenation of the per-pass
+    # committed deltas the cumulative sequence encodes -- every word once.
+    deltas: list[str] = []
+    previous = ""
+    for segment in segments:
+        assert segment.live.committed.startswith(previous)
+        deltas.append(segment.live.committed[len(previous):])
+        previous = segment.live.committed
+    assert "".join(deltas) == final.text
+
+
+def test_display_string_is_byte_for_byte_the_pre_split_output() -> None:
+    """(c): ``text`` is still exactly ``committed + pending``."""
+    buffers = make_varied_audio(30.0, chunk_seconds=1.0)
+    decoder = FakeStreamingDecoder(WORDS_68, total_samples=total_samples(buffers))
+
+    segments = run(decoder, buffers, window_seconds=5.0, chunk_seconds=1.0)
+    partials = [segment for segment in segments if not segment.is_final]
+
+    assert [segment.text for segment in partials] == [
+        segment.live.committed + segment.live.pending for segment in partials
+    ]
+    # ``decoder.available_history`` is exactly the merged ``transcript +
+    # pending`` string the pre-split pipeline rendered after each pass.
+    assert [segment.text for segment in partials] == [
+        " ".join(WORDS_68[:available]) for available in decoder.available_history
+    ]
+    assert segments[-1].text == " ".join(WORDS_68)
+
+
+def test_a_change_confined_to_pending_does_not_advance_committed() -> None:
+    """(d): speculative tail changes must not move the committed prefix."""
+    buffers = make_varied_audio(3.0, chunk_seconds=1.0)
+    decoder = PendingOnlyAdvanceDecoder()
+
+    segments = run(decoder, buffers, window_seconds=5.0, chunk_seconds=1.0)
+    partials = [segment for segment in segments if not segment.is_final]
+
+    assert decoder.process_calls == 3
+    assert [segment.live.committed for segment in segments] == ["confirmed"] * 4
+    assert [segment.live.pending for segment in partials] == [
+        " candidate",
+        " candidate more",
+        " candidate more more",
+    ]
+    # The display still advances, because it is ``committed + pending`` ...
+    assert [segment.text for segment in partials] == [
+        "confirmed candidate",
+        "confirmed candidate more",
+        "confirmed candidate more more",
+    ]
+    # ... while the committed value a consumer may act on did not move at all.
+    assert len({segment.live.committed for segment in segments}) == 1
+
+
+# --------------------------------------------------------------------------- #
 # Partials
 # --------------------------------------------------------------------------- #
 
@@ -324,7 +446,7 @@ def test_uneven_tail_that_crosses_the_window_flushes_remaining_audio_once() -> N
 def test_partials_are_yielded_after_each_group_and_match_committed_plus_pending() -> None:
     buffers = make_varied_audio(30.0, chunk_seconds=1.0)
     decoder = FakeStreamingDecoder(WORDS_68, total_samples=total_samples(buffers))
-    seen: list[str] = []
+    seen: list[LiveText] = []
 
     segments = run(
         decoder, buffers, window_seconds=5.0, chunk_seconds=1.0, on_partial=seen.append
@@ -336,7 +458,7 @@ def test_partials_are_yielded_after_each_group_and_match_committed_plus_pending(
     # transcript-so-far (committed) plus this pass's pending tail.
     expected = [" ".join(WORDS_68[:available]) for available in decoder.available_history]
     assert [partial.text for partial in partials] == expected
-    assert seen == [partial.text for partial in partials]
+    assert [live.display for live in seen] == [partial.text for partial in partials]
     assert all(partial.language is None for partial in partials)
     assert all(partial.pass_ms is None for partial in partials)
 

@@ -30,6 +30,7 @@ from pathlib import Path
 
 from ges2t.interfaces import (
     AudioBuffer,
+    LiveText,
     ProgressCallback,
     TranscriptionResult,
     TranscriptionSegment,
@@ -180,7 +181,7 @@ class FakeTranscriber:
         return iter(
             [
                 TranscriptionSegment(
-                    text=self.result.text,
+                    live=LiveText(committed=self.result.text, pending=""),
                     language=self.result.language,
                     is_final=True,
                     pass_ms=None,
@@ -223,7 +224,7 @@ class FakeStatusUI:
     def __init__(self) -> None:
         self.calls: list[str] = []
         self.errors: list[str] = []
-        self.partials: list[str] = []
+        self.partials: list[LiveText] = []
         self.idle_calls = 0
         self.recording_calls = 0
         self.transcribing_calls = 0
@@ -244,6 +245,6 @@ class FakeStatusUI:
         self.calls.append("error")
         self.errors.append(message)
 
-    def partial(self, text: str) -> None:
+    def partial(self, live: LiveText) -> None:
         self.calls.append("partial")
-        self.partials.append(text)
+        self.partials.append(live)

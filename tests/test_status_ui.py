@@ -15,7 +15,7 @@ from collections.abc import Callable
 
 import pytest
 
-from ges2t.interfaces import StatusUI
+from ges2t.interfaces import LiveText, StatusUI
 from ges2t.service import CommandResponse, ServiceState
 from ges2t.ui.status import (
     DiagnosticStatusUI,
@@ -38,7 +38,7 @@ def test_null_status_ui_is_a_status_ui_and_stays_silent(
     ui.idle()
     ui.recording()
     ui.transcribing()
-    ui.partial("display-only")
+    ui.partial(LiveText(committed="display", pending="-only"))
 
     assert capsys.readouterr().err == ""
 
@@ -175,11 +175,26 @@ def test_tray_partial_updates_the_tooltip_without_typing() -> None:
     ui = TrayStatusUI(_sender([]), icon=icon)
 
     ui.recording()
-    ui.partial("the quick brown")
+    ui.partial(LiveText(committed="the quick brown", pending=""))
 
     assert "the quick brown" in icon.title
     # partial() has no injector and no typing side effect at all (ADR 0011):
     # the only observable change is the displayed tooltip.
+
+
+def test_tray_partial_renders_committed_plus_pending_byte_for_byte() -> None:
+    """(c) at the UI layer: the tooltip is unchanged by the committed split."""
+    icon = _FakeIcon()
+    ui = TrayStatusUI(_sender([]), icon=icon)
+
+    ui.recording()
+    ui.partial(LiveText(committed="the quick ", pending="brown fox"))
+
+    # Exactly the merged string the pre-split pipeline passed as a bare str.
+    assert icon.title == "ges2t: recording\nthe quick brown fox"
+    # The committed half is available to the UI; the tray still shows the whole
+    # live string and types nothing (ADR 0011).
+    assert ui.failure_count == 0
 
 
 def test_tray_start_runs_the_injected_icon_on_its_own_thread() -> None:

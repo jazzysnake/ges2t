@@ -16,7 +16,7 @@ import pytest
 from ges2t import notify, pipeline
 from ges2t.config import Config, UIConfig
 from ges2t.injectors.ydotool import _daemon_unreachable_message
-from ges2t.interfaces import StatusUI
+from ges2t.interfaces import LiveText, StatusUI
 from ges2t.notify import (
     SUPPRESSION_WINDOW_SECONDS,
     NotificationError,
@@ -85,7 +85,7 @@ class _LifecycleStatusUI:
     def error(self, message: str) -> None:
         """No-op."""
 
-    def partial(self, text: str) -> None:
+    def partial(self, live: LiveText) -> None:
         """No-op."""
 
     def stop(self) -> None:
@@ -113,7 +113,7 @@ class _RaisingStatusUI:
     def transcribing(self) -> None:
         """No-op."""
 
-    def partial(self, text: str) -> None:
+    def partial(self, live: LiveText) -> None:
         """No-op."""
 
     def error(self, message: str) -> None:
@@ -133,11 +133,11 @@ def test_every_status_ui_call_forwards_to_the_wrapped_ui() -> None:
     ui.idle()
     ui.recording()
     ui.transcribing()
-    ui.partial("live words")
+    ui.partial(LiveText(committed="live words", pending=""))
     ui.error("the engine failed")
 
     assert wrapped.calls == ["idle", "recording", "transcribing", "partial", "error"]
-    assert wrapped.partials == ["live words"]
+    assert [live.display for live in wrapped.partials] == ["live words"]
     assert wrapped.errors == ["the engine failed"]
     assert len(runner.argvs) == 1
 
@@ -149,7 +149,7 @@ def test_state_calls_and_partials_never_notify() -> None:
     ui.idle()
     ui.recording()
     ui.transcribing()
-    ui.partial("partial text must not pop up")
+    ui.partial(LiveText(committed="partial text must not pop up", pending=""))
 
     assert runner.argvs == []
 
