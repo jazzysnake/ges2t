@@ -48,7 +48,7 @@ speak → `ges2t toggle` types the right text into a text editor and a terminal.
 |---|---|---|---|---|---|
 | 22 | [xkb-keycode-mapping](core-dictation-pipeline/xkb-keycode-mapping/ticket.md) — libxkbcommon reverse lookup, generic over layouts | M | done | 2 | feat/xkb-keycode-mapping (merged) |
 | 24 | [layout-detection-and-config](core-dictation-pipeline/layout-detection-and-config/ticket.md) — live keymap, KWin D-Bus, injection config blocks | S | done | 3 | feat/layout-detection-and-config (merged) |
-| 23 | [batched-key-emission](core-dictation-pipeline/batched-key-emission/ticket.md) — one `ydotool key` batch + the latency measurement | M | to do | 7, 22, 24 | — |
+| 23 | [batched-key-emission](core-dictation-pipeline/batched-key-emission/ticket.md) — one `ydotool key` batch + the latency measurement | M | in review | 7, 22, 24 | feat/batched-key-emission |
 | 25 | [clipboard-paste-injector](core-dictation-pipeline/clipboard-paste-injector/ticket.md) — `wl-copy` + paste chord as a configured alternative | S | to do | 23, 24 | — |
 
 ## Epic 2 — [Live dictation UX](live-dictation-ux/epic.md) · P1
