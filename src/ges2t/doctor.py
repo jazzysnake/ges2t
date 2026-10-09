@@ -435,6 +435,18 @@ def _pw_dump_node_names() -> frozenset[str] | None:
     return frozenset(names)
 
 
+def _defuse_backend_network() -> None:
+    """Set ges2t's telemetry/offline overrides before the backend is imported.
+
+    Process-local only: nothing is written to disk. Doctor imports ``needle`` to
+    prove it is importable, and the same environment ``WhistleTranscriber.load``
+    applies keeps a future package version's import-time telemetry from firing;
+    ``HF_HUB_OFFLINE=1`` makes a stray hub access a loud local error instead of a
+    download (ADR 0007, ADR 0018).
+    """
+    os.environ.update(model_store.env_overrides())
+
+
 def _default_tray_assertion() -> None:
     """Import and run the AppIndicator assertion. It imports modules, no icon.
 
@@ -665,11 +677,15 @@ def check_engine_present(*, target: ArtifactTarget | None = None) -> CheckResult
 
 
 def check_cactus_needle_importable(
-    *, importer: PackageImporter | None = None
+    *,
+    importer: PackageImporter | None = None,
+    defuse: Callable[[], None] | None = None,
 ) -> CheckResult:
     """The ``needle`` package (from the ``cactus-needle`` distribution) must import."""
     name = "cactus-needle importable"
     do_import = importer if importer is not None else importlib.import_module
+    apply_defusing = defuse if defuse is not None else _defuse_backend_network
+    apply_defusing()
     try:
         module = do_import("needle")
     except Exception as exc:

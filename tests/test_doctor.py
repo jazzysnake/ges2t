@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -373,6 +374,21 @@ def test_cactus_needle_importable_ok() -> None:
     result = check_cactus_needle_importable(importer=lambda name: module)
 
     assert result.status is CheckStatus.OK
+
+
+def test_cactus_needle_import_defuses_telemetry_and_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NEEDLE_TELEMETRY", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+
+    result = check_cactus_needle_importable(importer=lambda name: types.ModuleType(name))
+
+    assert result.status is CheckStatus.OK
+    assert os.environ["NEEDLE_TELEMETRY"] == "0"
+    assert os.environ["DO_NOT_TRACK"] == "1"
+    assert os.environ["HF_HUB_OFFLINE"] == "1"
 
 
 def test_cactus_needle_importable_fail_says_uv_sync() -> None:
