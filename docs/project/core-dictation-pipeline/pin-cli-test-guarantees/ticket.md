@@ -1,7 +1,7 @@
 # Pin the CLI test guarantees (two falsified gaps)
 
 - **Priority:** P2
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** XS
 - **Epic:** ../epic.md
 
@@ -36,24 +36,24 @@ Modify **only** `tests/test_cli.py`. No production code may change — if a fix 
 changing `src/ges2t/cli.py`, **stop**: that would mean F1 or F2 is a real defect, which is a far
 more interesting finding. Comment, set the ticket `blocked`, and report.
 
-- [ ] **F1:** the laziness test genuinely detects an **import-time** dependency. Use a real
+- [x] **F1:** the laziness test genuinely detects an **import-time** dependency. Use a real
       subprocess with a clean interpreter (e.g. `python -c "import ges2t.cli"` then inspect
       `sys.modules`), so that a top-level `import pystray`/`import needle` in `cli.py` makes the
       test **fail**.
-- [ ] **Prove it:** temporarily add a top-level `import pystray` to `src/ges2t/cli.py`, confirm the
+- [x] **Prove it:** temporarily add a top-level `import pystray` to `src/ges2t/cli.py`, confirm the
       test now **fails**, then revert `cli.py` completely (`git status` must be clean of it). Paste
       that output. A laziness test that has never been seen to fail is not a test.
-- [ ] Keep the test fast — a subprocess import costs tens of milliseconds, which is fine; do not
+- [x] Keep the test fast — a subprocess import costs tens of milliseconds, which is fine; do not
       turn it into something that starts a service or downloads anything.
-- [ ] **F2:** the documented exit-code **literals** are pinned independently of the constants, so
+- [x] **F2:** the documented exit-code **literals** are pinned independently of the constants, so
       that changing a constant breaks the suite. Assert `2` for the service-absent path and `3` for
       the engine/injection-failure path by literal value, with a comment saying that ADR 0016
       documents them as user-facing API.
-- [ ] **Prove it:** temporarily mutate `EXIT_SERVICE_NOT_RUNNING` in `cli.py` to `7`, confirm the
+- [x] **Prove it:** temporarily mutate `EXIT_SERVICE_NOT_RUNNING` in `cli.py` to `7`, confirm the
       test now **fails**, then revert completely. Paste that output.
-- [ ] `uv run pytest` and **`uv run mypy src/ges2t tests`** (ADR 0019 covers tests) both pass.
+- [x] `uv run pytest` and **`uv run mypy src/ges2t tests`** (ADR 0019 covers tests) both pass.
       Report before/after counts; no test may be deleted, skipped, or weakened — only strengthened.
-- [ ] `001-comment.md` records: what each test claimed vs what it actually checked, the falsification
+- [x] `001-comment.md` records: what each test claimed vs what it actually checked, the falsification
       output for both, and any **other** test in the suite you noticed that could not fail.
 
 ## Notes
