@@ -62,6 +62,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import threading
 import time
 import warnings
 from collections.abc import Mapping, Sequence
@@ -139,11 +140,42 @@ _NAMED_KEY_CODES: Mapping[str, int] = {
     "super": 125,
     "meta": 125,
     "insert": 110,
-    "v": 47,
-    "c": 46,
-    "x": 45,
+}
+
+#: The real evdev letter block, keyed by the lower-case letter. The block is
+#: **not** contiguous alphabetically -- it is ``QWERTYUIOP`` (16..25),
+#: ``ASDFGHJKL`` (30..38), and ``ZXCVBNM`` (44..50). Resolving a letter with
+#: ``30 + (ord(letter) - ord("a"))`` is wrong for 21 of the 26 letters and maps
+#: ``q`` to ``c`` (16 -> 46) and ``r`` to ``v`` (19 -> 47): a config typo would
+#: silently emit a *different*, potentially destructive chord. The table is the
+#: single source of truth, and a letter absent from it is rejected loudly.
+_LETTER_KEY_CODES: Mapping[str, int] = {
+    "q": 16,
+    "w": 17,
+    "e": 18,
+    "r": 19,
+    "t": 20,
+    "y": 21,
+    "u": 22,
+    "i": 23,
+    "o": 24,
+    "p": 25,
     "a": 30,
+    "s": 31,
+    "d": 32,
+    "f": 33,
+    "g": 34,
+    "h": 35,
+    "j": 36,
+    "k": 37,
+    "l": 38,
     "z": 44,
+    "x": 45,
+    "c": 46,
+    "v": 47,
+    "b": 48,
+    "n": 49,
+    "m": 50,
 }
 
 #: The set of codes above that are modifiers rather than the chord's final key.
@@ -315,7 +347,7 @@ def _run_command(
         )
     script = "sleep " + format(delay_s, ".3f") + '; exec "$@"'
     try:
-        subprocess.Popen(
+        proc = subprocess.Popen(
             ["sh", "-c", script, "sh", *argv],
             stdin=subprocess.PIPE,
             env=environment,
@@ -323,7 +355,6 @@ def _run_command(
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        stdin_bytes = b""
     except OSError:
         # The deferred run could not even start; the caller treats this as a
         # failed best-effort restore. Surface it as a synthetic non-zero status
@@ -331,9 +362,44 @@ def _run_command(
         return subprocess.CompletedProcess(
             args=list(argv), returncode=1, stdout=b"", stderr=b"restore spawn failed"
         )
+    # D1: the child sleeps before it ``exec``s, so ``stdin_bytes`` has to be fed
+    # to the child's pipe and the write end closed, otherwise the eventual
+    # ``wl-copy`` reads EOF and restores an **empty** selection. A daemon thread
+    # does the write so a selection larger than the pipe buffer cannot block the
+    # service's command loop while the child is still sleeping; the thread keeps
+    # the ``Popen`` alive, so the pipe stays open until the bytes are in it.
+    _start_deferred_stdin(proc, stdin_bytes)
     return subprocess.CompletedProcess(
         args=list(argv), returncode=0, stdout=b"", stderr=b""
     )
+
+
+def _start_deferred_stdin(proc: subprocess.Popen[bytes], payload: bytes) -> None:
+    """Feed ``payload`` to a detached child's stdin and close it, off-thread."""
+    threading.Thread(
+        target=_write_stdin_and_close,
+        args=(proc, payload),
+        daemon=True,
+    ).start()
+
+
+def _write_stdin_and_close(proc: subprocess.Popen[bytes], payload: bytes) -> None:
+    """Write ``payload`` to ``proc.stdin`` and close it (best effort)."""
+    stream = proc.stdin
+    if stream is None:  # pragma: no cover - deferred runs always use PIPE
+        return
+    try:
+        stream.write(payload)
+        stream.flush()
+    except (BrokenPipeError, OSError):
+        # The child died before reading (for example the compositor vanished).
+        # A restore is best effort, so a lost write is not an error.
+        pass
+    finally:
+        try:
+            stream.close()
+        except OSError:  # pragma: no cover - close is idempotent/best effort
+            pass
 
 
 def _clipboard_environment() -> dict[str, str]:
@@ -417,20 +483,23 @@ class KeyChord:
 def _resolve_code(segment: str) -> int | None:
     """Resolve one chord segment to a Linux/evdev keycode, or ``None``.
 
-    Named keys win; a single ASCII letter or digit falls back to the same
-    10-position row as ``KEY_1``..``KEY_0`` and the contiguous letter block, so
-    ``"ctrl+v"`` and ``"ctrl+shift+V"`` (already lower-cased) both work.
+    Named keys win. A single letter is looked up in :data:`_LETTER_KEY_CODES`,
+    the real evdev letter block (``QWERTYUIOP``, ``ASDFGHJKL``, ``ZXCVBNM``),
+    never with arithmetic on the alphabet: the block is not contiguous, so the
+    old ``30 + (ord(upper) - ord("A"))`` silently mapped ``ctrl+q`` to
+    ``ctrl+c`` and ``ctrl+r`` to ``ctrl+v`` (D2). A digit uses the genuinely
+    contiguous ``KEY_1``..``KEY_0`` row (codes 2..11).
     """
     named = _NAMED_KEY_CODES.get(segment)
     if named is not None:
         return named
     if len(segment) == 1:
-        upper = segment.upper()
-        if "A" <= upper <= "Z":
-            return 30 + (ord(upper) - ord("A"))
-        if "1" <= upper <= "9":
-            return 2 + (ord(upper) - ord("1"))
-        if upper == "0":
+        letter = _LETTER_KEY_CODES.get(segment)
+        if letter is not None:
+            return letter
+        if "1" <= segment <= "9":
+            return 2 + (ord(segment) - ord("1"))
+        if segment == "0":
             return 11
     return None
 
@@ -524,6 +593,14 @@ class ClipboardPasteInjector:
         except FileNotFoundError:
             # A missing wl-paste is not fatal: injection needs wl-copy and the
             # chord. It only costs the courtesy of restoring the old selection.
+            return None
+        except subprocess.TimeoutExpired:
+            # D3: a wedged compositor is the same "nothing restorable" case as a
+            # missing wl-paste. The read is a courtesy; failing the transcript
+            # write and paste because the *previous* selection could not be read
+            # would break the injection for the wrong reason. Tolerated here, so
+            # the read never escapes as a raw TimeoutExpired; the payload write
+            # and the chord still go through the typed timeout path in ``_run``.
             return None
         if completed.returncode != 0 or not completed.stdout:
             return None

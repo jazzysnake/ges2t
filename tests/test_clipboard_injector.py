@@ -22,9 +22,12 @@ The headline behaviours pinned here:
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
+import time
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 
 import pytest
 
@@ -43,6 +46,7 @@ from ges2t.injectors.clipboard import (
     KeyChord,
     WL_COPY_BINARY,
     WL_PASTE_BINARY,
+    _run_command,
     is_modifier_keycode,
 )
 from ges2t.injectors.layout import (
@@ -424,6 +428,88 @@ def test_restore_spawn_failure_does_not_fail_injection() -> None:
     assert runner.restore_calls() != []
 
 
+# --- the real deferred runner seam: stdin actually reaches the child (D1) -----
+
+
+class DelegatingRestoreRunner:
+    """A fake runner that hands the deferred restore to the *real* seam.
+
+    Every call is recorded and answered synthetically except the deferred
+    ``wl-copy`` restore, which is retargeted to the harmless ``tee`` and run by
+    the real :func:`_run_command`. The plain fake recorded ``stdin=previous``
+    while the real deferred branch dropped it (D1), so this pins the injector ->
+    real-seam contract without touching the clipboard.
+    """
+
+    def __init__(self, target: Path) -> None:
+        self._target = target
+        self._fake = FakeClipboardRunner(paste_stdout=b"previous")
+        self.calls: list[ClipboardRunnerCall] = []
+
+    def __call__(
+        self,
+        argv: Sequence[str],
+        stdin_bytes: bytes,
+        env: Mapping[str, str],
+        *,
+        delay_s: float | None = None,
+    ) -> subprocess.CompletedProcess[bytes]:
+        self.calls.append(
+            ClipboardRunnerCall(
+                argv=tuple(argv), stdin=stdin_bytes, env=dict(env), delay_s=delay_s
+            )
+        )
+        if delay_s is not None and argv[0] == WL_COPY_BINARY:
+            return _run_command(
+                ("tee", str(self._target)), stdin_bytes, env, delay_s=delay_s
+            )
+        return self._fake(argv, stdin_bytes, env, delay_s=delay_s)
+
+
+def _wait_for_bytes(target: Path, expected: bytes) -> None:
+    """Poll for a detached child to finish writing ``expected`` to ``target``."""
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        if target.exists() and target.read_bytes() == expected:
+            return
+        time.sleep(0.02)
+
+
+def test_real_deferred_runner_delivers_stdin_bytes(tmp_path: Path) -> None:
+    """The REAL ``_run_command`` deferred branch must feed the child's stdin.
+
+    The old runner kept the bytes in a dead assignment and let the ``Popen``
+    object go out of scope, so the child read EOF and restored an **empty**
+    selection. This exercises the real branch with ``tee`` writing only under
+    ``tmp_path`` -- no clipboard, no keystroke -- so the fake and the real seam
+    cannot disagree again.
+    """
+    target = tmp_path / "restore.bin"
+    payload = b"PREVIOUS-SELECTION"
+
+    completed = _run_command(("tee", str(target)), payload, dict(os.environ), delay_s=0.05)
+
+    assert completed.returncode == 0
+    _wait_for_bytes(target, payload)
+    assert target.exists(), "the detached child never wrote its output"
+    assert target.read_bytes() == payload
+
+
+def test_restore_bytes_reach_the_real_deferred_child(tmp_path: Path) -> None:
+    """The injector's restore bytes traverse the real deferred runner (D1 E2E)."""
+    target = tmp_path / "restore-e2e.bin"
+    runner = DelegatingRestoreRunner(target)
+    injector = ClipboardPasteInjector(
+        paste_keys=("ctrl+v",), trailing_space=True, runner=runner
+    )
+
+    injector.inject("hi")
+
+    _wait_for_bytes(target, b"previous")
+    assert target.exists()
+    assert target.read_bytes() == b"previous"
+
+
 # --- delivery failures are typed and actionable -------------------------------
 
 
@@ -450,6 +536,29 @@ def test_missing_wl_paste_is_tolerated() -> None:
 
     assert runner.ydotool_calls()[0].argv[4:] == ("29:1", "47:1", "47:0", "29:0")
     assert runner.restore_calls() == []
+
+
+def test_wl_paste_timeout_is_tolerated_like_a_missing_binary() -> None:
+    """D3: a wedged-compositor read timeout is best effort, not a fatal error.
+
+    The read only enables the courtesy restore. Letting a raw
+    ``subprocess.TimeoutExpired`` escape would fail an injection whose payload
+    write and paste are still viable, so the timeout is treated exactly like a
+    missing ``wl-paste`` (``return None``).
+    """
+    runner = FakeClipboardRunner(
+        raise_for={
+            WL_PASTE_BINARY: subprocess.TimeoutExpired(cmd="wl-paste", timeout=5.0)
+        }
+    )
+    injector = _injector(runner)
+
+    # If the timeout escaped untyped this call would raise, failing the test.
+    injector.inject("text")
+
+    assert runner.ydotool_calls()[0].argv[4:] == ("29:1", "47:1", "47:0", "29:0")
+    assert runner.restore_calls() == []
+    assert injector.last_injection_ms is not None
 
 
 def test_missing_ydotool_raises_not_found() -> None:
@@ -564,6 +673,53 @@ def test_letter_and_digit_keys_resolve_without_offset() -> None:
     assert KeyChord.parse("ctrl+z").keycodes == (29, 44)
     assert KeyChord.parse("ctrl+1").keycodes == (29, 2)
     assert KeyChord.parse("ctrl+0").keycodes == (29, 11)
+
+
+#: The real evdev codes of the whole letter block, written out independently of
+#: the module under test so a mutation cannot keep this table in sync with the
+#: implementation. The block is QWERTYUIOP / ASDFGHJKL / ZXCVBNM, not
+#: a..z contiguous.
+_EVDEV_LETTER_CODES: Mapping[str, int] = {
+    "q": 16,
+    "w": 17,
+    "e": 18,
+    "r": 19,
+    "t": 20,
+    "y": 21,
+    "u": 22,
+    "i": 23,
+    "o": 24,
+    "p": 25,
+    "a": 30,
+    "s": 31,
+    "d": 32,
+    "f": 33,
+    "g": 34,
+    "h": 35,
+    "j": 36,
+    "k": 37,
+    "l": 38,
+    "z": 44,
+    "x": 45,
+    "c": 46,
+    "v": 47,
+    "b": 48,
+    "n": 49,
+    "m": 50,
+}
+
+
+@pytest.mark.parametrize("letter,code", sorted(_EVDEV_LETTER_CODES.items()))
+def test_every_letter_resolves_to_its_real_evdev_code(letter: str, code: int) -> None:
+    """D2: the whole 26-letter block, not just the five hardcoded ones."""
+    assert KeyChord.parse(f"ctrl+{letter}").keycodes == (KEY_LEFTCTRL, code)
+
+
+def test_no_letter_silently_resolves_to_a_different_key() -> None:
+    """D2's damaging case: a typo'd ctrl+r must never become ctrl+v."""
+    assert KeyChord.parse("ctrl+q").keycodes == (29, 16)
+    assert KeyChord.parse("ctrl+r").keycodes == (29, 19)
+    assert KeyChord.parse("ctrl+r").keycodes != KeyChord.parse("ctrl+v").keycodes
 
 
 def test_spelling_is_case_insensitive_and_accepts_variants() -> None:
