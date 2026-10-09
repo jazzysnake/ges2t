@@ -94,3 +94,45 @@ ADR 0011, ADR 0019.
   **never commit audio**. The microphone is live during a capture, so keep the window brief.
 - The user's live confirmation (silence, double-tap, quiet speech, and a normal dictation) remains
   **user-owned**; provide exact steps and leave the box unticked.
+
+## Status: PAUSED by the user
+
+The user asked to pause this work:
+
+> *"I am sitting in a car right now with the window open, so I think we can postpone this. we dont
+> need to get stuck on this, since absolute silence is not a regular input and the model works kinda
+> well for regular input."*
+
+**That is a reasonable call, and it also supplied the missing piece of the diagnosis.**
+
+1. **The measured "idle" may be environmental noise, not a device floor.** A car with the window
+   open produces precisely the measured signature — broadband ≈20–25 Hz rumble at amplitude ≈0.04
+   (wind and road noise). So the idle population this ticket calibrated against is plausibly
+   **wind/road rumble**, which means the previous diagnostic's "could not determine the physical
+   origin" has a strong candidate, and the failure is **environment-dependent** rather than a property
+   of silence. In a quiet room the original amplitude gate probably worked all along.
+2. **The cost may bite in exactly the noisy case.** The measured quiet-speech cost (the gate keeps
+   gain ≥ 0.4 with the real floor present, where the engine reaches 0.1) was measured *with that LF
+   noise floor present* — i.e. in the kind of environment where the user actually dictates. If real
+   speech over the measured noise floor does not clear `SPEECH_BAND_RATIO ≥ 0.15`, this gate would
+   **drop real dictation**, which is worse than the bug it fixes.
+3. **Absolute silence was never a requirement.** ADR 0000's bar is "good enough", and the user judges
+   it met for normal speech. Chasing silence indefinitely is not serving v1.
+
+**Decision: the branch is PARKED, not merged.** The implementation and its evidence stay on
+`feat/speech-gate-recalibration`; the ticket stays `in review`. Before any merge, the user should test
+in **both** environments:
+
+| Environment | What to check |
+|---|---|
+| **Quiet room** | silence → nothing; double-tap → nothing; quiet speech still transcribes |
+| **Noisy (car, window open)** | **does normal speech still transcribe?** — the question that decides whether this gate is an improvement or a regression |
+
+If speech is dropped in the noisy case, the two honest options are: lower `SPEECH_BAND_RATIO`
+(accepting more hallucination on noise), or address the noise **at the input** (a PipeWire high-pass,
+a different capture device, or disabling AGC/ALC), which would remove the root cause and let the gate
+be gentler. **Neither is to be built speculatively.**
+
+**Do not reopen this without the user's real-world result.** Ticket 29 (the amplitude-based gate) is
+merged and is what ships today; this ticket exists to improve the noisy-input case, not to fix a
+regression.
