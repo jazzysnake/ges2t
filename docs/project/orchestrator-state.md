@@ -52,25 +52,24 @@ Original orchestrator brief: `.pi/prompts/orchestrate-project.md`.
   21 `11b1bf3`, 26 `ceee7a2`, 11 `338cdc2`, 22 `0a2074a`, 23 `b4aa911`, 15 `2ba0a3a`, 28 `37e8937`.
 - 21 ADRs (0000–0020), **28 tickets**, 2 epics.
 
-## 5. Board state (22 of 28 done)
+## 5. Board state (24 of 29 done)
 
-**Done (22 of 28):** 1 project-scaffold · 2 core-interfaces-and-fakes · 3 config-loading ·
+**Done (24 of 29):** 1 project-scaffold · 2 core-interfaces-and-fakes · 3 config-loading ·
 4 whistle-engine-config · 5 model-store-and-verification · 6 audio-capture-pw-record ·
 7 ydotool-injector · 8 whistle-transcriber-adapter-batch · 9 service-state-machine-and-socket ·
 10 cli-surface-and-commands · 13 streaming-window-engine · 14 whistle-streaming-adapter ·
 20 type-check-whole-tree · 24 layout-detection-and-config (`a6ba892`) · 21 status-ui-outside-lock
 (`11b1bf3`) · 26 pin-cli-test-guarantees (`ceee7a2`) · 11 dictation-pipeline-batch (`338cdc2`) ·
-22 xkb-keycode-mapping (`0a2074a`) · 23 batched-key-emission (`b4aa911`) ·
-**15 streaming-session** (`2ba0a3a`) · **28 injection-delay-default** (`37e8937`)
+22 xkb-keycode-mapping (`0a2074a`) · 23 batched-key-emission (`b4aa911`) · 15 streaming-session
+(`2ba0a3a`) · 28 injection-delay-default (`37e8937`) · **17 tray-status-ui** (four review rounds) ·
+**16 streaming-wiring-and-e2e**
 
-**In review / in flight (see §6):** **17 tray-status-ui** — a third review returned `changes requested`
-because narrowing the fallback dropped thread-start failures, so a broken tray could stop ges2t
-starting at all (an ADR 0013 regression introduced by the previous fix; being fixed locally at
-`thread.start()`) · **25 clipboard-paste-injector** — implementer resumed after a connection death;
-its `clipboard.py` had been left uncommitted
+**In review / in flight (see §6):** **29 silence-gate** — the review ruled the RMS+duration gate
+**narrows but does NOT fix** the user's bug, so the implementer is rebuilding it as a frame-level
+sustained-energy gate · **12 doctor-command** and **18 notifications-and-cancel** — implemented, in
+review · **25 clipboard-paste-injector** — implemented, in review
 
-**To do:** 12 doctor-command (needs 17) · 16 streaming-wiring-and-e2e (needs 15) ·
-18 notifications-and-cancel (needs 17) · 19 user-documentation-and-setup-guide (needs everything)
+**To do:** 19 user-documentation-and-setup-guide (the last ticket; needs everything)
 
 **28 injection-delay-default** is new and was filed from ticket 23's measurement: `0`/`6`/`12` ms were
 measured and only `0` (47.9 ms, byte-perfect) fits ADR 0001's budget, so the shipped default of `12`
@@ -297,6 +296,36 @@ numbers are **not independently reproducible** (the captures were deleted) — t
 the evidence and recomputed the md5 and the linear model rather than re-running it.
 
 ## 10. Open items not yet ticketed / to watch
+
+### The silence hallucination (ticket 29) — the premise was wrong, twice corrected
+
+The user toggled recording on and off **without speaking** and got **`thank you`** typed. Investigating
+it produced three findings, each of which overturned the previous explanation:
+
+1. **"Near-silent audio" was the wrong premise.** All-zeros and low-level noise return `''` at every
+   level tested. Nothing in `src/` had any silence/amplitude/RMS/VAD handling, and the zero-samples rule
+   never fired (`../batched-key-emission`'s sibling reasoning: a live mic captures plenty of quiet
+   samples). So an input-side gate is right, but *"silence"* was the wrong name for the trigger.
+2. **The real triggers** are **flat DC**, **50 Hz mains hum**, and **short transients** — one 5 ms click
+   in 500 ms returns `'Thank you.'`. The realistic gesture (silence with **key clicks at both ends**,
+   0.3–3 s — which a hotkey toggle inevitably produces) returns `'you'`/`'Bye.'`/`'Thank you.'`.
+3. **RMS alone cannot fix it.** `AC RMS ≥ 0.0005` (mean-removed) plus `≥ 100 ms` fixes DC and the
+   accidental double-tap, but a realistic silent toggle measures **0.0013–0.0032 AC RMS — 2.6–6.5×
+   over the threshold** — so it still hallucinates. To pass the gate a click peak would have to be
+   `< ~0.0077`, far quieter than a real key click. **Verdict: narrowed, not fixed.** The correct
+   mechanism is a **frame-level / sustained-energy gate** (a click is one ~20 ms frame; speech is
+   many), which is what the follow-up is building.
+
+**Lesson worth keeping:** two rounds of "well-evidenced, well-argued" work still missed the user's
+actual bug, and only a reviewer **doing the arithmetic** (RMS of a realistic click-laden buffer vs the
+threshold) showed the fix was aimed at inputs that never failed in the first place. "This ticket is
+rigorous" is not the same as "this ticket fixes the reported symptom".
+
+**Unresolved unless measured:** whether 50 Hz hum is a live trigger on this microphone. It is **AC**,
+so mean-removal does not touch it. The implementer must either fix it with a filter it can show does
+**not** attenuate speech, or record it as a known remaining trigger with its measured level.
+
+### Other open items
 
 - **`cactus-needle==3.1.3` vs engine pin `3.2.0`** — pre-existing skew, documented in ticket 8's
   review. Ticket 12 (`doctor`) is already required to report both versions and warn on drift,
