@@ -1,7 +1,7 @@
 # Streaming wiring and end-to-end verification
 
 - **Priority:** P1
-- **Status:** in review
+- **Status:** done
 - **Complexity:** S
 - **Epic:** ../epic.md
 
@@ -65,7 +65,19 @@ Relevant decisions: ADR 0011 (default-on, capability flag, window/chunk from
 - Keep the selection logic to a couple of lines in one place. If it grows a third branch,
   that is a sign a capability needs to move onto the `Transcriber` protocol — which would be
   an ADR-level change (ADR 0010).
-- Do not touch `service.py`; the service is already session-agnostic (ADR 0015).
+- ~~Do not touch `service.py`; the service is already session-agnostic (ADR 0015).~~ — **partly
+  superseded; read carefully.** The service *did* need one change after all: ticket 15's
+  `003-review.md` recorded a follow-up **for the service layer** (whether a >5 s final flush at
+  shutdown should be surfaced rather than silently dropped), and resolving it required a `WARNING`
+  when `shutdown()` gives up on an in-flight transcription. That edit is logging-only and is
+  justified in `001-comment.md` and `002-review.md`. **The second half of the instruction still
+  holds exactly: no session-selection logic may live in `service.py`** — the service stays
+  session-agnostic (ADR 0010/0015), which `002-review.md` verified. Do not read the strike-through as
+  permission to move composition into the service.
+
+- Known non-blocking wording nit: the shutdown `WARNING` says the utterance "was not typed", but the
+  joined worker's lifetime also spans the injection call, so on some paths the message could be
+  slightly stronger than the truth. Pre-existing and recorded rather than fixed here.
 - Do not add a config key for session selection beyond `streaming.enabled`. "Which session" is
   derived, not configured, except by the one global switch the user asked for.
 
