@@ -1,7 +1,7 @@
 # Layout-aware text→keycode mapping (libxkbcommon)
 
 - **Priority:** P1
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** M
 - **Epic:** ../epic.md
 
@@ -60,8 +60,9 @@ import `subprocess`, `socket`, or anything that talks to a daemon.
         single-layout test would pass with a hardcoded table);
       - the confirmed `hu` corruptions are fixed: `0` must **not** resolve to the keycode that
         produces `ö`;
-      - Hungarian `ő` / `ű` resolve to a direct keycode with no modifier (research: `AD11`=34,
-        `BKSL`=51);
+      - Hungarian `ő` / `ű` resolve to a direct keycode with no modifier. The Linux/evdev
+        `KEY_*` codes emitted are `26` / `43` (research XKB keycodes: `AD11`=34, `BKSL`=51;
+        `Linux = XKB − 8`), because `KeyEvent.keycode` is what `ydotool key` consumes;
       - a level-3 character on `hu` includes `KEY_RIGHTALT` (100) in its sequence;
       - modifier ordering: for a shifted character, the events are shift-down, key-down,
         key-up, shift-up;
