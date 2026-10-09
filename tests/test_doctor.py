@@ -614,22 +614,26 @@ def test_tray_backend_fail_with_a_fake_xorg_pystray(
     assert result.fix is not None and "python-gobject" in result.fix
 
 
-def test_tray_failures_ok_without_a_provider() -> None:
+def test_tray_failures_warn_without_a_provider_instead_of_claiming_ok() -> None:
+    """No provider must not read as verification; it says the state is unknown."""
     result = check_tray_failures(failure_report=None)
 
-    assert result.status is CheckStatus.OK
+    assert result.status is not CheckStatus.OK
+    assert result.status is CheckStatus.WARN
+    assert "cannot be determined" in result.summary
+    assert result.fix is not None and "ges2t run" in result.fix
 
 
 def test_tray_failures_ok_when_the_tray_worked() -> None:
     assert check_tray_failures(failure_report=lambda: None).status is CheckStatus.OK
 
 
-def test_tray_failures_warn_with_the_recorded_summary() -> None:
+def test_tray_failures_fail_with_the_recorded_summary() -> None:
     report = TrayFailure(count=3, last_message="state update: no display")
 
     result = check_tray_failures(failure_report=lambda: report)
 
-    assert result.status is CheckStatus.WARN
+    assert result.status is CheckStatus.FAIL
     assert result.summary == report.summary()
     assert result.fix is not None
 
@@ -1092,3 +1096,31 @@ def test_doctor_parser_accepts_verify() -> None:
     args = cli.build_parser().parse_args(["doctor", "--verify"])
 
     assert args.verify is True
+
+
+def test_doctor_with_a_genuinely_missing_module_prints_the_curated_message() -> None:
+    """A fresh interpreter whose ges2t.doctor is unimportable must name it.
+
+    The in-process test above passes even with the buggy ordering, because the
+    test module has already imported ges2t.doctor; only a fresh interpreter with
+    the module blocked exercises the real path (review 002, finding 4).
+    """
+    script = (
+        "import sys\n"
+        "class BlockDoctor:\n"
+        "    def find_spec(self, name, path=None, target=None):\n"
+        "        if name == 'ges2t.doctor':\n"
+        "            raise ImportError('blocked for the test')\n"
+        "        return None\n"
+        "sys.meta_path.insert(0, BlockDoctor())\n"
+        "from ges2t import cli\n"
+        "raise SystemExit(cli.main(['doctor']))\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=60
+    )
+
+    assert completed.returncode == 1
+    assert "ges2t.doctor.run_doctor" in completed.stderr
+    assert "not available in this build" in completed.stderr
+    assert "unexpected failure" not in completed.stderr

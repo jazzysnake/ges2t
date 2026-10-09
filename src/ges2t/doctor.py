@@ -869,21 +869,30 @@ def check_tray_failures(*, failure_report: TrayFailureProbe | None = None) -> Ch
 
     ``service.py`` contains every ``StatusUI`` callback exception, so a tray that
     raises on every call simply stops updating with no signal. ``TrayStatusUI``
-    records its own failures; this check turns that record into a line. The
-    provider is injectable because the record lives in the service process --
-    a future ``status`` wire-up supplies it, and doctor stays writable-free.
+    records its own failures; when a provider is injected this check turns that
+    record into a line -- ``OK`` when nothing failed, ``FAIL`` when the record
+    exists.
+
+    **With no provider this is a ``WARN``, never ``OK``.** The record genuinely
+    lives in the running service process and doctor neither writes nor opens a
+    socket to it, so an ``OK`` line here would claim health doctor cannot
+    observe; the summary says so and the fix names where the failures do surface
+    (the service's stderr and its shutdown summary). A check that cannot fail is
+    worse than no check, because it reads as verification.
     """
     name = "Tray failures"
     if failure_report is None:
-        return _ok(
+        return _warn(
             name,
-            "no in-process tray failure record is available; the running service "
-            "prints tray failures to stderr and again at shutdown",
+            "tray failures cannot be determined from here: the record lives in the "
+            "running service process, and doctor does not connect to it or write a file",
+            "watch the service's stderr for 'ges2t: the tray has failed ...' lines and "
+            "its shutdown summary, or run 'ges2t run' in a terminal to see them",
         )
     report = failure_report()
     if report is None:
         return _ok(name, "the tray has recorded no failures")
-    return _warn(
+    return _fail(
         name,
         report.summary(),
         "restart 'ges2t run' and read the tray messages; a tray that keeps "

@@ -449,9 +449,13 @@ def _handle_doctor(args: argparse.Namespace) -> int:
     file and print the error and its fix in the same report (ADR 0009).
     """
     from ges2t.config import ConfigError, default_config, load_config, resolve_config_path
+
+    # The entry point is resolved *before* importing DoctorOptions: a build with
+    # no ges2t.doctor must hit the curated MissingImplementationError, not a bare
+    # ModuleNotFoundError from the option import (review 002, finding 4).
+    run_doctor = _load_doctor_entry_point()
     from ges2t.doctor import DoctorOptions
 
-    run_doctor = _load_doctor_entry_point()
     path = resolve_config_path(getattr(args, "config", None))
     try:
         config = load_config(path).config
