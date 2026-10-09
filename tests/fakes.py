@@ -195,22 +195,31 @@ class FakeTranscriber:
 
 
 class FakeInjector:
-    """An in-memory :class:`~ges2t.interfaces.Injector`.
+    """An in-memory :class:`~ges2t.interfaces.Injector` and raw text typer.
 
-    ``injected`` holds the successful payloads in order. Set ``error`` (or pass
-    it to the constructor) to make :meth:`inject` raise instead of recording.
+    ``injected`` holds the successful batch payloads in order. ``typed`` holds
+    the raw payloads :meth:`type_text` was given, so a streaming test can assert
+    the exact incremental typing sequence. Set ``error`` (or pass it to the
+    constructor) to make either method raise instead of recording.
     """
 
     def __init__(self, *, error: Exception | None = None) -> None:
         self.error = error
         self.calls: list[str] = []
         self.injected: list[str] = []
+        self.typed: list[str] = []
 
     def inject(self, text: str) -> None:
         self.calls.append("inject")
         if self.error is not None:
             raise self.error
         self.injected.append(text)
+
+    def type_text(self, text: str) -> None:
+        self.calls.append("type_text")
+        if self.error is not None:
+            raise self.error
+        self.typed.append(text)
 
 
 class FakeStatusUI:

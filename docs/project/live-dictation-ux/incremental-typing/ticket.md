@@ -1,7 +1,7 @@
 # Incremental typing of committed text
 
 - **Priority:** P1
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** M
 - **Epic:** ../epic.md
 

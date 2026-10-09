@@ -35,8 +35,10 @@ __all__ = [
     "AudioSource",
     "Injector",
     "LiveText",
+    "LiveTyper",
     "ProgressCallback",
     "StatusUI",
+    "TextTyper",
     "Transcriber",
     "TranscriptionResult",
     "TranscriptionSegment",
@@ -215,6 +217,46 @@ class Injector(Protocol):
 
     def inject(self, text: str) -> None:
         """Type ``text`` into the focused window and return once delivered."""
+        ...
+
+
+@runtime_checkable
+class TextTyper(Protocol):
+    """Types an exact payload verbatim, adding nothing (ticket 34).
+
+    The batch :class:`Injector` applies ADR 0012 on every call: it appends one
+    trailing space to a non-empty utterance. The streaming path types the
+    engine's committed prefix in several pieces and applies that single trailing
+    space **once** at the end, so it needs a primitive that types an exact
+    payload and adds nothing. Only the ``ydotool`` backend implements this; the
+    clipboard backend cannot, because it pastes a whole selection at a time, and
+    ticket 34 refuses that combination at startup rather than silently
+    rewriting the clipboard on every commit.
+    """
+
+    def type_text(self, text: str) -> None:
+        """Type ``text`` verbatim into the focused window; append no space."""
+        ...
+
+
+@runtime_checkable
+class LiveTyper(Protocol):
+    """Types the committed streaming prefix as it is committed (ticket 34).
+
+    ``type_committed`` is called with each cumulative ``LiveText.committed``
+    value the streaming session reports; ``finish`` is called exactly once with
+    the final transcript. An implementation must type every character
+    **exactly once** and apply ADR 0012's trailing-space rule once, at the end.
+    Only the committed value is ever typed: ``LiveText.pending`` is revised
+    before commit and must never reach the focused window.
+    """
+
+    def type_committed(self, committed: str) -> None:
+        """Type the part of the cumulative ``committed`` prefix not yet typed."""
+        ...
+
+    def finish(self, final_text: str) -> None:
+        """Reconcile against the final transcript and finish the utterance."""
         ...
 
 

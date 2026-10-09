@@ -328,7 +328,12 @@ class TrayStatusUI:
         self._set_state(StatusState.ERROR)
 
     def partial(self, live: LiveText) -> None:
-        """Show display-only live text in the tooltip; it is **never** typed (ADR 0011)."""
+        """Show display-only live text in the tooltip.
+
+        The ``display`` (committed + pending) is never typed; the committed
+        prefix is typed as it is committed by the live typer (ADR 0011 as
+        amended by ticket 34).
+        """
         self._partial = live.display
         self._apply_display()
 
