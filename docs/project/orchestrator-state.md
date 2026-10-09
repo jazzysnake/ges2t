@@ -170,12 +170,23 @@ top-level forbidden import, exit-code tests that compared against their own cons
 `sys.modules` assertion that was vacuous because the module was never installed. Each was caught by
 someone **trying to falsify a claim**. Ask reviewers for that explicitly every time.
 
-**Two operational traps found this session:**
+**Two caching traps that make a probe lie — clear both after every mutation.**
 
-- **`mypy` caches stale errors.** A mutation that leaves a file the **same byte length** can make
-  `git checkout` restore it without invalidating `.mypy_cache`, so a review reads **stale** errors
-  and can reach the wrong conclusion. Run `rm -rf .mypy_cache` before trusting a mypy result after
-  any mutation or revert. (Ticket 11's reviewer found this.)
+1. **`mypy` caches stale errors.** A mutation that leaves a file the **same byte length** can be
+   restored by `git checkout` without invalidating `.mypy_cache`, so you read **stale** errors and
+   can reach the wrong conclusion. Run `rm -rf .mypy_cache` before trusting any mypy result after a
+   mutation or revert. (Found by ticket 11's reviewer.)
+2. **Stale bytecode.** Restoring a mutated `src` file with `cp` **within the same second** leaves a
+   `.pyc` that Python accepts, so the "restored" run silently executes the **mutation**. Delete
+   `__pycache__` too. (Found by ticket 15's reviewer, who was fooled by it once.)
+
+**A hanging suite is worse than a failing one — check that the run *exits*.** Ticket 15's reviewer
+found the sharpest version yet: under a lock mutation the test phase printed
+`1 failed, 20 passed in 2.17s` and then **pytest never exited** (`exit 124` under a 20 s cap), because
+a leaked **non-daemon** worker blocked `threading._shutdown`. So the run reported a failure and then
+wedged the terminal, and a call-level `join(timeout)` does **not** help — a bound on the *call*
+cannot kill a leaked thread. When requiring "no unbounded waits", verify the **process exits**
+(use `timeout <n> uv run pytest` and check the status), not merely that the tests report a result.
 - **Never take over the user's screen without asking.** A live-injection probe needed a focused
   scratch terminal, and the `konsole` windows it opened **hid the user's chat** and startled them.
   The probe did produce the project's strongest evidence on the `hu` bug — a **byte-exact 17/17**
