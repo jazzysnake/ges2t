@@ -1,7 +1,7 @@
 # Project scaffold: uv-managed Python project with a console script
 
 - **Priority:** P0
-- **Status:** in review
+- **Status:** done
 - **Complexity:** S
 - **Epic:** ../epic.md
 
