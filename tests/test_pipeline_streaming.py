@@ -41,6 +41,7 @@ from ges2t.transcribers.whistle_config import (
     DEFAULT_CHUNK_SECONDS,
     DEFAULT_WINDOW_SECONDS,
 )
+from ges2t.ui.status import NullStatusUI
 from tests.fakes import FakeAudioSource, FakeInjector, FakeStatusUI, FakeTranscriber
 
 SAMPLE_RATE = 16000
@@ -161,7 +162,11 @@ def test_session_selection_is_logged_at_debug_level(
         pipeline._session_factory(Config(), transcriber, FakeAudioSource())
 
     messages = [record.getMessage() for record in caplog.records]
-    assert any("streaming" in message and "supports streaming" in message for message in messages)
+    assert any(
+        "using the streaming dictation session" in message
+        and "supports streaming" in message
+        for message in messages
+    )
 
 
 def test_batch_session_selection_logs_the_reason(
@@ -175,7 +180,11 @@ def test_batch_session_selection_logs_the_reason(
         )
 
     messages = [record.getMessage() for record in caplog.records]
-    assert any("batch" in message and "streaming.enabled = false" in message for message in messages)
+    assert any(
+        "using the batch dictation session" in message
+        and "streaming.enabled = false" in message
+        for message in messages
+    )
 
 
 # -- chunk and window reach their separate owners ------------------------------
@@ -366,6 +375,34 @@ def test_wired_streaming_path_applies_the_trailing_space_rule(
         service.shutdown()
 
     assert source.texts == expected
+
+
+def test_run_service_selects_streaming_at_startup(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The selection is reached through run_service, not only through the private
+    # factory: startup builds the service from the configured capability.
+    monkeypatch.setattr(pipeline, "_missing_artifacts", lambda config: [])
+    monkeypatch.setattr(
+        pipeline,
+        "build_transcriber",
+        lambda config: FakeTranscriber(supports_streaming=True, name="whistle"),
+    )
+    monkeypatch.setattr(pipeline, "build_audio_source", lambda config: FakeAudioSource())
+    monkeypatch.setattr(pipeline, "build_injector", lambda config: FakeInjector())
+    monkeypatch.setattr(pipeline, "build_status_ui", lambda config: NullStatusUI())
+    monkeypatch.setattr(FakeTranscriber, "load", lambda self: None)
+    monkeypatch.setattr(Service, "serve", lambda self: None)
+
+    with caplog.at_level(logging.DEBUG, logger="ges2t.pipeline"):
+        assert pipeline.run_service(Config()) == 0
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "using the streaming dictation session" in message and "whistle" in message
+        for message in messages
+    )
 
 
 def test_wired_batch_path_produces_and_injects_the_core_epic_text() -> None:
