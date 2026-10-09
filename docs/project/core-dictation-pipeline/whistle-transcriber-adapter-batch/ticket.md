@@ -65,6 +65,9 @@ Measured facts to design against (ADR 0005, ADR 0007, ADR 0011 — read all thre
       wall time, the returned text, and `ttft_ms`/`decode_tps`. This is the first proof the
       engine actually runs under our plumbing.
 
+- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
+      signature interface-typed — ADR 0019.
+
 ## Notes
 
 - Import `cactus_needle` lazily **inside** `load()` (and `ensure_model()` if it needs it), not

@@ -26,7 +26,9 @@ selector).
       `AudioConfig(device: str)`, `InjectionConfig(backend: str)`, `UIConfig(tray: bool,
       notifications: bool, trailing_space: bool)`, `StreamingConfig(enabled: bool)`, and a
       top-level `Config` holding them plus `engine_blocks: Mapping[str, Mapping[str, Any]]`.
-- [ ] `load_config(path: Path | None = None) -> Config` implements exactly ADR 0009's rules:
+- [ ] `load_config(path: Path | None = None) -> ConfigLoadResult` returns a **frozen
+      dataclass** `ConfigLoadResult(config: Config, warnings: list[str])` — warnings are a
+      typed field, not a tuple element (ADR 0019). It implements exactly ADR 0009's rules:
       - a **missing file yields all defaults**, and is not an error;
       - invalid TOML raises a clear error naming the file and the parse problem;
       - a wrong-typed value (e.g. `tray = "yes"`) raises a clear error naming the file, the
@@ -46,6 +48,9 @@ selector).
       listing known names; `[engine.whistle]` and `[engine.something_else]` both survive
       into `engine_blocks` verbatim; and a bad-type case.
 - [ ] `uv run pytest tests/test_config.py` passes and `uv run pytest` stays green.
+
+- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
+      signature interface-typed — ADR 0019.
 
 ## Notes
 
@@ -67,4 +72,5 @@ selector).
 - blocks: ../whistle-engine-config/ticket.md, ../service-state-machine-and-socket/ticket.md,
   ../cli-surface-and-commands/ticket.md
 - related ADRs: ../../../adr/0009-configuration-toml.md,
-  ../../../adr/0010-transcriber-interface-design.md
+  ../../../adr/0010-transcriber-interface-design.md,
+  ../../../adr/0019-code-style-typing-and-interfaces.md

@@ -77,9 +77,13 @@ Serialization is also required wherever two tickets touch the same file: `10 →
 
 ## Decisions
 
-All 19 decision records live in [`adr/`](../adr/). Start with
+All 20 decision records live in [`adr/`](../adr/). Start with
 [ADR 0000 (scope)](../adr/0000-project-scope-and-non-goals.md) and
 [ADR 0005 (the Whistle/Needle 3 backend)](../adr/0005-stt-backend-cactus-whistle.md).
+
+**Every ticket's definition of done includes `uv run mypy src/ges2t` in addition to
+`uv run pytest`** — full annotations, interface-typed signatures, and classes instead of
+tuples, per [ADR 0019](../adr/0019-code-style-typing-and-interfaces.md).
 
 ## Known accepted risks
 

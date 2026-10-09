@@ -31,16 +31,16 @@ data classes), ADR 0014 (this is a primary unit-test target).
 
 - [ ] `src/ges2t/streaming.py` defines a `StreamingDecoder` Protocol — the narrow, engine-facing
       seam this driver drives:
-      - `process(buffer: AudioBuffer) -> tuple[str, str]` returning `(committed_delta,
-        pending_text)`;
+      - `process(buffer: AudioBuffer) -> StreamingPass` where `StreamingPass` is a **frozen
+        dataclass** `StreamingPass(committed: str, pending: str)` — not a tuple (ADR 0019);
       - `flush() -> str` returning the text committed by ending the current stream (the
         engine's `stop()`), after which the next `process()` begins a new stream;
       and `drive(decoder, chunks, *, window_seconds, chunk_seconds, on_partial=None) ->
       Iterator[TranscriptionSegment]` implementing exactly:
       1. group incoming audio into `chunk_seconds`-sized `AudioBuffer`s (a partial final group
          is flushed at the end, never dropped);
-      2. feed each group to `decoder.process()`, accumulating `committed_delta` into the
-         running transcript;
+      2. feed each group to `decoder.process()`, accumulating `StreamingPass.committed` into
+         the running transcript;
       3. **when the cumulative audio fed since the last `flush()` reaches `window_seconds`,
          call `flush()`**, add its return value to the transcript, and continue with a fresh
          stream;
@@ -69,6 +69,9 @@ data classes), ADR 0014 (this is a primary unit-test target).
         `flush()` is not retried in a loop.
 - [ ] `uv run pytest tests/test_streaming.py` passes and `uv run pytest` stays green.
 
+- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
+      signature interface-typed — ADR 0019.
+
 ## Notes
 
 - **No I/O, no threads, no engine, no audio**: this module takes an iterable and yields
@@ -90,4 +93,5 @@ data classes), ADR 0014 (this is a primary unit-test target).
 - depends on: ../../core-dictation-pipeline/core-interfaces-and-fakes/ticket.md
 - blocks: ../whistle-streaming-adapter/ticket.md, ../streaming-session/ticket.md
 - related ADRs: ../../../adr/0011-streaming-sliding-window.md,
-  ../../../adr/0010-transcriber-interface-design.md
+  ../../../adr/0010-transcriber-interface-design.md,
+  ../../../adr/0019-code-style-typing-and-interfaces.md

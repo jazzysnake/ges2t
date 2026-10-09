@@ -54,6 +54,9 @@ only through the tray), ADR 0012 (empty transcriptions are not an error).
       dictation and confirm a desktop notification appears whose text names the daemon fix;
       then repeat rapidly and confirm only one popup appears. Restore `ydotoold` afterwards.
 
+- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
+      signature interface-typed — ADR 0019.
+
 ## Notes
 
 - Wrap, do not modify: `TrayStatusUI`, `NullStatusUI`, and the service are all untouched by

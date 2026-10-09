@@ -58,6 +58,9 @@ first-class artifacts).
         `importlib` + `sys.modules` snapshot).
 - [ ] `uv run pytest tests/test_interfaces.py` passes, and `uv run pytest` stays green.
 
+- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
+      signature interface-typed — ADR 0019.
+
 ## Notes
 
 - Types only where they are load-bearing: this module must be importable in a bare Python

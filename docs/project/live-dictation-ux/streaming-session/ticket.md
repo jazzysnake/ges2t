@@ -60,6 +60,9 @@ ADR 0008 (capture as a subprocess with drain-on-stop), ADR 0014 (fakes only in t
 - [ ] `uv run pytest tests/test_streaming_session.py` passes and `uv run pytest` stays green,
       with **no test taking longer than a few seconds** (assert no real sleeping/thread leak).
 
+- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
+      signature interface-typed — ADR 0019.
+
 ## Notes
 
 - Drive capture **only** from the worker thread. Calling `audio.chunks()` from two threads is

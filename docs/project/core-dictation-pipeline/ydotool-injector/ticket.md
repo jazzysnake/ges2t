@@ -67,6 +67,9 @@ target).
       `002-comment.md` describing exactly what the permission/daemon problem was rather than
       working around it — this is expected to be the first thing that breaks.
 
+- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
+      signature interface-typed — ADR 0019.
+
 ## Notes
 
 - The measured injection cost counts toward the sub-1-second framework budget (ADR 0001), so

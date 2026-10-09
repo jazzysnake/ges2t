@@ -68,6 +68,9 @@ is a mitigation for the closed engine).
       second invocation prints the same paths without network access. Report the on-disk
       sizes and the wall time of the first download in `001-comment.md`.
 
+- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
+      signature interface-typed — ADR 0019.
+
 ## Notes
 
 - Hashing 17 MB is fast but must not sit on the service's startup path; that is why normal

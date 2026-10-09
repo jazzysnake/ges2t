@@ -72,3 +72,4 @@ engine, packaging for other machines, and CI — all per ADR 0000.
 - ADR 0012 — verbatim output plus trailing space
 - ADR 0016 — CLI surface (the commands being bound and diagnosed)
 - ADR 0006 — closed-engine risk (the escape hatch stays open)
+- ADR 0019 — full type annotations, interface-typed signatures, classes over tuples

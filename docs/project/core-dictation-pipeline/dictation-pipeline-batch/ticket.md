@@ -74,6 +74,9 @@ the service enforces it too), ADR 0001 (the latency budget being measured here).
       and injection of a ≤20-word phrase — measured by timing each stage. This must be
       **under 1 second** total (ADR 0001). State the method, not just the number.
 
+- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
+      signature interface-typed — ADR 0019.
+
 ## Notes
 
 - This is the **only** module allowed to construct concrete implementations. If any other

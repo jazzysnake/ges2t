@@ -47,7 +47,7 @@ path), ADR 0010 (adapter isolation), ADR 0005 (audio contract).
       already-`load()`ed engine handle and `WhistleConfig.language`:
       - `process(buffer)` passes **raw little-endian float32 bytes** (`array('f')`), never a
         WAV path (ADR 0007 measured 0.036 s/5 s and 0.218 s/30 s of pure parsing waste);
-      - `process()` returns `(committed_delta, pending)`;
+      - `process()` returns a `StreamingPass(committed=..., pending=...)` (ADR 0019);
       - `flush()` ends the current stream, returns the tail text, and leaves the decoder ready
         for a new stream.
 - [ ] `WhistleTranscriber.stream(chunks)` is implemented as
@@ -61,8 +61,8 @@ path), ADR 0010 (adapter isolation), ADR 0005 (audio contract).
       decoder and returned as `TranscriptionSegment`/strings (ADR 0010).
 - [ ] `tests/test_whistle_stream.py` runs **without the engine installed** (monkeypatched
       module-level `_cactus_needle`, per the batch ticket's convention) and asserts:
-      `process()` passes the correct raw float32 byte length; `committed_delta`/`pending` are
-      parsed from the engine's JSON as documented; `flush()` returns the tail; and the
+      `process()` passes the correct raw float32 byte length; the engine's JSON is parsed into
+      a `StreamingPass` as documented; `flush()` returns the tail; and the
       accumulated transcript over several windows is exactly the concatenation of the fakes'
       committed deltas (no reconstruction from `pending`).
 - [ ] `uv run pytest tests/test_whistle_stream.py` passes and `uv run pytest` stays green.
@@ -77,6 +77,9 @@ path), ADR 0010 (adapter isolation), ADR 0005 (audio contract).
         with the evidence.
       If duplication or loss is observed, write `002-comment.md` with the transcripts and set
       the ticket `blocked` rather than tuning the window to hide it.
+
+- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
+      signature interface-typed — ADR 0019.
 
 ## Notes
 

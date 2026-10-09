@@ -64,6 +64,9 @@ ADR 0011 (1 s chunks feed the streaming path).
       first-sample latency is reported as a number (it counts toward the framework budget,
       ADR 0001).
 
+- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
+      signature interface-typed — ADR 0019.
+
 ## Notes
 
 - Use `subprocess.Popen` with an explicit argument list, never a shell.

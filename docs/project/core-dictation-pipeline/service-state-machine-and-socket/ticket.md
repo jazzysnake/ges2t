@@ -77,6 +77,9 @@ primary test target).
 - [ ] `uv run pytest tests/test_state_machine.py tests/test_socket_proto.py` passes and
       `uv run pytest` stays green.
 
+- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
+      signature interface-typed — ADR 0019.
+
 ## Notes
 
 - The end-to-end behaviour of a real dictation (concrete session, real audio, real injection)

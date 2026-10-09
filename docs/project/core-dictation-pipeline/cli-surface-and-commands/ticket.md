@@ -71,6 +71,9 @@ ADR 0017 (setup/models), ADR 0009 (`--config`).
       `uv run ges2t toggle` with no service running prints a clear message and exits `2`
       (verified by hand, reported in `001-comment.md`).
 
+- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
+      signature interface-typed — ADR 0019.
+
 ## Notes
 
 - One console script, no plugin entry points; ADR 0016 explains why adding a subcommand is

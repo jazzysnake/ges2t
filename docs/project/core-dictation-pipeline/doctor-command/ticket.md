@@ -65,6 +65,9 @@ warnings), ADR 0017 (model presence), ADR 0015 (socket/single instance).
       truthfully — specifically, it must **FAIL** on `ydotoold` (inactive/disabled) and pass
       the rest once `ges2t setup` has run. Paste the real output into `001-comment.md`.
 
+- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
+      signature interface-typed — ADR 0019.
+
 ## Notes
 
 - Detecting the tray problem is subtler than importing `gi`: ADR 0013 explains that `pystray`

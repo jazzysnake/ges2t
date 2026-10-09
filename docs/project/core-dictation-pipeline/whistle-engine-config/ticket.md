@@ -27,9 +27,9 @@ measured latency knee), ADR 0005 (engine's 30 s per-call ceiling).
 - [ ] `src/ges2t/transcribers/whistle_config.py` defines a frozen dataclass
       `WhistleConfig(language: str = "", window_seconds: float = 5.0, chunk_seconds: float =
       1.0)`.
-- [ ] `WhistleConfig.from_mapping(raw: Mapping[str, Any]) -> tuple[WhistleConfig,
-      list[str]]` returns the parsed config **and a list of warning strings** for unknown
-      keys, mirroring the generic layer's warn-don't-raise behaviour (ADR 0009).
+- [ ] `WhistleConfig.from_mapping(raw: Mapping[str, Any]) -> WhistleConfigResult` returns a
+      **frozen dataclass** `WhistleConfigResult(config: WhistleConfig, warnings: list[str])` —
+      never a tuple (ADR 0019).
 - [ ] Validation, each with a clear error naming the key, the offending value, and the
       allowed range:
       - `language`: must be a string; any string is accepted (the engine auto-detects when
@@ -48,6 +48,9 @@ measured latency knee), ADR 0005 (engine's 30 s per-call ceiling).
       warnings.
 - [ ] `uv run pytest tests/test_whistle_config.py` passes and `uv run pytest` stays green.
 
+- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
+      signature interface-typed — ADR 0019.
+
 ## Notes
 
 - **Do not add a `model_path` key here.** Model location is generic
@@ -65,4 +68,5 @@ measured latency knee), ADR 0005 (engine's 30 s per-call ceiling).
 - blocks: ../whistle-transcriber-adapter-batch/ticket.md,
   ../../live-dictation-ux/whistle-streaming-adapter/ticket.md
 - related ADRs: ../../../adr/0009-configuration-toml.md,
-  ../../../adr/0011-streaming-sliding-window.md
+  ../../../adr/0011-streaming-sliding-window.md,
+  ../../../adr/0019-code-style-typing-and-interfaces.md

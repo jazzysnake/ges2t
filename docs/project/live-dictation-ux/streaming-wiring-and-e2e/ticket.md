@@ -55,6 +55,9 @@ Relevant decisions: ADR 0011 (default-on, capability flag, window/chunk from
       4. report the measured per-chunk latency median and the total wall time for the long
          utterance as numbers.
 
+- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
+      signature interface-typed — ADR 0019.
+
 ## Notes
 
 - Keep the selection logic to a couple of lines in one place. If it grows a third branch,

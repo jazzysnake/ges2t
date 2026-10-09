@@ -82,3 +82,4 @@ shortcut documentation, and the finished README — all of those live in
 - ADR 0016 — CLI surface
 - ADR 0017 — model acquisition via `ges2t setup`
 - ADR 0018 — no runtime network
+- ADR 0019 — full type annotations, interface-typed signatures, classes over tuples

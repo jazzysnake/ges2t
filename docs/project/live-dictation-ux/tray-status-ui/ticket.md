@@ -63,6 +63,9 @@ display-only).
       warning and fall back to `NullStatusUI` instead of showing nothing. Include a screenshot
       or a precise description of what the icon looked like.
 
+- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
+      signature interface-typed — ADR 0019.
+
 ## Notes
 
 - Import `gi` and `pystray` **inside** the tray module, never at package import time — the
