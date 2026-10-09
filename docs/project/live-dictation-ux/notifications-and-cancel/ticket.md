@@ -50,12 +50,17 @@ only through the tray), ADR 0012 (empty transcriptions are not an error).
       is swallowed and does not affect the wrapped UI's calls; and `notifications = false`
       means `run_service` does not wrap at all.
 - [ ] `uv run pytest tests/test_notify.py` passes and `uv run pytest` stays green.
-- [ ] **Manual, once, reported in `001-comment.md`:** with `ydotoold` stopped, trigger a
-      dictation and confirm a desktop notification appears whose text names the daemon fix;
-      then repeat rapidly and confirm only one popup appears. Restore `ydotoold` afterwards.
+- [ ] **Manual, once — USER-OWNED; do not attempt it yourself.** This step needs `ydotoold`
+      **stopped** (a service change that breaks dictation for the user while it is stopped) and a
+      desktop session to see the popup. **Do not stop, start or restart any service.** Prepare the
+      exact steps and expected observations in `001-comment.md`, and leave this box **unticked** for
+      the user, who will: stop `ydotoold`, trigger a dictation, confirm a desktop notification appears
+      whose text names the daemon fix, trigger rapidly and confirm **only one** popup appears, then
+      restore `ydotoold`.
 
-- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
-      signature interface-typed — ADR 0019.
+- [ ] `uv run mypy src/ges2t tests` exits 0 (per ADR 0019's amendment the enforcement command
+      covers `tests/` too): every definition fully annotated and every signature interface-typed —
+      ADR 0019.
 
 ## Notes
 
