@@ -25,7 +25,11 @@ from ges2t.notify import (
 from ges2t.ui.status import DiagnosticStatusUI, StoppableStatusUI, TrayFailure
 from tests.fakes import FakeStatusUI
 
-WINDOW = SUPPRESSION_WINDOW_SECONDS
+# Literal advances, deliberately NOT derived from SUPPRESSION_WINDOW_SECONDS: a
+# test that computes its own clock from the constant under test moves its own
+# goalposts when that constant is mutated (the stale-constant trap).
+_SHORT = 1.0
+_PAST_THE_WINDOW = 30.0
 
 
 class _RecordingRunner:
@@ -206,6 +210,13 @@ def test_the_notification_body_names_the_ydotoold_fix() -> None:
 # --- duplicate suppression (one popup per message per window) -----------------
 
 
+def test_the_suppression_window_is_a_few_seconds() -> None:
+    # The DoD fixes the window as a module constant of "a few seconds"; this
+    # pins its intent so a mutation to 0 (no suppression) or effectively
+    # infinite (never re-notify) is caught directly.
+    assert 0.0 < SUPPRESSION_WINDOW_SECONDS <= 30.0
+
+
 def test_repeated_identical_errors_send_one_notification() -> None:
     runner = _RecordingRunner()
     clock = _FakeClock()
@@ -213,7 +224,7 @@ def test_repeated_identical_errors_send_one_notification() -> None:
 
     for _ in range(5):
         ui.error("ydotoold is not reachable")
-        clock.advance(0.5)
+        clock.advance(_SHORT)
 
     assert len(runner.argvs) == 1
 
@@ -237,21 +248,21 @@ def test_interleaved_identical_errors_inside_the_window_stay_suppressed() -> Non
     ui = NotifyingStatusUI(FakeStatusUI(), runner=runner, clock=clock)
 
     ui.error("A")
-    clock.advance(1.0)
+    clock.advance(_SHORT)
     ui.error("B")
-    clock.advance(1.0)
+    clock.advance(_SHORT)
     ui.error("A")
 
     assert [argv[-1] for argv in runner.argvs] == ["A", "B"]
 
 
-def test_the_same_error_stays_suppressed_just_inside_the_window() -> None:
+def test_a_repeat_inside_the_window_stays_suppressed() -> None:
     runner = _RecordingRunner()
     clock = _FakeClock()
     ui = NotifyingStatusUI(FakeStatusUI(), runner=runner, clock=clock)
 
     ui.error("the daemon is down")
-    clock.advance(WINDOW - 0.001)
+    clock.advance(_SHORT)
     ui.error("the daemon is down")
 
     assert len(runner.argvs) == 1
@@ -263,7 +274,7 @@ def test_the_same_error_notifies_again_after_the_window() -> None:
     ui = NotifyingStatusUI(FakeStatusUI(), runner=runner, clock=clock)
 
     ui.error("the daemon is down")
-    clock.advance(WINDOW + 1.0)
+    clock.advance(_PAST_THE_WINDOW)
     ui.error("the daemon is down")
 
     assert len(runner.argvs) == 2
