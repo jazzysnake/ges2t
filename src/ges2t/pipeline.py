@@ -36,6 +36,8 @@ What it builds
 * :func:`run_service` — the ``ges2t run`` entry point: verify the artifacts are
   already present **without downloading** (ADR 0017, ADR 0018), warm the model
   once, build the service, and serve the socket until ``SIGINT``/``SIGTERM``.
+  With ``ui.notifications = true`` the chosen status UI is wrapped in
+  :class:`~ges2t.notify.NotifyingStatusUI` first (ticket 18).
 
 Startup never touches the network (ADR 0018). Acquisition lives exclusively in
 :mod:`ges2t.model_store` and is reached from ``ges2t setup``, never from this
@@ -57,6 +59,7 @@ from ges2t.config import Config
 from ges2t.injectors.layout import YdotoolConfig
 from ges2t.injectors.ydotool import XkbKeySequenceSource, YdotoolInjector
 from ges2t.interfaces import AudioSource, Injector, StatusUI, Transcriber
+from ges2t.notify import NotifyingStatusUI
 from ges2t.service import CommandResponse, DictationSession, Service
 from ges2t.socket_proto import (
     ServiceAlreadyRunningError,
@@ -275,6 +278,19 @@ def _print_tray_warning(reason: str) -> None:
     )
 
 
+def _apply_notifications(config: Config, ui: StatusUI) -> StatusUI:
+    """Wrap the status UI for desktop notifications when enabled (ticket 18).
+
+    ``ui.notifications = false`` returns the bare UI untouched, so the tray is
+    passed straight to the service and nothing on the notification path is
+    constructed at all. The wrapper forwards every call and only adds a popup
+    on ``error`` (ADR 0013, ADR 0016).
+    """
+    if not config.ui.notifications:
+        return ui
+    return NotifyingStatusUI(ui)
+
+
 def _shutdown_status_ui(ui: StatusUI) -> None:
     """Stop a status UI that owns a background resource and report its failures.
 
@@ -474,11 +490,15 @@ def run_service(config: Config, status_ui: StatusUI | None = None) -> int:
     ``status_ui`` defaults to the configured display: the tray when
     ``ui.tray = true`` and the AppIndicator backend is present, the documented
     no-op otherwise (ADR 0013). An explicitly injected UI wins, which is the
-    seam the headless tests use. The model is loaded exactly once at startup,
-    the missing-artifact check never downloads, and the service runs until
-    ``SIGINT``/``SIGTERM`` before returning ``0``.
+    seam the headless tests use. With ``ui.notifications = true`` (the default)
+    the chosen UI is wrapped in :class:`~ges2t.notify.NotifyingStatusUI` so an
+    ``error`` also raises a desktop notification; with it off the bare UI is
+    used and the notification path is not constructed. The model is loaded
+    exactly once at startup, the missing-artifact check never downloads, and the
+    service runs until ``SIGINT``/``SIGTERM`` before returning ``0``.
     """
-    ui = status_ui if status_ui is not None else build_status_ui(config)
+    base_ui = status_ui if status_ui is not None else build_status_ui(config)
+    ui = _apply_notifications(config, base_ui)
     try:
         service = _startup(config, ui)
     except PipelineError as exc:

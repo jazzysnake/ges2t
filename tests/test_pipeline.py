@@ -19,6 +19,7 @@ from ges2t.audio.pw_record import PwRecordAudioSource
 from ges2t.config import AudioConfig, Config, TranscriberConfig, UIConfig
 from ges2t.injectors.ydotool import XkbKeySequenceSource, YdotoolInjector
 from ges2t.interfaces import AudioBuffer, Transcriber, TranscriptionResult
+from ges2t.notify import NotifyingStatusUI
 from ges2t.service import DictationSession, Service
 from ges2t.transcribers.whistle import WhistleTranscriber
 from ges2t.transcribers.whistle_config import (
@@ -273,7 +274,10 @@ def test_run_service_injects_the_status_ui_into_the_service(
 
     assert result == 0
     assert len(seen) == 1
-    assert seen[0]._status_ui is status_ui
+    # The injected UI still receives every call -- through the notification
+    # wrapper that ``ui.notifications = true`` (the default) now inserts.
+    assert isinstance(seen[0]._status_ui, NotifyingStatusUI)
+    assert seen[0]._status_ui.wrapped is status_ui
 
 
 class _DiagnosticStatusUI:

@@ -16,6 +16,7 @@ import pytest
 
 from ges2t import pipeline
 from ges2t.config import Config, UIConfig
+from ges2t.notify import NotifyingStatusUI
 from ges2t.ui import tray
 from ges2t.ui.status import NullStatusUI
 
@@ -292,4 +293,8 @@ def test_run_service_builds_the_status_ui_when_none_is_injected(
     result = pipeline.run_service(Config())
 
     assert result != 0
-    assert seen == [sentinel]
+    assert len(seen) == 1
+    # ``build_status_ui``'s choice reaches ``_startup`` through the default
+    # notification wrapper (``ui.notifications`` defaults to true).
+    assert isinstance(seen[0], NotifyingStatusUI)
+    assert seen[0].wrapped is sentinel
