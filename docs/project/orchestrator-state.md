@@ -44,29 +44,36 @@ Original orchestrator brief: `.pi/prompts/orchestrate-project.md`.
 
 ## 4. Current baselines on `main`
 
-- `uv run pytest` → **515 passed** (~2.0 s)
-- **`uv run mypy src/ges2t tests` → 0 errors (34 files)** — this is the required command. ADR 0019
+- `uv run pytest` → **541 passed** (~2.1 s)
+- **`uv run mypy src/ges2t tests` → 0 errors (36 files)** — this is the required command. ADR 0019
   was amended 2026-10-09: the old `mypy src/ges2t`-only check let a real violation through a
   completed review (see ticket 20).
-- `main` HEAD when last checked: `34f632c` (ticket 11 closed). Merged this session: 24 `a6ba892`,
-  21 `11b1bf3`, 26 `ceee7a2`, 11 `338cdc2`; all four worktrees removed.
+- `main` HEAD when last checked: `46c7122` (ticket 23's DoD amendment). Merged this session: 24
+  `a6ba892`, 21 `11b1bf3`, 26 `ceee7a2`, 11 `338cdc2`, **22 `0a2074a`**; all five worktrees removed.
 - 21 ADRs (0000–0020), **27 tickets**, 2 epics.
 
-## 5. Board state (17 of 27 done)
+## 5. Board state (18 of 27 done)
 
-**Done (17 of 27):** 1 project-scaffold · 2 core-interfaces-and-fakes · 3 config-loading ·
+**Done (18 of 27):** 1 project-scaffold · 2 core-interfaces-and-fakes · 3 config-loading ·
 4 whistle-engine-config · 5 model-store-and-verification · 6 audio-capture-pw-record ·
 7 ydotool-injector · 8 whistle-transcriber-adapter-batch · 9 service-state-machine-and-socket ·
 10 cli-surface-and-commands · 13 streaming-window-engine · 14 whistle-streaming-adapter ·
 20 type-check-whole-tree · 24 layout-detection-and-config (`a6ba892`) · 21 status-ui-outside-lock
-(`11b1bf3`) · 26 pin-cli-test-guarantees (`ceee7a2`) · **11 dictation-pipeline-batch** (`338cdc2`)
+(`11b1bf3`) · 26 pin-cli-test-guarantees (`ceee7a2`) · 11 dictation-pipeline-batch (`338cdc2`) ·
+**22 xkb-keycode-mapping** (`0a2074a`)
 
-**In review / in flight (see §6):** 22 xkb-keycode-mapping (review returned **changes requested** —
-implementer fixing the alias-keysym bug) · 17 tray-status-ui, 15 streaming-session,
-27 pin-layout-test-guarantees (implementers dispatched)
+**In review (see §6):** 17 tray-status-ui, 15 streaming-session, 27 pin-layout-test-guarantees — all
+three implemented, reviewers running · **23 batched-key-emission** — implementing (code work only;
+its latency measurement is its headline deliverable)
+
+**⛔ TICKET 23 IS BLOCKED ON ONE USER DECISION — see §9.** Its measurement means *emitting keys into
+whatever window holds focus*, so it needs the same bounded-probe authorisation the user granted once
+before (one scratch terminal, focus verified, hard 30 s budget, no Return in the payload). **The user
+has been asked and has not yet answered.** The implementer was explicitly told to build and unit-test
+without injecting and to stop there.
 
 **To do:** 12 doctor-command · 16 streaming-wiring-and-e2e · 18 notifications-and-cancel ·
-19 user-documentation-and-setup-guide · 23 batched-key-emission · 25 clipboard-paste-injector
+19 user-documentation-and-setup-guide · 25 clipboard-paste-injector
 
 **27 pin-layout-test-guarantees** was filed from ticket 24's review: both detectors' non-zero-exit
 guards are unexercised (empty stdout makes `rc=1` indistinguishable from success) and the 2 s
@@ -76,8 +83,9 @@ and 26. The guards themselves were hand-verified, so it is a **test** gap, not a
 Modules already on `main`: `interfaces.py`, `config.py`, `model_store.py`, `service.py`,
 `socket_proto.py`, `streaming.py`, `cli.py`, `audio/pw_record.py`, `injectors/ydotool.py`,
 **`injectors/layout.py`** (ticket 24), **`pipeline.py`** (ticket 11),
-`transcribers/{whistle_config,whistle}.py`, `tests/fakes.py`. `injectors/keymap.py` (ticket 22) is
-in review, not yet merged.
+`transcribers/{whistle_config,whistle}.py`, `tests/fakes.py`, **`injectors/keymap.py`** (ticket 22).
+In flight, not yet merged: `pipeline.py` (ticket 17 modifies it), `streaming_session.py` (ticket 15),
+`ui/{status,tray}.py` (ticket 17).
 
 ## 6. In-flight agents (collect these first on resume)
 
@@ -87,12 +95,12 @@ worktree is dirty-but-complete — recover from artifacts, do not re-run blindly
 
 | Ticket | Worktree (`/home/matee/Workspace/Personal/ges2t/.worktrees/…`) | Branch | Task |
 |---|---|---|---|
-| 22 | `xkb-keycode-mapping` | `feat/xkb-keycode-mapping` | **Fix** the alias-keysym bug (review `002` demanded changes) |
-| 17 | `tray-status-ui` | `feat/tray-status-ui` | **Implement** — the real `StatusUI` + backend assertion |
-| 15 | `streaming-session` | `feat/streaming-session` | **Implement** — streaming `DictationSession` (not wired) |
-| 27 | `pin-layout-test-guarantees` | `feat/pin-layout-test-guarantees` | **Implement** — pin three falsified layout tests |
+| 23 | `batched-key-emission` | `feat/batched-key-emission` | **Implement** — batched `ydotool key`; measurement needs authorisation |
+| 17 | `tray-status-ui` | `feat/tray-status-ui` | **Review** of `fea1ecb` |
+| 15 | `streaming-session` | `feat/streaming-session` | **Review** of `2d64f83` |
+| 27 | `pin-layout-test-guarantees` | `feat/pin-layout-test-guarantees` | **Review** of `911db7b` |
 
-Tickets 21, 24, 26 and 11 are merged and their worktrees removed. Note ticket 26's branch will hit an **add/add conflict on
+Tickets 21, 24, 26, 11 and 22 are merged and their worktrees removed. Note ticket 26's branch will hit an **add/add conflict on
 ticket.md** plus a row-26 conflict at merge (it was cut before the ticket folder and board row were
 committed to `main`); resolve to the branch's version — `ticket.md` `in review`, row 26 `in review`.
 Use three-dot diffs (`git diff main...<branch>`): several branches were cut before ticket 10 merged.
