@@ -149,3 +149,180 @@ reads `service.state` on every transition observes `[RECORDING, TRANSCRIBING, ID
   requires any such discipline from `StatusUI`.
 - `_Decision.after` now returns `_Decision | None`; both existing callbacks return `None`, so
   this is source-compatible for the only two producers.
+
+## Addendum — B1 containment: a raising `StatusUI` must not abort a transition (review 002)
+
+**Ticket:** `status-ui-outside-lock` · **Branch:** `feat/status-ui-outside-lock` · **Status:** in review
+
+Review `002` accepted the deadlock fix (mechanically proven: 0 collaborator calls under the
+lock across all 20 transition-table cells and the exception paths) but raised one blocking
+finding, **B1**: the new display drain is not contained.
+
+### What B1 was
+
+`_transition_scope` drains the queued `status_ui` calls in its `finally`, which is **outside**
+`handle`'s defensive `try/except`. So a raising `status_ui` callback propagated out of
+`handle` and **skipped the deferred side effect** that runs after the scope:
+
+```python
+with self._transition_scope():        # <-- drain raised at __exit__
+    try:
+        decision = self._dispatch_locked(command)
+    except Exception as exc:          # <-- does NOT catch the drain
+        ...
+if decision.after is not None:        # <-- skipped when the drain raised
+    decision.after()                  #     worker.start() / session.cancel()
+```
+
+Three concrete regressions, all in the "hotkey stops responding with no error" class this
+ticket exists to prevent:
+
+1. **Permanent wedge.** `RECORDING + toggle` with a raising `status_ui.transcribing` set the
+   state to `TRANSCRIBING`, then raised before `worker.start()` ran. `_session` was already
+   `None`, so every later command answered `busy` until the process restarted. Pre-fix (before
+   ticket 21) it landed in `ERROR` and recovered; ticket 21 had turned that into a wedge.
+2. **Skipped cancel.** `RECORDING + cancel` with a raising `status_ui.idle` skipped
+   `session.cancel()`, leaking the capture.
+3. **Unclean shutdown.** `shutdown()` with a raising `status_ui.idle` skipped both
+   `session.cancel()` and the worker/partials joins.
+
+### The fix (one block, `Service._transition_scope`)
+
+Make the drain best-effort, mirroring the **existing** partials policy in
+`_start_partials_locked` (which silently `return`s on a failing `session.partials()` iterator):
+
+```python
+finally:
+    for action in display:
+        try:
+            action()
+        except Exception:
+            # Display is best-effort ...
+            continue
+```
+
+Each queued callback is guarded individually, so one raising display call still lets the rest
+of the queue drain. The policy is deliberately *silent*, exactly like partials — no logging
+convention was introduced into `service.py` — even though review `002`'s suggestion allowed
+"`pass` (or log)".
+
+### Display vs. real exceptions (the whole point)
+
+Only the queued **display** callbacks become best-effort. Nothing else is swallowed:
+
+| collaborator call | policy |
+| --- | --- |
+| `status_ui.idle/recording/transcribing/error` (queued) | best-effort: `except Exception: continue` in the drain |
+| `status_ui.partial` (partials thread) | best-effort: already swallowed by `_start_partials_locked` |
+| `session_factory()`, `session.start()` | unchanged — a raise moves the service to `ERROR` (`start-failed`) |
+| `session.finish()` | unchanged — a raise moves the service to `ERROR` (`transcription failed`) |
+| `injector.inject()` | unchanged — a raise moves the service to `ERROR` (`injection failed`) |
+| `session.cancel()` | unchanged — a raise moves the service to `ERROR` |
+
+The fix does not touch the locking discipline: the drain already ran after the lock was
+released, and it still does. No collaborator is called under the lock.
+
+### Regression tests added (fail pre-fix, pass post-fix)
+
+Added to `tests/test_state_machine.py` (a `RaisingStatusUI` that records the real call and then
+raises on a chosen callback):
+
+- `test_raising_status_ui_transcribing_does_not_wedge_the_service` — `RECORDING + toggle` with
+  a raising `transcribing`: the reply is still `ok`/`TRANSCRIBING`, `finish()` really ran, the
+  state returns to `IDLE`, and a later `status` is not `busy`.
+- `test_raising_status_ui_recording_does_not_change_a_start` — a raising `recording` does not
+  change the start outcome (`RECORDING`, session started once).
+- `test_raising_status_ui_error_does_not_mask_a_start_failure` — a raising `error` does not mask
+  a real `start()` failure (reply stays `start-failed` / `ERROR`).
+- `test_raising_status_ui_idle_still_cancels_the_session` — `RECORDING + cancel` with a raising
+  `idle`: `session.cancel()` was called, state `IDLE`.
+- `test_raising_status_ui_does_not_skip_shutdown_cleanup` — `shutdown()` with a raising `idle`
+  returns, still cancels, and joins the worker/partials threads.
+
+Every command runs through the bounded `call_with_timeout(..., 1.5)` (a join timeout, never an
+unbounded wait), so a regression fails loudly instead of hanging the suite.
+
+### Pre-fix failure output (fix temporarily reverted, tests kept)
+
+Reverting only the drain guard (`git`-tracked file restored afterwards) and running the new
+tests:
+
+```
+$ uv run pytest tests/test_state_machine.py::test_raising_status_ui_transcribing_does_not_wedge_the_service -q --tb=short
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________ test_raising_status_ui_transcribing_does_not_wedge_the_service ________
+tests/test_state_machine.py:536: in test_raising_status_ui_transcribing_does_not_wedge_the_service
+    response = call_with_timeout(lambda: service.handle("toggle"), timeout=1.5)
+tests/test_state_machine.py:144: in call_with_timeout
+    raise errors[0]
+tests/test_state_machine.py:134: in run
+    results.append(fn())
+    response = call_with_timeout(lambda: service.handle("toggle"), timeout=1.5)
+src/ges2t/service.py:227: in handle
+    with self._transition_scope():
+/usr/lib/python3.14/contextlib.py:148: in __exit__
+    next(self.gen)
+src/ges2t/service.py:440: in _transition_scope
+    action()
+tests/test_state_machine.py:501: in transcribing
+    self._maybe_raise("transcribing")
+tests/test_state_machine.py:489: in _maybe_raise
+    raise RuntimeError(f"status_ui.{name} exploded")
+E   RuntimeError: status_ui.transcribing exploded
+1 failed in 0.19s
+```
+
+All five fail pre-fix, loudly and quickly (never a hang):
+
+```
+$ uv run pytest tests/test_state_machine.py -k "raising_status_ui" -q --tb=line
+FAILED tests/test_state_machine.py::test_raising_status_ui_transcribing_does_not_wedge_the_service
+FAILED tests/test_state_machine.py::test_raising_status_ui_recording_does_not_change_a_start
+FAILED tests/test_state_machine.py::test_raising_status_ui_error_does_not_mask_a_start_failure
+FAILED tests/test_state_machine.py::test_raising_status_ui_idle_still_cancels_the_session
+FAILED tests/test_state_machine.py::test_raising_status_ui_does_not_skip_shutdown_cleanup
+5 failed, 47 deselected, 1 warning in 0.08s
+```
+
+A throwaway probe (removed) against the reverted code showed the wedge exactly:
+
+```
+===== PRE-FIX PROBE =====
+toggle -> recording
+second toggle RAISED: RuntimeError tray blew up
+state           = transcribing
+finish called   = False
+worker alive    = False
+status -> transcribing
+cancel -> busy state = transcribing     <-- permanently wedged
+
+===== POST-FIX PROBE =====
+toggle -> recording
+second toggle -> transcribing None
+state           = idle
+finish called   = True
+worker alive    = False
+status -> idle
+cancel -> not-recording state = idle
+```
+
+### Verification (real output, post-fix)
+
+```
+$ uv run pytest
+355 passed in 1.39s
+
+$ uv run pytest tests/test_state_machine.py -q
+52 passed in 0.16s
+
+$ uv run mypy src/ges2t tests
+Success: no issues found in 29 source files
+```
+
+Test counts: **before this addendum** 350 total / 76 state-machine+socket (47 + 29); **after**
+355 total / 81 state-machine+socket (52 + 29). The five new tests are the only additions; the
+previous 350 (including the original transition-table, deadlock, and socket tests) pass
+unchanged. `git diff --stat` for the addendum: `src/ges2t/service.py` +13/−1,
+`tests/test_state_machine.py` +166/−0.
+

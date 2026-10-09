@@ -437,7 +437,18 @@ class Service:
                     self._pending_display = None
         finally:
             for action in display:
-                action()
+                try:
+                    action()
+                except Exception:
+                    # Display is best-effort, exactly like the partials policy in
+                    # ``_start_partials_locked``: a ``StatusUI`` that raises while
+                    # merely reporting a transition must never abort the deferred
+                    # side effect that runs after this scope (``worker.start()``,
+                    # ``session.cancel()``, ``shutdown``) nor change the state
+                    # machine's outcome. Only display callbacks are swallowed here;
+                    # a raising ``session.start()/finish()/cancel()`` or
+                    # ``injector.inject()`` still moves the service to ``ERROR``.
+                    continue
 
     def _set_state(self, state: ServiceState, error_message: str | None = None) -> None:
         """Record ``state`` and queue its display call; never calls ``status_ui``.
