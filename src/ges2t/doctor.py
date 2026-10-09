@@ -806,8 +806,9 @@ def check_ydotoold(*, socket_path: Path | None = None, probe: SocketProbe | None
     return _fail(
         name,
         f"the ydotoold daemon is not reachable at {path}",
-        "enable and start it with 'systemctl --user enable --now ydotool', or "
-        "start 'ydotoold' by hand; make sure it can write /dev/uinput",
+        "enable and start the ydotoold daemon with 'systemctl --user enable --now "
+        "ydotool' (the systemd unit is ydotool.service), or start 'ydotoold' by "
+        "hand; make sure it can write /dev/uinput",
     )
 
 
