@@ -1,7 +1,7 @@
 # Batched key emission and the injection-latency measurement
 
 - **Priority:** P1
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** M
 - **Epic:** ../epic.md
 
