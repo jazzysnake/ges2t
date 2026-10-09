@@ -48,7 +48,7 @@ presses left-to-right, releases right-to-left (``KEY_LEFTSHIFT`` is 42, so the
 default ``ctrl+shift+v`` becomes ``29:1 42:1 47:1 47:0 42:0 29:0``).
 
 Why ``ctrl+shift+v`` is the default, and its honest cost
--------------------------------------------------------
+--------------------------------------------------------
 It is the **only chord with real evidence behind it**: the user's manual
 verification of ticket 25 passed with it in every target they tried -- nvim, and
 in their experience browsers and regular editors -- so one configuration covered
