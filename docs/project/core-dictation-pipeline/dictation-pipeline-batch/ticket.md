@@ -60,9 +60,14 @@ the service enforces it too), ADR 0001 (the latency budget being measured here).
       unchanged otherwise; `cancel()` produces no transcription; and the no-download
       assertion above.
 - [ ] `uv run pytest tests/test_pipeline.py` passes and `uv run pytest` stays green.
-- [ ] **Manual, end-to-end, on the reference machine — this is the epic's headline check:**
-      after `ges2t setup`, enabling `ydotoold` and granting `/dev/uinput` access, with
-      `uv run ges2t run` active:
+- [ ] **Manual, end-to-end, on the reference machine — this is the epic's headline check.**
+      **This step is owned by the user, not by you:** it requires a human voice (someone must
+      actually speak a phrase) and a focused window, so no agent can complete it, and no agent
+      may inject keystrokes without explicit approval. Your job is to *prepare* it: automate
+      everything that can be automated, then hand over a precise, copy-pasteable script with the
+      exact commands and what to look for, and record the result in `001-comment.md` once the
+      user reports back. The steps, after `ges2t setup`, with `ydotoold` active and
+      `/dev/uinput` accessible, and `uv run ges2t run` active, are:
       1. `uv run ges2t toggle`, say a short phrase, `uv run ges2t toggle` → the text appears in
          a focused text editor;
       2. repeat into a focused **terminal**;
@@ -70,24 +75,37 @@ the service enforces it too), ADR 0001 (the latency budget being measured here).
       4. dictate in silence → **nothing** is typed;
       5. `uv run ges2t cancel` during a recording → nothing is typed and state returns to
          `idle`.
-      Record the exact commands, the observed results, and any failure in `001-comment.md`. If
-      a step fails, that is a `blocked` ticket with a comment describing precisely what
-      failed — not a workaround.
+      Expected known failures — **do not re-litigate these and do not treat them as new
+      blockers**: (a) on the reference machine's **non-US `hu` layout** the injected characters
+      will be **wrong** (`0`→`ö`, `y`→`z`) because the current injector still calls
+      `ydotool type`, which maps text through a hardcoded US keymap; ADR 0020 and tickets
+      `../xkb-keycode-mapping/ticket.md` + `../batched-key-emission/ticket.md` exist to fix
+      exactly this. (b) For the same reason the injection portion of the round trip will be
+      **far above 1 s**. Record both as **observed known in-flight defects with their ticket
+      numbers**, and record what *does* work (text appears at all, silence types nothing,
+      `cancel` types nothing and returns to `idle`, two phrases give two space-separated words).
+      If something fails **outside** those two known defects, that is a `blocked` ticket with a
+      comment describing precisely what failed — not a workaround.
 - [ ] **Framework latency, measured and reported as a number** in `001-comment.md`: the
       non-model portion of a round trip — socket call, capture stop and drain, buffer handoff,
       and injection of a ≤20-word phrase — measured by timing each stage. This must be
       **under 1 second** total (ADR 0001). State the method, not just the number.
-- [ ] **Settle the `--key-delay` question with a number, not an opinion.** Ticket 7 left
-      `ydotool` at its default 12 ms per key event and flagged that this likely blows the 1 s
-      budget (the man page implies roughly **2.8 s for a 20-word phrase**). Once injection is
-      live, measure it and either accept the default with the real number recorded, or reduce
-      the delay and record the dropped-character behaviour. Ticket 7's live injection test is
-      **deferred to this ticket** because it needs a running `ydotoold` (see that ticket's
-      `001-comment.md`); the epic's latency criterion is **not** satisfied until this is
-      measured. Do **not** run `sudo` or enable services — if the daemon is not running, record
-      the measurement as pending and report it.
+- [ ] **Injection latency: record the number as the pre-rewrite baseline.** Ticket 7 left
+      `ydotool` at its default 12 ms per key event and asked this ticket to settle the
+      `--key-delay` question. **That question is superseded** — ADR 0020 abandoned
+      `ydotool type` altogether (US-only keymap, ~40 ms/char) in favour of a batched
+      `ydotool key` emission, and `../batched-key-emission/ticket.md` now owns the
+      injection-latency measurement and the 1 s budget. So: do **not** spend effort tuning
+      `--key-delay`. Instead measure and record in `001-comment.md` the framework portion that
+      *is* this ticket's to measure — socket call, capture stop and drain, buffer handoff, and
+      the injection call itself — **excluding model time**, and state the observed injection
+      cost as the **before** number ticket 23 will be measured against. Exceeding 1 s here is a
+      **known in-flight defect owned by ticket 23**, not a blocker for this ticket: record it
+      and move on. `ydotoold` is already running and enabled on the reference machine, so no
+      `sudo` and no service changes are needed — and none are permitted.
 
-- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
+- [ ] `uv run mypy src/ges2t tests` exits 0 (per ADR 0019's amendment the enforcement command
+      covers `tests/` too): every definition fully annotated and every
       signature interface-typed — ADR 0019.
 
 ## Notes
