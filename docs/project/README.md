@@ -27,7 +27,7 @@ speak → `ges2t toggle` types the right text into a text editor and a terminal.
 | 2 | [core-interfaces-and-fakes](core-dictation-pipeline/core-interfaces-and-fakes/ticket.md) — `Transcriber`/`AudioSource`/`Injector`/`StatusUI` + fakes | S | done | 1 | feat/core-interfaces-and-fakes (merged) |
 | 3 | [config-loading](core-dictation-pipeline/config-loading/ticket.md) — generic TOML layer + engine selector | S | done | 1, 2 | feat/config-loading (merged) |
 | 4 | [whistle-engine-config](core-dictation-pipeline/whistle-engine-config/ticket.md) — `[engine.whistle]` validation | S | done | 3 | feat/whistle-engine-config (merged) |
-| 5 | [model-store-and-verification](core-dictation-pipeline/model-store-and-verification/ticket.md) — pinned download + sha256 | S | to do | 2 | — |
+| 5 | [model-store-and-verification](core-dictation-pipeline/model-store-and-verification/ticket.md) — pinned download + sha256 | S | in review | 2 | feat/model-store-and-verification |
 | 6 | [audio-capture-pw-record](core-dictation-pipeline/audio-capture-pw-record/ticket.md) — PipeWire capture, drain on stop | M | to do | 2, 3 | — |
 | 7 | [ydotool-injector](core-dictation-pipeline/ydotool-injector/ticket.md) — uinput injection + trailing space | S | done | 2, 3 | feat/ydotool-injector (merged) |
 | 8 | [whistle-transcriber-adapter-batch](core-dictation-pipeline/whistle-transcriber-adapter-batch/ticket.md) — batch `transcribe()` | M | to do | 2, 4, 5 | — |
