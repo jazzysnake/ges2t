@@ -57,9 +57,9 @@ Original orchestrator brief: `.pi/prompts/orchestrate-project.md`.
   exit `0` with no `FAIL`s. It reports the resolved keymap and its source, the tray backend, the
   engine/package versions, `ydotoold`, `/dev/uinput`, and the recommended KDE bindings. **Run it
   first on resume** — it is faster than reading the environment table above.
-- 21 ADRs (0000–0020), **31 tickets**, 2 epics.
+- 21 ADRs (0000–0020), **34 tickets**, 2 epics.
 
-## 5. Board state (27 of 31 done)
+## 5. Board state (27 of 34 done)
 
 **Done (27):** 1–18, 20, 21, 22, 23, 24, 26, 27, 28, 29. Highlights and merge commits:
 - 11 `338cdc2` pipeline/composition root · 12 `036d1e2` doctor · 15 `2ba0a3a` streaming session ·
@@ -68,13 +68,16 @@ Original orchestrator brief: `.pi/prompts/orchestrate-project.md`.
   23 `b4aa911` batched emission · 24 `a6ba892` layout/config · 26 `ceee7a2` cli test guarantees ·
   27 layout test guarantees · 28 `37e8937` delay default · 29 `f9df8a0` silence gate
 
-**Remaining (4):**
+**Remaining (7):**
 | # | Ticket | State |
 |---|---|---|
-| **25** | clipboard-paste-injector | **REVIEW PASS** (`1c93a35`), **NOT MERGED** — D1/D2/D3 fixed and independently verified (the new tests were run against the *actual* rejected revision `2b5fb26`: **25 failures** = exactly 2 D1 + 1 D3 + 21 letters + 1 chord). 4 non-blocking residuals: **R1** a >64 KiB restore truncates to exactly 65536 B if the process exits inside the delay window; **R2 an uncaught `Thread.start()` `RuntimeError`**; R3 a blocked daemon thread if the restore child never reads; R4 (pre-existing) a non-`FileNotFoundError` `OSError` on the read path still escapes raw. The **user's manual test is the last gate**. |
 | **19** | user-documentation-and-setup-guide | **not started** — the last core ticket; deliberately last because it documents final behaviour |
+| **25** | clipboard-paste-injector | **REVIEW PASS** (`1c93a35`), **NOT MERGED** — D1/D2/D3 fixed and independently verified (the new tests were run against the *actual* rejected revision `2b5fb26`: **25 failures** = exactly 2 D1 + 1 D3 + 21 letters + 1 chord). 4 non-blocking residuals: **R1** a >64 KiB restore truncates to exactly 65536 B if the process exits inside the delay window; **R2 an uncaught `Thread.start()` `RuntimeError`**; R3 a blocked daemon thread if the restore child never reads; R4 (pre-existing) a non-`FileNotFoundError` `OSError` on the read path still escapes raw. The **user's manual test is the last gate**. |
+| **32** | commit-cadence-diagnostic | **to do** — the **gate** for incremental typing: measure the engine's commit cadence, `pending` size, and prove the append-only prefix on **real speech**. Makes no behaviour change, and its numbers may cancel 33 and 34 |
+| **33** | committed-delta-interface | **to do** — carry the committed text separately from `pending` on the segment (the boundary is destroyed by `text = transcript + pending` and cannot be recovered downstream) |
+| **34** | incremental-typing | **to do** — type committed words as they are committed; **amends ADR 0011** (surface the amendment explicitly, with 32's numbers). User's design decisions are recorded in the ticket and must not be re-opened |
 | **30** | tray-failure-diagnostics | filed follow-up; needs a read-only socket verb (**requires an ADR 0016 amendment**) |
-| **31** | speech-gate-recalibration | **PARKED by the user** — branch exists, **review passed on its own evidence** (`dc75977`), **not merged**; the cost is noise-relative and may gate quiet speech in a noisy place. See §10 |
+| **31** | speech-gate-recalibration | **`blocked`** on the board — implemented and review-passed, branch exists, **not merged**, parked at the user's direction pending their live test in **both** a quiet room and a noisy one. See §10 |
 
 ## 6. In-flight agents (collect these first on resume)
 

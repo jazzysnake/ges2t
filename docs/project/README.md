@@ -36,7 +36,7 @@ speak → `ges2t toggle` types the right text into a text editor and a terminal.
 | 11 | [dictation-pipeline-batch](core-dictation-pipeline/dictation-pipeline-batch/ticket.md) — composition root + E2E | M | done | 6, 7, 8, 9, 10 | feat/dictation-pipeline-batch (merged) |
 | 12 | [doctor-command](core-dictation-pipeline/doctor-command/ticket.md) — diagnose every prerequisite | M | done | 3, 5, 6, 7, 9, 10 | feat/doctor-command (merged) |
 | 29 | [silence-gate](core-dictation-pipeline/silence-gate/ticket.md) — silence must type nothing (the model hallucinates `thank you` on quiet audio) | S | done | 11 | feat/silence-gate (merged) |
-| 31 | [speech-gate-recalibration](core-dictation-pipeline/speech-gate-recalibration/ticket.md) — recalibrate the speech gate on real device idle audio (it is as loud as speech) | M | to do | 29 | — |
+| 31 | [speech-gate-recalibration](core-dictation-pipeline/speech-gate-recalibration/ticket.md) — recalibrate the speech gate on real device idle audio (it is as loud as speech) | M | blocked | 29 | feat/speech-gate-recalibration (parked: implemented and reviewed, awaiting the user's live test) |
 | 30 | [tray-failure-diagnostics](core-dictation-pipeline/tray-failure-diagnostics/ticket.md) — a read-only socket verb so `doctor`/`status` can see the tray's failure record (amends ADR 0016) | S | to do | 12, 17 | — |
 | 20 | [type-check-whole-tree](core-dictation-pipeline/type-check-whole-tree/ticket.md) — fix the tests-not-type-checked gap | XS | done | 4 | feat/type-check-whole-tree (merged) |
 | 21 | [status-ui-outside-lock](core-dictation-pipeline/status-ui-outside-lock/ticket.md) — fix the reproduced status_ui-under-lock deadlock | XS | done | 9 | feat/status-ui-outside-lock (merged) |
@@ -69,6 +69,9 @@ documentation that takes a fresh machine to a working dictation.
 | 17 | [tray-status-ui](live-dictation-ux/tray-status-ui/ticket.md) — pystray AppIndicator + backend assertion | M | done | 10, 11, 21 | feat/tray-status-ui (merged) |
 | 18 | [notifications-and-cancel](live-dictation-ux/notifications-and-cancel/ticket.md) — `notify-send` on failure | S | done | 16, 17 | feat/notifications-and-cancel (merged) |
 | 19 | [user-documentation-and-setup-guide](live-dictation-ux/user-documentation-and-setup-guide/ticket.md) — README + setup guide + unit file | M | to do | 10, 11, 12, 16, 17, 18 | — |
+| 32 | [commit-cadence-diagnostic](live-dictation-ux/commit-cadence-diagnostic/ticket.md) — measure commit cadence and prove the append-only prefix (the gate for 34) | S | to do | 13, 14, 15, 16 | — |
+| 33 | [committed-delta-interface](live-dictation-ux/committed-delta-interface/ticket.md) — carry committed text separately from the pending tail | S | to do | 32 | — |
+| 34 | [incremental-typing](live-dictation-ux/incremental-typing/ticket.md) — type committed words as they are committed (amends ADR 0011) | M | to do | 32, 33 | — |
 
 ---
 
@@ -94,6 +97,9 @@ independent and may run in parallel (they touch disjoint files).
 | 12 | 22, 24 (injection rework; disjoint files) |
 | 13 | 23 |
 | 14 | 25 |
+| 15 | 32 (the incremental-typing **gate**: its numbers may cancel 33 and 34) |
+| 16 | 33 |
+| 17 | 34 |
 
 Serialization is also required wherever two tickets touch the same file: `10 → 11/12`
 (`cli.py`, `doctor.py`), `11 → 16` (`pipeline.py`), `17 → 18` (`pipeline.py`).
