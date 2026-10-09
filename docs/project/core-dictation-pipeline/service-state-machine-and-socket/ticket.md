@@ -85,7 +85,7 @@ primary test target).
 - The end-to-end behaviour of a real dictation (concrete session, real audio, real injection)
   is **not** in this ticket — that is `../dictation-pipeline-batch/ticket.md`, which
   implements `DictationSession` and passes a factory to `Service`.
-- Do not import `gi`, `pystray`, `cactus_needle`, or `subprocess` here. Everything concrete
+- Do not import `gi`, `pystray`, `needle`, or `subprocess` here. Everything concrete
   arrives through the injected dependencies; that is what makes this ticket's tests honest.
 - Use a `threading.Lock` only around state transitions, and keep `finish()` outside it —
   holding the lock across transcription is the classic way this design deadlocks.

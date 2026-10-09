@@ -80,7 +80,7 @@ is a mitigation for the closed engine).
 - The wheel member path is `needle/libneedle3.so` but the SONAME is `libneedle.so`; name the
   installed file `libneedle.so` to match `NEEDLE3_LIB_PATH` expectations, and say so in a
   comment.
-- Do **not** import `cactus_needle` here. This module must stay importable without the
+- Do **not** import `needle` here. This module must stay importable without the
   backend installed, because `ges2t models` and `doctor` use it.
 
 ## Related tickets

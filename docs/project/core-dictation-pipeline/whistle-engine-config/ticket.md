@@ -55,7 +55,7 @@ measured latency knee), ADR 0005 (engine's 30 s per-call ceiling).
 
 - **Do not add a `model_path` key here.** Model location is generic
   (`transcriber.model_path`, ADR 0009) because it is not engine-specific.
-- Do not import `cactus_needle` in this module — it must be importable and testable with no
+- Do not import `needle` in this module — it must be importable and testable with no
   backend present (ADR 0010).
 - The warning text is user-facing and surfaces through `ges2t doctor`; write it as a full
   sentence a user can act on, not a code.

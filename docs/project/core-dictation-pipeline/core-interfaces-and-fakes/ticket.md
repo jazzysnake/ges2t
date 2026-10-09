@@ -53,7 +53,7 @@ first-class artifacts).
       - each fake satisfies its Protocol via `isinstance(fake, Transcriber)` etc.;
       - `FakeTranscriber(supports_streaming=False)` reports `False` and one constructed
         streaming-capable reports `True`;
-      - `import ges2t.interfaces` leaves `cactus_needle`, `gi`, and `numpy` **absent** from
+      - `import ges2t.interfaces` leaves `needle`, `gi`, and `numpy` **absent** from
         `sys.modules` (assert on the freshly-imported state, e.g. via a subprocess or
         `importlib` + `sys.modules` snapshot).
 - [ ] `uv run pytest tests/test_interfaces.py` passes, and `uv run pytest` stays green.

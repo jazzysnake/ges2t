@@ -57,10 +57,10 @@ path), ADR 0010 (adapter isolation), ADR 0005 (audio contract).
 - [ ] `supports_streaming` remains `True`, and a test asserts the adapter's `stream()` is
       exercised through `drive()` (e.g. by asserting window behaviour end-to-end on a fake
       engine).
-- [ ] No `cactus_needle` type appears in any signature; all engine JSON is parsed inside the
+- [ ] No `needle` type appears in any signature; all engine JSON is parsed inside the
       decoder and returned as `TranscriptionSegment`/strings (ADR 0010).
 - [ ] `tests/test_whistle_stream.py` runs **without the engine installed** (monkeypatched
-      module-level `_cactus_needle`, per the batch ticket's convention) and asserts:
+      module-level `_needle`, per the batch ticket's convention) and asserts:
       `process()` passes the correct raw float32 byte length; the engine's JSON is parsed into
       a `StreamingPass` as documented; `flush()` returns the tail; and the
       accumulated transcript over several windows is exactly the concatenation of the fakes'

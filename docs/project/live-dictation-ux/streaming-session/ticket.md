@@ -50,7 +50,10 @@ ADR 0008 (capture as a subprocess with drain-on-stop), ADR 0014 (fakes only in t
       error rather than returning a short transcript, and `finish()` does not hang. The
       service converts that into its `ERROR` state and a notification.
 - [ ] Cancelling mid-utterance types nothing and returns no text.
-- [ ] `tests/test_streaming_session.py` uses `FakeAudioSource`/`FakeTranscriber` only:
+- [ ] `tests/test_streaming_session.py` uses `FakeAudioSource`/`FakeTranscriber` plus the
+      **fake `StreamingDecoder` defined by `../streaming-window-engine/ticket.md`** (the
+      session drives `streaming.drive()`, so that double is part of its test surface, not a
+      redefinition of ticket 2's fakes):
       `finish()` returns exactly the fake's committed text; `partials()` yields advancing,
       deduplicated display text; `cancel()` returns nothing and leaves no thread running
       (assert the worker joined); a raising worker surfaces through `finish()`; `finish()`

@@ -12,13 +12,13 @@ We have interfaces (`../core-interfaces-and-fakes/ticket.md`), a pinned model st
 (`../whistle-engine-config/ticket.md`). Nothing actually transcribes yet.
 
 This ticket implements `WhistleTranscriber`, the **only** module in the codebase allowed to
-import `cactus_needle` (ADR 0010). It implements the **batch** path only; the streaming path
+import `needle` (ADR 0010). It implements the **batch** path only; the streaming path
 is `../../live-dictation-ux/whistle-streaming-adapter/ticket.md`, which extends this same
 file.
 
 Measured facts to design against (ADR 0005, ADR 0007, ADR 0011 — read all three):
 
-- `cactus_needle` calls the engine `CDLL` **in-process**; there is no subprocess hop. Its
+- `needle` calls the engine `CDLL` **in-process**; there is no subprocess hop. Its
   `Whistle` class has `.transcribe(audio, language=None, keywords=None, word_timestamps=False)`
   and returns a dict including `text`, `language`, `ttft_ms`, `decode_tps`.
 - It accepts WAV paths, `bytes` (raw **little-endian float32**), `array('f')`, objects with
@@ -55,7 +55,7 @@ Measured facts to design against (ADR 0005, ADR 0007, ADR 0011 — read all thre
 - [ ] `text` is returned **exactly as the engine produced it** — no stripping, no
       capitalisation, no trailing space (ADR 0012; the space is added by the injector).
 - [ ] `tests/test_whistle_batch.py` runs **without the engine installed**: it monkeypatches
-      the module-level `cactus_needle` reference with a fake object exposing `Whistle`, and
+      the module-level `needle` reference with a fake object exposing `Whistle`, and
       asserts the conversion path (a 16 kHz float32 buffer arrives at the fake as raw
       float32 bytes of the expected length), the 30 s and sample-rate validation, the
       before-`load()` error, and pass-through of `text`/`language`/timings unchanged.
@@ -70,9 +70,17 @@ Measured facts to design against (ADR 0005, ADR 0007, ADR 0011 — read all thre
 
 ## Notes
 
-- Import `cactus_needle` lazily **inside** `load()` (and `ensure_model()` if it needs it), not
+- **Progress-callback shape is fixed by the interface, and ticket 5 got it wrong.**
+  `interfaces.py` defines `ProgressCallback = Callable[[float], None]` (a fraction), while the
+  merged `model_store.py` defines its own `ProgressCallback = Callable[[str], None]` (a
+  message). `ensure_model()` is the seam between them, so this is a real `mypy` failure at
+  this integration point, not a style choice. They must agree on `Callable[[float], None]` —
+  the downloader knows content-length and can report a fraction. Do **not** import
+  `interfaces.py` into `model_store.py` to share the alias; matching *structural* types is
+  sufficient and preserves the anti-coupling rule.
+- Import `needle` lazily **inside** `load()` (and `ensure_model()` if it needs it), not
   at module import time. `tests/test_whistle_batch.py` monkeypatches the module attribute, so
-  bind it through a module-level name such as `_cactus_needle` that tests can replace.
+  bind it through a module-level name such as `_needle` that tests can replace.
 - Do not add `numpy`. Convert with `array.array('f', samples).tobytes()` (stdlib), which the
   probe verified the package accepts as raw float32 bytes.
 - `WhistleConfig.language` is passed through as the `language` argument; empty string means

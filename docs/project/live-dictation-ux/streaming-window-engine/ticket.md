@@ -77,7 +77,7 @@ data classes), ADR 0014 (this is a primary unit-test target).
 - **No I/O, no threads, no engine, no audio**: this module takes an iterable and yields
   segments. Everything concrete is in
   `../whistle-streaming-adapter/ticket.md` and `../streaming-session/ticket.md`. If you find
-  yourself importing `subprocess` or `cactus_needle`, stop.
+  yourself importing `subprocess` or `needle`, stop.
 - Do not re-validate `window_seconds`/`chunk_seconds` beyond a cheap sanity assertion; the
   authoritative validation is in `../../core-dictation-pipeline/whistle-engine-config/ticket.md`
   (ADR 0011). Guard against `chunk_seconds <= 0` and `window_seconds < chunk_seconds` with an

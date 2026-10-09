@@ -49,7 +49,7 @@ ADR 0017 (setup/models), ADR 0009 (`--config`).
       non-zero when something is broken. Each code is defined as a named constant.
 - [ ] `--config <path>` is accepted by every subcommand that reads configuration, and passed
       through to `load_config`.
-- [ ] **Lazy imports.** Running `ges2t toggle` must not import `cactus_needle`, `gi`,
+- [ ] **Lazy imports.** Running `ges2t toggle` must not import `needle`, `gi`,
       `pystray`, `ges2t.pipeline`, or `ges2t.doctor`. Assert this in a test by inspecting
       `sys.modules` after invoking `main(["toggle"])` with a stubbed client.
 - [ ] **Every failure prints an actionable sentence** and returns its exit code; no raw
