@@ -63,9 +63,9 @@ Usage
     uv run python docs/project/live-dictation-ux/commit-cadence-diagnostic/measure_commit_cadence.py \
         --self-test
 
-    # the user-owned fresh recording, optionally with the text read aloud
+    # the user-owned fresh recording
     uv run python docs/project/live-dictation-ux/commit-cadence-diagnostic/measure_commit_cadence.py \
-        --capture --seconds 25 --reference /tmp/passage.txt
+        --capture --seconds 25
 
 Design rules honoured here: full type hints including ``-> None``, Protocol-typed
 parameters, and classes rather than positional tuples (ADR 0019).
@@ -166,7 +166,6 @@ class UtteranceMeasurement:
     final_text: str
     final_language: str | None
     batch_reference: str | None
-    reference_text: str | None
     timeline_from_gate: bool
 
     @property
@@ -445,7 +444,6 @@ def run_utterance(
     label: str,
     path: Path | None,
     config: WhistleConfig,
-    reference_text: str | None,
     with_batch_reference: bool,
 ) -> UtteranceMeasurement:
     """Drive the shipped ``stream()`` over ``buffers`` and collect the measurement."""
@@ -501,7 +499,6 @@ def run_utterance(
         final_text=final.text,
         final_language=final.language,
         batch_reference=batch_reference,
-        reference_text=reference_text,
         timeline_from_gate=process_calls == len(starts),
     )
 
@@ -640,10 +637,8 @@ def pending_persistence(measurement: UtteranceMeasurement) -> tuple[float, ...]:
 
 
 # --------------------------------------------------------------------------------------
-# Verbatim-token rendering (informational, from the user's addendum)
+# Word normalisation for the restatement and batch-reference checks
 # --------------------------------------------------------------------------------------
-
-_PUNCTUATION_EDGES = ".,;:!?\"“”()[]{}«»—–-…"
 
 
 def _normalise_token(token: str) -> list[str]:
@@ -682,76 +677,6 @@ def tokenise(text: str) -> tuple[list[str], list[TokenSpan]]:
         spans.append(TokenSpan(raw=raw, normalised=normalised, start=len(words)))
         words.extend(normalised)
     return words, spans
-
-
-def strip_edges(token: str) -> str:
-    """Return ``token`` without surrounding punctuation, for display."""
-    return token.strip(_PUNCTUATION_EDGES)
-
-
-@dataclass(frozen=True)
-class Alignment:
-    """A ref-to-hypothesis word alignment, plus the surface tokens behind both."""
-
-    reference_words: tuple[str, ...]
-    hypothesis_words: tuple[str, ...]
-    reference_surface: tuple[str, ...]
-    hypothesis_surface: tuple[str, ...]
-    matches: dict[int, tuple[int, int]]
-
-
-def align(reference: str, hypothesis: str) -> Alignment:
-    """Align two texts at word level and keep the surface token of every word."""
-    reference_words, reference_spans = tokenise(reference)
-    hypothesis_words, hypothesis_spans = tokenise(hypothesis)
-    reference_surface = tuple(
-        token
-        for span in reference_spans
-        for token in [span.raw] * len(span.normalised)
-    )
-    hypothesis_surface = tuple(
-        token
-        for span in hypothesis_spans
-        for token in [span.raw] * len(span.normalised)
-    )
-    matches: dict[int, tuple[int, int]] = {}
-    matcher = difflib.SequenceMatcher(
-        a=reference_words, b=hypothesis_words, autojunk=False
-    )
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag == "equal":
-            for offset in range(i2 - i1):
-                matches[i1 + offset] = (j1 + offset, j1 + offset + 1)
-        elif tag == "replace":
-            for index in range(i1, i2):
-                matches[index] = (j1, j2)
-    return Alignment(
-        reference_words=tuple(reference_words),
-        hypothesis_words=tuple(hypothesis_words),
-        reference_surface=reference_surface,
-        hypothesis_surface=hypothesis_surface,
-        matches=matches,
-    )
-
-
-def render_aligned(alignment: Alignment, span: TokenSpan) -> str:
-    """Render the hypothesis surface words aligned to ``span``'s words, or a marker.
-
-    Consecutive words that map to the same alignment block are rendered once, and the
-    result is capped so a wholesale mismatch cannot print a wall of text.
-    """
-    pieces: list[str] = []
-    seen: set[tuple[int, int]] = set()
-    for index in range(span.start, span.end):
-        location = alignment.matches.get(index)
-        if location is None or location in seen:
-            continue
-        seen.add(location)
-        start, end = location
-        pieces.extend(alignment.hypothesis_surface[start:end])
-    if not pieces:
-        return "<not in transcript>"
-    return preview(" ".join(pieces), 80)
 
 
 # --------------------------------------------------------------------------------------
@@ -938,116 +863,6 @@ def sample_spread[T](items: Sequence[T], *, limit: int) -> list[T]:
     return list(items[:head]) + list(items[-tail:])
 
 
-def report_accuracy(report: Report, measurement: UtteranceMeasurement) -> None:
-    """Informational accuracy section against a user-supplied reference text.
-
-    This is **not** a gate. The engine is a 16 MB model with an accepted "good enough"
-    bar (ADR 0000), so imperfect output on hard words is expected and is not a defect.
-    Nothing here feeds back into the engine: the reference is never part of the audio path.
-    """
-    reference = measurement.reference_text
-    if reference is None:
-        return
-    hypothesis = measurement.final_text
-    report.heading(f"accuracy (informational, not a gate): {measurement.label}")
-
-    diff = word_diff(reference, hypothesis)
-    report.line(
-        f"word-level comparison: substitutions={diff.substitutions} "
-        f"insertions={diff.insertions} deletions={diff.deletions} "
-        f"WER={diff.wer:.3f} (reference has {diff.reference_words} words)"
-    )
-    reference_words, _ = tokenise(reference)
-    hypothesis_words, _ = tokenise(hypothesis)
-    report.line(
-        f"normalised word counts: reference={len(reference_words)} "
-        f"transcript={len(hypothesis_words)}"
-    )
-
-    report.line()
-    report.line("raw reference text (what was read aloud):")
-    for line in wrap_text(reference, width=100):
-        report.line(f"  {line}")
-    report.line()
-    report.line("raw transcript text (verbatim, nothing stripped):")
-    for line in wrap_text(hypothesis, width=100):
-        report.line(f"  {line}")
-
-    alignment = align(reference, hypothesis)
-
-    report.line()
-    report.line("digits and decimal numbers:")
-    digit_spans = [
-        span
-        for span in tokenise(reference)[1]
-        if any(character.isdigit() for character in span.raw)
-    ]
-    if not digit_spans:
-        report.line("  (the reference contains no digits)")
-    for span in digit_spans:
-        report.line(f"  reference {span.raw!r}  ->  transcript {render_aligned(alignment, span)!r}")
-    report.line(
-        f"  digit characters: reference={sum(c.isdigit() for c in reference)} "
-        f"transcript={sum(c.isdigit() for c in hypothesis)}"
-    )
-
-    report.line()
-    report.line("punctuation and casing:")
-    report.line(
-        f"  '?'  reference={reference.count('?')} transcript={hypothesis.count('?')}; "
-        f"apostrophes reference={reference.count(chr(39)) + reference.count(chr(8217))} "
-        f"transcript={hypothesis.count(chr(39)) + hypothesis.count(chr(8217))}; "
-        f"hyphens reference={reference.count('-') + reference.count('–') + reference.count('—')} "
-        f"transcript={hypothesis.count('-') + hypothesis.count('–') + hypothesis.count('—')}"
-    )
-    for label, predicate in (
-        ("question-marked tokens", lambda token: token.rstrip().endswith(("?", "？"))),
-        ("apostrophe tokens", lambda token: "'" in token or "’" in token),
-        ("hyphenated tokens", lambda token: any(dash in token for dash in "-–—")),
-    ):
-        spans = [span for span in tokenise(reference)[1] if predicate(span.raw)]
-        report.line(f"  {label} in the reference ({len(spans)}):")
-        if not spans:
-            report.line("    (none)")
-        for span in spans:
-            report.line(
-                f"    {span.raw!r}  ->  {render_aligned(alignment, span)!r}"
-            )
-
-    report.line()
-    report.line("proper-noun casing (capitalised non-sentence-initial reference words):")
-    raw_tokens = reference.split()
-    proper = []
-    for index, token in enumerate(raw_tokens):
-        stripped = strip_edges(token)
-        if not stripped or not stripped[0].isupper():
-            continue
-        sentence_start = index == 0 or raw_tokens[index - 1].rstrip().endswith(
-            (".", "!", "?", ";", ":")
-        )
-        if sentence_start:
-            continue
-        proper.append(stripped)
-    if not proper:
-        report.line("  (the reference has no mid-sentence capitalised words)")
-    for word in dict.fromkeys(proper):
-        matching = [
-            span
-            for span in tokenise(reference)[1]
-            if strip_edges(span.raw) == word
-        ]
-        if matching:
-            report.line(f"  {word!r}  ->  {render_aligned(alignment, matching[0])!r}")
-    transcript_capitalised = [
-        token for token in hypothesis.split() if strip_edges(token)[:1].isupper()
-    ]
-    report.line(
-        f"  capitalised tokens in the transcript: {len(transcript_capitalised)}"
-    )
-    if transcript_capitalised:
-        report.line(f"    {transcript_capitalised}")
-
-
 def report_summary(report: Report, measurements: Sequence[UtteranceMeasurement]) -> None:
     """Aggregate the numbers and state the recommendation they support."""
     report.heading("summary and recommendation")
@@ -1192,7 +1007,6 @@ def measurement_from_steps(
         final_text=transcript,
         final_language=None,
         batch_reference=None,
-        reference_text=None,
         timeline_from_gate=True,
     )
 
@@ -1281,23 +1095,12 @@ def describe_device(device: str) -> str:
     return device if device else "the system default input device"
 
 
-def print_reference_text(text: str) -> None:
-    """Print the passage the user is expected to read aloud, before recording starts."""
-    print()
-    print("Read the following passage aloud while recording:")
-    print()
-    for line in wrap_text(text, width=78):
-        print(f"    {line}")
-    print()
-
-
 def capture_from_microphone(
     report: Report,
     *,
     config: Config,
     chunk_seconds: float,
     seconds: float,
-    reference_text: str | None,
 ) -> AudioBuffer:
     """Record ``seconds`` from the user's microphone, announcing every step.
 
@@ -1315,11 +1118,6 @@ def capture_from_microphone(
         "tip             : leave a deliberate 2-3 s pause in the middle; a pause is "
         "where the engine's flush() is most likely to commit a tail."
     )
-    if reference_text is not None:
-        report.line("reference text  : supplied (see below); it is not part of the audio path")
-
-    if reference_text is not None:
-        print_reference_text(reference_text)
 
     print()
     print(f"Recording from {describe_device(device)} for {seconds:.0f} s.")
@@ -1368,7 +1166,6 @@ class Options:
     capture: bool
     self_test: bool
     seconds: float
-    reference: str | None
     out_path: Path | None
     config_path: Path | None
 
@@ -1419,15 +1216,6 @@ def parse_args(argv: Sequence[str] | None) -> Options:
         help=f"capture length in seconds (default {DEFAULT_CAPTURE_SECONDS:.0f})",
     )
     parser.add_argument(
-        "--reference",
-        default=None,
-        metavar="TEXT_OR_PATH",
-        help=(
-            "reference text read aloud during the capture, for the informational "
-            "accuracy section. A path is read as a file; anything else is used verbatim."
-        ),
-    )
-    parser.add_argument(
         "--out",
         default=None,
         metavar="PATH",
@@ -1445,20 +1233,9 @@ def parse_args(argv: Sequence[str] | None) -> Options:
         capture=capture,
         self_test=args.self_test,
         seconds=args.seconds,
-        reference=args.reference,
         out_path=Path(args.out) if args.out is not None else None,
         config_path=Path(args.config) if args.config is not None else None,
     )
-
-
-def resolve_reference(value: str | None) -> str | None:
-    """Return the reference text: ``value`` as a file when it is one, else ``value``."""
-    if value is None:
-        return None
-    candidate = Path(value)
-    if "\n" not in value and candidate.is_file():
-        return candidate.read_text(encoding="utf-8").strip()
-    return value
 
 
 def load_engine(config_path: Path | None = None) -> tuple[WhistleTranscriber, WhistleConfig, Config]:
@@ -1527,7 +1304,6 @@ def measure_file(
     path: Path,
     *,
     label: str,
-    reference_text: str | None = None,
 ) -> UtteranceMeasurement:
     """Measure one WAV file through the shipped streaming path."""
     buffer = read_wav(path)
@@ -1539,7 +1315,6 @@ def measure_file(
         label=label,
         path=path,
         config=whistle_config,
-        reference_text=reference_text,
         with_batch_reference=True,
     )
     report.line(
@@ -1555,7 +1330,6 @@ def measure_capture(
     config: Config,
     *,
     seconds: float,
-    reference_text: str | None,
 ) -> UtteranceMeasurement:
     """Record (user-owned) and then measure the fresh real-device recording."""
     buffer = capture_from_microphone(
@@ -1563,7 +1337,6 @@ def measure_capture(
         config=config,
         chunk_seconds=whistle_config.chunk_seconds,
         seconds=seconds,
-        reference_text=reference_text,
     )
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     wav_path = TMP_DIR / f"ges2t-commit-cadence-capture-{stamp}.wav"
@@ -1579,7 +1352,6 @@ def measure_capture(
         label=f"fresh device recording ({stamp})",
         path=wav_path,
         config=whistle_config,
-        reference_text=reference_text,
         with_batch_reference=True,
     )
     return measurement
@@ -1633,7 +1405,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 whistle_config,
                 config,
                 seconds=options.seconds,
-                reference_text=resolve_reference(options.reference),
             )
         )
     if options.clip_dir is not None:
@@ -1648,7 +1419,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 whistle_config,
                 path,
                 label=f"wav {path.name}",
-                reference_text=resolve_reference(options.reference),
             )
         )
 
@@ -1662,7 +1432,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     for measurement in measurements:
         report_utterance(report, measurement)
         report_pending_revisions(report, measurement)
-        report_accuracy(report, measurement)
 
     report_summary(report, measurements)
     report.write(out_path)
