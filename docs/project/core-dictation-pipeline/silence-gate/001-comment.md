@@ -502,3 +502,35 @@ frame floor (0.0015) or frame count (3) must come down.
 
 Both remain user-owned; the agent cannot use a microphone or inject keystrokes.
 
+
+---
+
+## Corrections from review 003 (measured independently by the re-reviewer)
+
+Four claims in the addendum above are **not reproducible** and are corrected here rather than left
+standing. The **code is unaffected** in all four cases — these are documentation corrections, and the
+first of them changes what we may honestly claim about the *cost* of the gate.
+
+1. **"The engine gives up at about −59/−65 dBFS" is FALSE.** The reviewer found the engine transcribes
+   a scaled `clip5` **deterministically down to −99 dBFS**. The justification that "the gate's floor
+   sits below the engine's own floor, therefore it never discards anything the engine could transcribe"
+   therefore does **not** hold: **the gate does discard audio the engine is capable of transcribing.**
+   The measured quiet-speech floor is nevertheless **unchanged** (gain 0.01, AC RMS 0.0005363,
+   −65.4 dBFS, dropping from gain 0.005), so the cost is nil *in the range measured* — but the risk is
+   **real rather than theoretical**. That is the honest statement of the trade: we knowingly accept
+   discarding extremely quiet audio in exchange for not hallucinating on the hotkey's key clicks.
+2. **Hum passes at ≈0.007, not 0.01.** The 150 Hz high-pass removes hum at 0.005; hum at ≈0.007 and
+   above still hallucinates `Thank you.` The earlier "≥ 0.01" **understated** the residue.
+3. **A 40 ms voiced-band, decaying transient passes** — not 50–60 ms. The transient floor is lower than
+   previously claimed.
+4. **Addendum A5's `clip5` window figures are 5× inflated.** The conclusion (short real words still
+   transcribe) is unaffected; the numbers were wrong.
+5. **The claimed engine-floor non-determinism is not reproducible**: 30 fresh processes were all
+   deterministic. Do not rely on the "fuzzy band at −59 to −65 dBFS" as a description of engine
+   behaviour.
+
+**Net effect:** the gate **does fix the user's reported bug** — all four realistic-toggle cases are
+gated with the engine not called, and the quiet-speech floor is unchanged in the measured range — while
+the honest framing remains the reviewer's: **merge the code; do not call it "silence solved".** The
+live user confirmation (silence, double-tap, quiet speech) is still the decisive evidence and had not
+run when this was written.

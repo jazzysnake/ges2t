@@ -1,7 +1,7 @@
 # Silence must produce nothing (the model hallucinates on quiet audio)
 
 - **Priority:** P0
-- **Status:** in review
+- **Status:** done
 - **Complexity:** S
 - **Epic:** ../epic.md
 
