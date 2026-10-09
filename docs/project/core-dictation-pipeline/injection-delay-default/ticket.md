@@ -1,7 +1,7 @@
 # Set the injection key-delay default from the measurement
 
 - **Priority:** P1
-- **Status:** in review
+- **Status:** done
 - **Complexity:** XS
 - **Epic:** ../epic.md
 
