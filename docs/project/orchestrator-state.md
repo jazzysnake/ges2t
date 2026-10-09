@@ -59,20 +59,26 @@ Original orchestrator brief: `.pi/prompts/orchestrate-project.md`.
   first on resume** — it is faster than reading the environment table above.
 - 21 ADRs (0000–0020), **34 tickets**, 2 epics.
 
-## 5. Board state (31 of 37 done)
+## 5. Board state (34 of 38 done)
 
-**Done (31):** 1–18, 20–29, 32, 33, 36, plus 25 (manual gate passed). Merge commits worth knowing:
+**Done (34):** 1–18, 20–29, 32, 33, 34, 36, 37, 38, plus 25 (manual gate passed). Merge commits worth knowing:
 - 11 `338cdc2` · 12 `036d1e2` · 15 `2ba0a3a` · 17 (four rounds) · 18 `829937a` · 21 `11b1bf3` ·
   22 `0a2074a` · 23 `b4aa911` · 24 `a6ba892` · 26 `ceee7a2` · 28 `37e8937` · 29 `f9df8a0` ·
-  **32 `1356f88`** · **25 `2646212`** · **33 `78f87fc`** · **36 `ddeb278`**
+  **32 `1356f88`** · **25 `2646212`** · **33 `78f87fc`** · **36 `ddeb278`** · **37 `53d3c79`** ·
+  **38 `47431eb`** · **34 `5eeca4d`**
 
-**Remaining (6):**
+**The incremental-typing chain is COMPLETE and live-verified by the user** (32 gate → 33 interface →
+34 payload). The user ran the acceptance test on merged `main` and **every checkbox passed**: text
+appears while speaking (lag "less than a second, likely", **explicitly not measured**), exactly one
+trailing space, and stop → delete → continue recovered a wrong word. **ADR 0011 is amended with the
+user's explicit sign-off** — the committed prefix is typed as it is committed; `pending` never is.
+Recorded in `docs/project/live-dictation-ux/incremental-typing/003-comment.md`.
+
+**Remaining (4):**
 | # | Ticket | State |
 |---|---|---|
-| **19** | user-documentation-and-setup-guide | **not started** — the last core ticket; deliberately last because it documents final behaviour. **Must also decide the `paste_keys` default** (§11b) |
-| **34** | incremental-typing | **to do** — the payload ticket of the incremental-typing chain; 32 (gate) and 33 (interface) are merged, so it is unblocked. **Amends ADR 0011** (surface it explicitly, with 32's numbers). The user's design decisions are recorded in the ticket and must not be re-opened. **Must reconcile against `finish()`, not just iterate `partials()`** (see 33's `002-review.md` §3) |
+| **19** | user-documentation-and-setup-guide | **not started** — the last core ticket; deliberately last because it documents final behaviour. **Must document**: incremental typing as the default (and that there is **no opt-out that keeps streaming** — only `streaming.enabled = false`), the clipboard/streaming refusal, and the `ctrl+shift+v` default (ticket 38, decided — §11b is now closed) |
 | **35** | streaming-vs-batch-quality | **to do**, P2, **gates nothing** (`depends on: —`, `blocks: —`, verified). Measure streaming vs batch accuracy **against ground truth**, not streaming-vs-batch divergence |
-| **37** | pin-clipboard-real-seam-payload | **in review** — pins that a non-empty payload reaches the child's stdin in the real immediate runner (mutating it to `b""` left all 877 tests green) |
 | **30** | tray-failure-diagnostics | filed follow-up; needs a read-only socket verb (**requires an ADR 0016 amendment**) |
 | **31** | speech-gate-recalibration | **`blocked`** on the board — implemented and review-passed, branch exists, **not merged**, parked at the user's direction pending their live test in **both** a quiet room and a noisy one. See §10 |
 
@@ -475,26 +481,28 @@ restored?** Any failure here is a real defect, not a flake — report it as foun
 guarantee; a long transcript must not be replaced before the target app has pasted it. And the
 clipboard is *written* by design — that is the mechanism, not a bug.
 
-## 11b. OPEN DECISION — the `paste_keys` default (belongs to ticket 19)
+## 11b. CLOSED — the `paste_keys` default is `ctrl+shift+v` (ticket 38, merged `47431eb`)
 
-The user's manual run used **`ctrl+shift+v`** from the start — nvim needs it, and in their experience
-it also works in browsers and regular editors — and it worked in every target, so **one config covered
-both DoD targets** and the planned second pass was unnecessary.
+The user decided it and it is done: `DEFAULT_PASTE_KEYS` is `("ctrl+shift+v",)` in
+`injectors/layout.py`, the injector's constructor default matches, and every docstring that states it
+was updated. The review classified all 12 remaining `ctrl+v` hits in `src/`: 8 are the deliberate
+caveat (*"if your app leaves `ctrl+shift+v` unbound, set `["ctrl+v"]`"*) and 4 are unrelated
+chord-parser prose — **nothing still states `ctrl+v` as the default**. The pinning tests assert the
+**literal** rather than comparing a constant to itself, and reverting either declaration alone is
+caught by a distinct test.
 
-**The shipped default is `["ctrl+v"]`, which has now been exercised by nobody.** The only chord with
-real evidence behind it is `ctrl+shift+v`.
+**The reasoning, kept because it is the kind of thing a default quietly loses:** the shipped
+`ctrl+v` had been exercised by **nobody**; the only chord with real evidence was `ctrl+shift+v`, which
+the user ran and which worked in every target they used — editor, terminal, browser — so one
+configuration covered both DoD targets. In most GUI toolkits `ctrl+shift+v` means *paste as plain
+text*, which for dictation is arguably better. The honest counterweight, now documented with the
+default: it is a **different binding, not a superset** — an app that leaves it unbound pastes
+**nothing**, whereas `ctrl+v` fails *predictably* in terminals.
 
-Honest trade, both directions:
-- In most GUI toolkits `ctrl+shift+v` means **paste as plain text** — for dictation that is arguably
-  **better** (no rich formatting carried in), and it covers **terminals**, which are a first-class
-  target (the epic's exit test names one).
-- But it is a **different binding, not a superset**: an application that leaves it unbound pastes
-  nothing, whereas `ctrl+v` fails *predictably* in terminals — which is already documented.
-- One user across several applications is strong practical evidence and is **not** a survey.
-
-**Cheap to change now** — the backend is brand new, opt-in, and nobody depends on the default. Decide
-it in **ticket 19** or as a one-line config change; do not leave it undecided, because a fresh machine's
-first experience is exactly where a wrong default hurts.
+**Latent gap recorded, not fixed (it is unreachable):** `ClipboardConfig`'s field default is aliased
+to the constant and `from_mapping` always passes `paste_keys` explicitly, so no test independently
+pins that field. It cannot ship a second default as written; a future change turning it into an
+independent literal would go unnoticed.
 
 ## 12. User preferences and escalation rules
 

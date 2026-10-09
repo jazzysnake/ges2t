@@ -67,7 +67,7 @@ This ticket changes that decision and implements the feature.
       it in the comment artifact, and make the message name the two settings involved.)
 - [ ] ADR 0012's text rules are unchanged: still exactly one trailing space when enabled, still
       verbatim otherwise, and whitespace-only input still injects **nothing**.
-- [ ] The **user's live test** — user-owned, script prepared by the implementer, and asking first
+- [x] The **user's live test** — **PASS**, run by the user on merged `main` (`5eeca4d`); every checkbox passed — text appeared while speaking, exactly one trailing space, and stop → delete → continue recovered a wrong word. See `003-comment.md`.
       because it types into their focused window:
       dictate a sentence and confirm text appears **while speaking**; then deliberately dictate a
       phrase the model gets wrong and confirm the **stop → delete → continue** recovery works.
