@@ -43,6 +43,7 @@ from ges2t.socket_proto import ServiceNotRunningError
 
 if TYPE_CHECKING:
     from ges2t.config import Config
+    from ges2t.doctor import DoctorOptions
     from ges2t.model_store import ArtifactPin
 
 __all__ = [
@@ -297,7 +298,7 @@ def build_parser() -> argparse.ArgumentParser:
             "are left alone."
         ),
     )
-    subparsers.add_parser(
+    doctor = subparsers.add_parser(
         "doctor",
         parents=[common],
         help="diagnose the environment and print the recommended key bindings",
@@ -308,6 +309,11 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         epilog=KDE_SHORTCUT_HINT,
         formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    doctor.add_argument(
+        "--verify",
+        action="store_true",
+        help="hash the model against its pinned sha256 and byte size (slower, conclusive)",
     )
     models = subparsers.add_parser(
         "models",
@@ -407,6 +413,26 @@ def _load_config(args: argparse.Namespace) -> Config:
 # -- handlers -------------------------------------------------------------
 
 
+def _load_doctor_entry_point() -> "Callable[[Config, DoctorOptions], int]":
+    """Lazily import ``ges2t.doctor.run_doctor`` as a two-argument entry point.
+
+    The doctor entry point is separate from :func:`_load_entry_point` because it
+    also receives the resolved config path (so doctor itself can catch and report
+    a generic :class:`~ges2t.config.ConfigError`) and the ``--verify`` flag. Like
+    every lazy import here, the module is named as a string so importing
+    :mod:`ges2t.cli` stays cheap and a build missing doctor names itself.
+    """
+    target = "ges2t.doctor.run_doctor"
+    try:
+        module = importlib.import_module("ges2t.doctor")
+    except ImportError as exc:
+        raise MissingImplementationError(target, exc) from exc
+    function = getattr(module, "run_doctor", None)
+    if function is None:
+        raise MissingImplementationError(target, AttributeError("run_doctor")) from None
+    return cast("Callable[[Config, DoctorOptions], int]", function)
+
+
 def _handle_run(args: argparse.Namespace) -> int:
     """Run the long-lived service (ticket: dictation-pipeline-batch, ADR 0015)."""
     run_service = _load_entry_point("ges2t.pipeline", "run_service")
@@ -415,10 +441,27 @@ def _handle_run(args: argparse.Namespace) -> int:
 
 
 def _handle_doctor(args: argparse.Namespace) -> int:
-    """Run the environment diagnosis (ticket: doctor-command, ADR 0016)."""
-    run_doctor = _load_entry_point("ges2t.doctor", "run_doctor")
-    config = _load_config(args)
-    return run_doctor(config)
+    """Run the environment diagnosis (ticket: doctor-command, ADR 0016).
+
+    The configuration is loaded here so doctor's own check can report a generic
+    :class:`~ges2t.config.ConfigError` as a report line; when it fails, doctor is
+    still run with the defaults plus the resolved path, so it can re-load the
+    file and print the error and its fix in the same report (ADR 0009).
+    """
+    from ges2t.config import ConfigError, default_config, load_config, resolve_config_path
+    from ges2t.doctor import DoctorOptions
+
+    run_doctor = _load_doctor_entry_point()
+    path = resolve_config_path(getattr(args, "config", None))
+    try:
+        config = load_config(path).config
+    except ConfigError:
+        config = default_config()
+    options = DoctorOptions(
+        config_path=path,
+        verify=bool(getattr(args, "verify", False)),
+    )
+    return run_doctor(config, options)
 
 
 def _handle_thin_client(args: argparse.Namespace) -> int:
