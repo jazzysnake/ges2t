@@ -26,12 +26,20 @@ no-collaborator-under-lock rule.
 Partial text from ``session.partials()`` is forwarded to
 ``status_ui.partial()`` on its own thread. It is display-only and is never
 injected (ADR 0011).
+
+Shutdown is bounded. :meth:`Service.shutdown` waits up to
+:data:`_SHUTDOWN_JOIN_TIMEOUT_SECONDS` for an in-flight transcription, because a
+wedged engine must never hang the process (ADR 0015). If that bound is exceeded
+the utterance is lost -- under ADR 0011 nothing is injected until release, so
+the loss is a missing transcript, never partial text -- and the give-up is
+logged at WARNING so it is visible instead of silent.
 """
 
 from __future__ import annotations
 
 import contextlib
 import functools
+import logging
 import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -53,6 +61,11 @@ __all__ = [
 #: partials forwarder to stop before giving up. Shutdown must not hang forever
 #: on a wedged engine.
 _SHUTDOWN_JOIN_TIMEOUT_SECONDS = 5.0
+
+#: The service's logger. The only thing logged is the shutdown give-up below;
+#: it is at WARNING so it reaches stderr through logging's last-resort handler
+#: even when the application has configured no handlers (ticket 16).
+_logger = logging.getLogger(__name__)
 
 
 class ServiceState(StrEnum):
@@ -514,6 +527,17 @@ class Service:
                 pass
         if worker is not None and worker.is_alive():
             worker.join(timeout=_SHUTDOWN_JOIN_TIMEOUT_SECONDS)
+            if worker.is_alive():
+                # ADR 0011: nothing was injected, because injection only happens
+                # after finish() returns. The utterance is lost, not partial or
+                # corrupt -- but a lost utterance must still be visible, so it
+                # is logged rather than dropped silently (ticket 16 follow-up).
+                _logger.warning(
+                    "shutdown gave up after %.1f s waiting for an in-flight "
+                    "transcription; the current utterance was not typed "
+                    "(ADR 0011: a lost utterance, never partial text)",
+                    _SHUTDOWN_JOIN_TIMEOUT_SECONDS,
+                )
         if partials is not None and partials.is_alive():
             partials.join(timeout=_SHUTDOWN_JOIN_TIMEOUT_SECONDS)
 

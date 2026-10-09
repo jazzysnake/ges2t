@@ -23,8 +23,13 @@ What it builds
   ``ydotool key`` invocation and never calls ``ydotool type`` (ADR 0003's
   amendment).
 * :class:`BatchDictationSession` — the batch ``DictationSession``: record the
-  whole utterance, transcribe once, return the text. Streaming is a separate
-  session implementation and is deliberately absent here (ticket 16).
+  whole utterance, transcribe once, return the text.
+* :class:`~ges2t.streaming_session.StreamingDictationSession` — the windowed
+  streaming session (ADR 0011). :func:`_session_factory` owns the one
+  batch-vs-streaming selection step: streaming is chosen when
+  ``streaming.enabled`` and ``Transcriber.supports_streaming`` are both true,
+  the batch path otherwise. The commit window stays the adapter's property and
+  only the feed granularity reaches the session.
 * :func:`build_status_ui` — the tray when ``ui.tray = true`` and the
   AppIndicator backend is present, the documented no-op otherwise; a failed tray
   degrades to the no-op with a printed warning (ADR 0013).
@@ -40,6 +45,7 @@ and that is asserted in ``tests/test_pipeline.py``.
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from collections.abc import Callable, Iterator, Mapping
@@ -57,6 +63,7 @@ from ges2t.socket_proto import (
     default_socket_path,
     send_command,
 )
+from ges2t.streaming_session import StreamingDictationSession
 from ges2t.transcribers.whistle import WhistleTranscriber
 from ges2t.transcribers.whistle_config import WhistleConfig
 from ges2t.ui.status import (
@@ -81,6 +88,17 @@ __all__ = [
 #: implementation (the dependency runs CLI -> pipeline, never the reverse).
 _EXIT_SUCCESS: int = 0
 _EXIT_FAILURE: int = 1
+
+#: The pipeline's logger. The session-selection decision is logged at DEBUG so
+#: a user can tell whether streaming is active without a debugger attached
+#: (ticket 16); nothing else here logs.
+_logger = logging.getLogger(__name__)
+
+#: The two session kinds :func:`_select_session_kind` can return. Plain strings
+#: rather than an ``Enum`` because the value is only compared internally and
+#: never crosses a boundary.
+_SESSION_STREAMING: str = "streaming"
+_SESSION_BATCH: str = "batch"
 
 
 class PipelineError(Exception):
@@ -272,23 +290,71 @@ def _shutdown_status_ui(ui: StatusUI) -> None:
             print(f"ges2t: {report.summary()}", file=sys.stderr)
 
 
-def _session_factory(
-    transcriber: Transcriber, audio_source: AudioSource
-) -> Callable[[], DictationSession]:
-    """Return the service's session factory: one batch session per recording.
+def _streaming_chunk_seconds(config: Config) -> float:
+    """Return the streaming feed granularity from ``[engine.whistle]`` (ADR 0011).
 
-    This is the seam ticket 16 extends with the streaming/batch selection rule;
-    ``Service`` already accepts the factory and never learns which implementation
-    it gets (ADR 0010, ADR 0015).
+    The block is read exactly as :func:`_build_whistle` reads it: ``.get(...,
+    {})``, because an absent block is the normal case and means all defaults
+    (ADR 0009). This is the **chunk** size only; the commit window is the
+    transcriber adapter's property (:class:`WhistleConfig`, applied inside
+    ``WhistleTranscriber.stream``), so it is deliberately not returned here.
     """
+    block = config.engine_blocks.get(config.transcriber.engine, {})
+    return WhistleConfig.from_mapping(block).config.chunk_seconds
+
+
+def _select_session_kind(config: Config, transcriber: Transcriber) -> str:
+    """Return the session to build, and log why (ADR 0010, ADR 0011).
+
+    Streaming is the default whenever the engine declares the capability and
+    the user has not switched it off; the batch path runs otherwise. The
+    decision is a capability flag (``Transcriber.supports_streaming``), never an
+    exception or a runtime probe, and it is derived rather than configured: the
+    only switch is ``streaming.enabled`` (ticket 16).
+    """
+    if not config.streaming.enabled:
+        reason = "streaming.enabled = false"
+        kind = _SESSION_BATCH
+    elif not transcriber.supports_streaming:
+        reason = f"transcriber {transcriber.name!r} does not support streaming"
+        kind = _SESSION_BATCH
+    else:
+        reason = (
+            f"streaming.enabled = true and transcriber {transcriber.name!r} "
+            "supports streaming"
+        )
+        kind = _SESSION_STREAMING
+    _logger.debug("using the %s dictation session (%s)", kind, reason)
+    return kind
+
+
+def _session_factory(
+    config: Config, transcriber: Transcriber, audio_source: AudioSource
+) -> Callable[[], DictationSession]:
+    """Return the service's session factory: one session per recording (ADR 0011).
+
+    This is the one place the batch-vs-streaming selection happens. Ticket 11
+    deliberately left the choice out so this ticket owns it; the public
+    ``run_service`` signature is unchanged and ``Service`` never learns which
+    implementation it gets (ADR 0010, ADR 0015). The commit window is threaded
+    to the adapter by :func:`_build_whistle` and the feed granularity to the
+    session here, because they are different owners' properties.
+    """
+    kind = _select_session_kind(config, transcriber)
+    chunk_seconds = _streaming_chunk_seconds(config)
 
     def create() -> DictationSession:
+        if kind == _SESSION_STREAMING:
+            return StreamingDictationSession(
+                audio_source, transcriber, chunk_seconds=chunk_seconds
+            )
         return BatchDictationSession(transcriber, audio_source)
 
     return create
 
 
 def _build_service(
+    config: Config,
     transcriber: Transcriber,
     audio_source: AudioSource,
     injector: Injector,
@@ -296,7 +362,7 @@ def _build_service(
 ) -> Service:
     """Construct the service with the composition root's choices."""
     return Service(
-        _session_factory(transcriber, audio_source),
+        _session_factory(config, transcriber, audio_source),
         injector,
         status_ui,
         default_socket_path(),
@@ -399,7 +465,7 @@ def _startup(config: Config, status_ui: StatusUI) -> Service:
     # idempotent and keeps the contract visible at the composition root (ADR 0017).
     os.environ.update(model_store.env_overrides())
     transcriber.load()
-    return _build_service(transcriber, audio_source, injector, status_ui)
+    return _build_service(config, transcriber, audio_source, injector, status_ui)
 
 
 def run_service(config: Config, status_ui: StatusUI | None = None) -> int:
