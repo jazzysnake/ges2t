@@ -46,7 +46,7 @@ speak → `ges2t toggle` types the right text into a text editor and a terminal.
 | # | Ticket | Size | Status | Depends on | Branch |
 |---|---|---|---|---|---|
 | 22 | [xkb-keycode-mapping](core-dictation-pipeline/xkb-keycode-mapping/ticket.md) — libxkbcommon reverse lookup, generic over layouts | M | to do | 2 | — |
-| 24 | [layout-detection-and-config](core-dictation-pipeline/layout-detection-and-config/ticket.md) — live keymap, KWin D-Bus, injection config blocks | S | in review | 3 | feat/layout-detection-and-config |
+| 24 | [layout-detection-and-config](core-dictation-pipeline/layout-detection-and-config/ticket.md) — live keymap, KWin D-Bus, injection config blocks | S | done | 3 | feat/layout-detection-and-config (merged) |
 | 23 | [batched-key-emission](core-dictation-pipeline/batched-key-emission/ticket.md) — one `ydotool key` batch + the latency measurement | M | to do | 7, 22, 24 | — |
 | 25 | [clipboard-paste-injector](core-dictation-pipeline/clipboard-paste-injector/ticket.md) — `wl-copy` + paste chord as a configured alternative | S | to do | 23, 24 | — |
 

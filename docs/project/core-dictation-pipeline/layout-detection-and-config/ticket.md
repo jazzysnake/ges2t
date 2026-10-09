@@ -1,7 +1,7 @@
 # Layout detection and injection configuration
 
 - **Priority:** P1
-- **Status:** in review
+- **Status:** done
 - **Complexity:** S
 - **Epic:** ../epic.md
 
