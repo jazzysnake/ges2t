@@ -191,7 +191,8 @@ def test_build_injector_clipboard_defaults_when_the_block_is_absent() -> None:
     injector = pipeline.build_injector(config)
 
     assert isinstance(injector, ClipboardPasteInjector)
-    assert injector.paste_keys == ["ctrl+v"]
+    # Ticket 38: the absent-block default is ctrl+shift+v.
+    assert injector.paste_keys == ["ctrl+shift+v"]
     assert injector.last_warnings == []
 
 
