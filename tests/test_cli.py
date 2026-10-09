@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -19,6 +20,7 @@ from ges2t import __version__, cli, model_store
 from ges2t.cli import (
     EXIT_ENGINE_FAILURE,
     EXIT_FAILURE,
+    EXIT_INTERRUPTED,
     EXIT_SERVICE_NOT_RUNNING,
     EXIT_SUCCESS,
     main,
@@ -267,6 +269,20 @@ def test_load_config_resolves_the_flag_path(tmp_path: Path) -> None:
 # -- thin clients and exit codes ------------------------------------------
 
 
+def test_documented_exit_code_literals_are_pinned() -> None:
+    """ADR 0016 documents these exit codes as user-facing API.
+
+    Compositor bindings and scripts branch on the raw process status, so the
+    literal values are contract. Asserting a path against its own constant
+    cannot catch a renumbered constant, so pin the numbers independently.
+    """
+    assert EXIT_SUCCESS == 0
+    assert EXIT_FAILURE == 1
+    assert EXIT_SERVICE_NOT_RUNNING == 2
+    assert EXIT_ENGINE_FAILURE == 3
+    assert EXIT_INTERRUPTED == 130
+
+
 @pytest.mark.parametrize(
     ("name", "verb"),
     (
@@ -294,7 +310,9 @@ def test_toggle_without_a_service_exits_two(
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
 
     # The real client is used here: the path is a private temp dir with no socket.
-    assert main(["toggle"]) == EXIT_SERVICE_NOT_RUNNING
+    # ADR 0016 documents 2 as the user-facing "service not running" status, so
+    # assert the literal rather than the constant that could be renumbered.
+    assert main(["toggle"]) == 2
 
     err = capsys.readouterr().err
     assert "not running" in err
@@ -307,7 +325,8 @@ def test_engine_failure_exits_three(
     client = StubClient(_failed(ServiceState.ERROR, message="injection failed"))
     monkeypatch.setattr(cli, "_send_command", client)
 
-    assert main(["toggle"]) == EXIT_ENGINE_FAILURE
+    # ADR 0016 documents 3 as the user-facing "engine/injection failed" status.
+    assert main(["toggle"]) == 3
 
     err = capsys.readouterr().err
     assert "injection failed" in err
@@ -348,7 +367,8 @@ def test_status_without_a_service_exits_two(
 ) -> None:
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
 
-    assert main(["status"]) == EXIT_SERVICE_NOT_RUNNING
+    # ADR 0016 documents 2 as the user-facing "service not running" status.
+    assert main(["status"]) == 2
 
 
 def test_unexpected_failure_has_no_traceback_without_debug(
@@ -383,6 +403,33 @@ def test_debug_environment_variable_prints_the_traceback(
 
 
 # -- laziness -------------------------------------------------------------
+
+
+def _forbidden_modules_after_importing_cli_in_a_subprocess() -> list[str]:
+    """Return the forbidden modules present after ``import ges2t.cli`` alone.
+
+    A subprocess is the only way to see *import-time* dependencies: this test
+    module imports ``ges2t.cli`` at collection time and Python never re-runs a
+    module-level import statement, so deleting entries from ``sys.modules`` in
+    the parent cannot reveal a top-level ``import pystray`` added to ``cli.py``.
+    """
+    script = (
+        "import sys\n"
+        "import ges2t.cli\n"
+        f"forbidden = {FORBIDDEN_MODULES!r}\n"
+        "print('\\n'.join(name for name in forbidden if name in sys.modules))\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return [line for line in completed.stdout.splitlines() if line]
+
+
+def test_importing_the_cli_does_not_load_the_engine_gui_or_later_tickets() -> None:
+    assert _forbidden_modules_after_importing_cli_in_a_subprocess() == []
 
 
 def test_toggle_does_not_import_the_engine_gui_or_later_tickets(
