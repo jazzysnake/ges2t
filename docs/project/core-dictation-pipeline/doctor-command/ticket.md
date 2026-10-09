@@ -91,6 +91,19 @@ warnings), ADR 0017 (model presence), ADR 0015 (socket/single instance).
 - [ ] `doctor` performs **no network I/O**, writes nothing to disk, and never mutates config or
       system state (ADR 0016). It must be safe to run at any time, including while the service
       is running.
+- [ ] **Reports the injection/layout environment** (ADR 0020, added after the `hu` discovery, so it
+      is easy to miss): the resolved keymap/layout and where it came from (configured → live keymap
+      → detected), whether `libxkbcommon` is loadable, whether `ydotoold` is reachable and
+      `/dev/uinput` writable, and — if the clipboard backend is selected — whether `wl-copy` exists.
+      A user whose layout cannot be resolved must learn it here, **before** dictation silently
+      produces wrong characters. Depends on ticket
+      `../layout-detection-and-config/ticket.md` (done) and `../xkb-keycode-mapping/ticket.md`.
+- [ ] **Surfaces a silently-failing tray.** `service.py` contains every `StatusUI` callback
+      exception as best-effort (ticket `../status-ui-outside-lock/ticket.md`, review `003`), which is
+      correct for safety but means a tray whose callbacks always raise simply stops updating with no
+      signal. `TrayStatusUI` records its own failures (count + last error) per ticket
+      `../../live-dictation-ux/tray-status-ui/ticket.md`; `doctor` (and/or `status`) must be able to
+      report them, so a broken tray is visible rather than merely absent.
 - [ ] A `--verify` flag forces the full sha256 model check; without it, only existence and
       size are checked (ADR 0017).
 - [ ] `tests/test_doctor.py` covers each check's `OK`/`WARN`/`FAIL` branch by injecting fake
@@ -102,7 +115,8 @@ warnings), ADR 0017 (model presence), ADR 0015 (socket/single instance).
       truthfully — specifically, it must **FAIL** on `ydotoold` (inactive/disabled) and pass
       the rest once `ges2t setup` has run. Paste the real output into `001-comment.md`.
 
-- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
+- [ ] `uv run mypy src/ges2t tests` exits 0 (per ADR 0019's amendment the enforcement command
+      covers `tests/` too): every definition fully annotated and every
       signature interface-typed — ADR 0019.
 
 ## Notes
