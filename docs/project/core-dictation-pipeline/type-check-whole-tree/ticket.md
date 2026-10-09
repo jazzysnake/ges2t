@@ -1,7 +1,7 @@
 # Make the whole tree type-clean, tests included
 
 - **Priority:** P2
-- **Status:** in review
+- **Status:** done
 - **Complexity:** XS
 - **Epic:** ../epic.md
 
