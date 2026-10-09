@@ -1,7 +1,7 @@
 # Pin the real-seam payload delivery (clipboard immediate runner)
 
 - **Priority:** P1 (test gap on a path that has now broken twice)
-- **Status:** in review
+- **Status:** done
 - **Complexity:** XS
 - **Epic:** ../../core-dictation-pipeline/epic.md
 
