@@ -1,7 +1,7 @@
 # Project scaffold: uv-managed Python project with a console script
 
 - **Priority:** P0
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** S
 - **Epic:** ../epic.md
 
@@ -21,33 +21,33 @@ system `gi`), ADR 0014 (pytest, run locally, no CI).
 
 ## Definition of done
 
-- [ ] `pyproject.toml` exists with: `name = "ges2t"`, `version = "0.1.0"`,
+- [x] `pyproject.toml` exists with: `name = "ges2t"`, `version = "0.1.0"`,
       `requires-python = ">=3.12"`, a `[project.scripts]` entry point
       `ges2t = "ges2t.cli:main"`, runtime dependencies `cactus-needle==3.1.3`, `pystray`,
       `pillow`, and a `[dependency-groups]` (or `[project.optional-dependencies]`) dev group
       containing `pytest` **and `mypy`**. No HTTP client dependency: downloads use the stdlib.
-- [ ] **`mypy` is configured and enforced** per ADR 0019: a `[tool.mypy]` section with
+- [x] **`mypy` is configured and enforced** per ADR 0019: a `[tool.mypy]` section with
       `disallow_untyped_defs = true`, `no_implicit_optional = true`, and
       `ignore_missing_imports = true` for third-party libraries. `uv run mypy src/ges2t` must
       exit `0` (it will find nothing to complain about in the stub, which is the point).
       Add both commands to the README's Development section.
-- [ ] `src/ges2t/__init__.py` defines `__version__ = "0.1.0"`.
-- [ ] `src/ges2t/cli.py` exists as a **minimal stub only** — `main()` handling `--version`
+- [x] `src/ges2t/__init__.py` defines `__version__ = "0.1.0"`.
+- [x] `src/ges2t/cli.py` exists as a **minimal stub only** — `main()` handling `--version`
       and `--help` — because the full surface is ticket `../cli-surface-and-commands/ticket.md`.
       This ticket must not define any subcommand.
-- [ ] `tests/test_smoke.py` asserts the version string is importable from the installed
+- [x] `tests/test_smoke.py` asserts the version string is importable from the installed
       package (not from a relative path).
-- [ ] `README.md` exists with a one-paragraph description, the "Status: early MVP, not
+- [x] `README.md` exists with a one-paragraph description, the "Status: early MVP, not
       packaged for distribution" note (ADR 0000), and a **Development** section recording the
       exact commands below.
-- [ ] `uv.lock` is committed.
-- [ ] **The venv sees system site packages.** Running
+- [x] `uv.lock` is committed.
+- [x] **The venv sees system site packages.** Running
       `uv run python -c "import gi; gi.require_version('Gtk','3.0'); from gi.repository import Gtk; print('ok')"`
       prints `ok`. Document in the README exactly which mechanism achieves this with the
       installed uv (e.g. `uv venv --system-site-packages --python /usr/bin/python3` or a
       `[tool.uv]` setting) — verify it empirically rather than assuming a flag exists.
-- [ ] `uv run ges2t --version` prints `0.1.0` and exits 0.
-- [ ] `uv run pytest` passes with exit code 0, and `uv run mypy src/ges2t` exits 0.
+- [x] `uv run ges2t --version` prints `0.1.0` and exits 0.
+- [x] `uv run pytest` passes with exit code 0, and `uv run mypy src/ges2t` exits 0.
 
 ## Notes
 
