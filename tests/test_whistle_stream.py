@@ -602,7 +602,11 @@ def test_a_sustained_stream_chunk_passes_the_sustained_gate(
     fake_needle.script = FakeScript(chunks=("kept",), tails=("",))
     adapter = _loaded_transcriber(fake_needle)
 
-    segments = list(adapter.stream([_chunk(seconds=0.15)]))
+    # A quiet square wave just above the frame floor, so raising the floor also
+    # fails this test (the point is that a sustained chunk is not dropped).
+    amplitude = 0.003
+    assert whistle.SPEECH_FRAME_RMS_THRESHOLD < amplitude
+    segments = list(adapter.stream([_chunk(seconds=0.2, value=amplitude)]))
 
     assert segments[-1].text == "kept"
     assert fake_needle.created[-1].chunk_calls == 1
