@@ -192,6 +192,54 @@ def _audio(seconds: float, value: float = 0.5) -> AudioBuffer:
     )
 
 
+def _tone(seconds: float, *, frequency: float = 1000.0, amplitude: float = 0.05) -> AudioBuffer:
+    """A steady tone above the 150 Hz analysis high-pass (a voiced-vowel proxy)."""
+    return AudioBuffer(
+        samples=[
+            amplitude * math.sin(2.0 * math.pi * frequency * index / SAMPLE_RATE)
+            for index in range(int(seconds * SAMPLE_RATE))
+        ],
+        sample_rate=SAMPLE_RATE,
+    )
+
+
+def _silence_with_tone(
+    seconds: float,
+    start_ms: float,
+    tone_ms: float,
+    *,
+    frequency: float = 1000.0,
+    amplitude: float = 0.05,
+) -> AudioBuffer:
+    """A tone burst inside silence, so only the *run* length varies."""
+    samples = [0.0] * int(seconds * SAMPLE_RATE)
+    start = int(start_ms * SAMPLE_RATE / 1000)
+    for index in range(int(tone_ms * SAMPLE_RATE / 1000)):
+        if start + index >= len(samples):
+            break
+        samples[start + index] = amplitude * math.sin(
+            2.0 * math.pi * frequency * index / SAMPLE_RATE
+        )
+    return AudioBuffer(samples=samples, sample_rate=SAMPLE_RATE)
+
+
+def _silence_with_clicks(
+    seconds: float, positions_ms: Sequence[float], amplitude: float, width_ms: float = 5.0
+) -> AudioBuffer:
+    """Decaying clicks in otherwise digital silence -- a hotkey toggle with no speech."""
+    samples = [0.0] * int(seconds * SAMPLE_RATE)
+    width = max(1, int(width_ms * SAMPLE_RATE / 1000))
+    for at_ms in positions_ms:
+        base = int(at_ms * SAMPLE_RATE / 1000)
+        for k in range(width):
+            if base + k >= len(samples):
+                break
+            samples[base + k] = amplitude * math.exp(-k / (width / 3.0)) * (
+                1 if k % 2 == 0 else -1
+            )
+    return AudioBuffer(samples=samples, sample_rate=SAMPLE_RATE)
+
+
 # --- interface conformance ----------------------------------------------------
 
 
@@ -320,9 +368,11 @@ def test_result_is_passed_through_unchanged(
     )
 
 
-def test_silence_is_returned_as_an_empty_string(
+def test_an_empty_engine_text_is_returned_unchanged(
     transcriber: WhistleTranscriber, fake_needle: FakeNeedleModule
 ) -> None:
+    # The gate now intercepts digital silence before the engine, so this pins
+    # the other half: when the engine itself returns "", it crosses unchanged.
     fake_needle.result = {
         "text": "",
         "language": None,
@@ -418,17 +468,20 @@ def test_speech_at_the_measured_clip_level_still_transcribes(
     assert result.text == "hallo welt"
 
 
-def test_a_buffer_just_above_the_rms_threshold_is_not_dropped(
+def test_a_buffer_just_above_the_frame_floor_is_not_dropped(
     transcriber: WhistleTranscriber, fake_needle: FakeNeedleModule
 ) -> None:
-    # A square wave's AC RMS equals its amplitude. 0.00075 is a fixed 1.5x the
-    # committed SILENCE_RMS_THRESHOLD (0.0005): using the constant here would
-    # make the test follow any threshold change instead of pinning it.
-    amplitude = 0.00075
-    assert whistle.SILENCE_RMS_THRESHOLD < amplitude
+    # A 1 kHz tone is above the 150 Hz analysis high-pass, so its per-frame AC
+    # RMS is amplitude/sqrt(2). A fixed 0.003 is 1.5x the committed
+    # SPEECH_FRAME_RMS_THRESHOLD (0.002); using the constant here would make the
+    # test follow any threshold change instead of pinning it.
+    frame_rms = 0.003
+    assert whistle.SPEECH_FRAME_RMS_THRESHOLD < frame_rms
     transcriber.load()
 
-    transcriber.transcribe(_audio(0.2, value=amplitude))
+    transcriber.transcribe(
+        _tone(0.2, amplitude=frame_rms * math.sqrt(2.0))
+    )
 
     assert len(fake_needle.created[-1].calls) == 1
 
@@ -451,6 +504,99 @@ def test_a_101ms_full_scale_burst_is_not_dropped(
     transcriber.load()
 
     transcriber.transcribe(_audio(0.101, value=1.0))
+
+    assert len(fake_needle.created[-1].calls) == 1
+
+
+def test_an_isolated_click_is_not_speech(
+    transcriber: WhistleTranscriber, fake_needle: FakeNeedleModule
+) -> None:
+    # The user's failure mode: a hotkey click in otherwise silent audio. One
+    # 20 ms frame is active at most, which is below MIN_SPEECH_FRAMES.
+    transcriber.load()
+
+    result = transcriber.transcribe(_silence_with_clicks(1.2, [10.0], 0.05))
+
+    assert result.text == ""
+    assert fake_needle.created[-1].calls == []
+
+
+def test_clicks_at_both_ends_of_a_silent_toggle_are_not_speech(
+    transcriber: WhistleTranscriber, fake_needle: FakeNeedleModule
+) -> None:
+    # The review's four realistic-toggle cases. Two isolated transients must not
+    # add up to a run.
+    transcriber.load()
+
+    for amplitude in (0.05, 0.02):
+        result = transcriber.transcribe(
+            _silence_with_clicks(1.2, [0.0, 1180.0], amplitude)
+        )
+        assert result.text == "", f"amplitude {amplitude} was not gated"
+    assert fake_needle.created[-1].calls == []
+
+
+def test_clicks_never_form_a_run_even_at_high_amplitude(
+    transcriber: WhistleTranscriber, fake_needle: FakeNeedleModule
+) -> None:
+    transcriber.load()
+
+    transcriber.transcribe(_silence_with_clicks(1.2, [0.0, 1180.0], 0.4))
+
+    assert fake_needle.created[-1].calls == []
+
+
+def test_low_level_mains_hum_is_treated_as_silence(
+    transcriber: WhistleTranscriber, fake_needle: FakeNeedleModule
+) -> None:
+    # Hum is AC, so mean removal alone does not touch it; the 150 Hz analysis
+    # high-pass is what makes this measure as silence.
+    samples = [
+        0.005 * math.sin(2.0 * math.pi * 50.0 * index / SAMPLE_RATE)
+        for index in range(2 * SAMPLE_RATE)
+    ]
+    transcriber.load()
+
+    result = transcriber.transcribe(
+        AudioBuffer(samples=samples, sample_rate=SAMPLE_RATE)
+    )
+
+    assert result.text == ""
+    assert fake_needle.created[-1].calls == []
+
+
+def test_a_sustained_tone_passes_the_sustained_gate(
+    transcriber: WhistleTranscriber, fake_needle: FakeNeedleModule
+) -> None:
+    # A 150 ms voiced-vowel proxy: 7 active frames, well above the 3-frame floor.
+    transcriber.load()
+
+    transcriber.transcribe(_tone(0.15, frequency=180.0))
+
+    assert len(fake_needle.created[-1].calls) == 1
+
+
+def test_a_run_below_the_minimum_is_dropped_and_at_the_minimum_is_kept(
+    transcriber: WhistleTranscriber, fake_needle: FakeNeedleModule
+) -> None:
+    # A 100 ms tone burst at the frame boundary is exactly 5 frames. A 40 ms
+    # burst is 2 frames (below MIN_SPEECH_FRAMES), a 60 ms burst is 3 (at the
+    # floor); both sit inside a longer buffer so only the run length varies.
+    transcriber.load()
+
+    transcriber.transcribe(_silence_with_tone(0.5, 100.0, 40.0))
+    assert fake_needle.created[-1].calls == []
+
+    transcriber.transcribe(_silence_with_tone(0.5, 100.0, 60.0))
+    assert len(fake_needle.created[-1].calls) == 1
+
+
+def test_a_five_frame_burst_is_kept(
+    transcriber: WhistleTranscriber, fake_needle: FakeNeedleModule
+) -> None:
+    transcriber.load()
+
+    transcriber.transcribe(_silence_with_tone(0.5, 100.0, 100.0))
 
     assert len(fake_needle.created[-1].calls) == 1
 

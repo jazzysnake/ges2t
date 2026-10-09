@@ -23,6 +23,7 @@ propagation, and the windowing being delegated to ``drive()`` (ADR 0011).
 
 from __future__ import annotations
 
+import math
 import sys
 from array import array
 from collections.abc import Iterable, Iterator, Sequence
@@ -218,13 +219,25 @@ def _chunk(seconds: float = 1.0, value: float = 0.5) -> AudioBuffer:
 
     ``value=0.0`` (the old default) is now *silence*: the adapter filters it
     before the decoder sees it, so tests that need the engine called must feed
-    audio above :data:`whistle.SILENCE_RMS_THRESHOLD`.
+    audio with enough sustained energy to pass :func:`whistle._has_speech`.
     """
     count = int(seconds * SAMPLE_RATE)
     return AudioBuffer(
         samples=[value if index % 2 == 0 else -value for index in range(count)],
         sample_rate=SAMPLE_RATE,
     )
+
+
+def _click_chunk(seconds: float = 1.2, amplitude: float = 0.05) -> AudioBuffer:
+    """Silence containing a single 5 ms decaying click (a hotkey toggle)."""
+    samples = [0.0] * int(seconds * SAMPLE_RATE)
+    width = int(0.005 * SAMPLE_RATE)
+    base = int(0.01 * SAMPLE_RATE)
+    for k in range(width):
+        samples[base + k] = amplitude * math.exp(-k / (width / 3.0)) * (
+            1 if k % 2 == 0 else -1
+        )
+    return AudioBuffer(samples=samples, sample_rate=SAMPLE_RATE)
 
 
 # --- interface conformance ----------------------------------------------------
@@ -564,6 +577,32 @@ def test_a_101ms_stream_buffer_is_not_dropped(
     adapter = _loaded_transcriber(fake_needle)
 
     segments = list(adapter.stream([_chunk(seconds=0.101, value=1.0)]))
+
+    assert segments[-1].text == "kept"
+    assert fake_needle.created[-1].chunk_calls == 1
+
+
+def test_a_chunk_containing_only_a_click_is_filtered(
+    fake_needle: FakeStreamingNeedle,
+) -> None:
+    # The user's failure mode on the streaming path: a silent toggle whose only
+    # content is a key click must not reach the engine.
+    fake_needle.script = FakeScript(chunks=(), tails=("",))
+    adapter = _loaded_transcriber(fake_needle)
+
+    segments = list(adapter.stream([_click_chunk()]))
+
+    assert segments[-1].text == ""
+    assert fake_needle.created[-1].chunk_calls == 0
+
+
+def test_a_sustained_stream_chunk_passes_the_sustained_gate(
+    fake_needle: FakeStreamingNeedle,
+) -> None:
+    fake_needle.script = FakeScript(chunks=("kept",), tails=("",))
+    adapter = _loaded_transcriber(fake_needle)
+
+    segments = list(adapter.stream([_chunk(seconds=0.15)]))
 
     assert segments[-1].text == "kept"
     assert fake_needle.created[-1].chunk_calls == 1

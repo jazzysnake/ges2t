@@ -65,9 +65,12 @@ from ges2t.transcribers.whistle_config import WhistleConfig
 
 __all__ = [
     "MAX_SECONDS",
+    "MIN_SPEECH_FRAMES",
     "MIN_UTTERANCE_SECONDS",
     "SAMPLE_RATE",
-    "SILENCE_RMS_THRESHOLD",
+    "SPEECH_FRAME_RMS_THRESHOLD",
+    "SPEECH_FRAME_SECONDS",
+    "SPEECH_HIGHPASS_HZ",
     "WhistleInputError",
     "WhistleLoadError",
     "WhistleNotLoadedError",
@@ -93,18 +96,35 @@ _needle: Any = None
 #: one. Not configurable -- a constant is the right size for one number.
 MIN_UTTERANCE_SECONDS: float = 0.1
 
-#: The AC-RMS floor below which a buffer is treated as "no speech". Chosen to
-#: sit **below the engine's own quiet-speech floor**: the shipped clip at 0.05
-#: gain measured correctly at 0.0027 AC RMS (-51 dBFS) and returned nothing at
-#: 0.0011 (-59 dBFS), so 0.0005 (-66 dBFS) cannot gate anything Whistle could
-#: transcribe in the measured data (the quietest real clip is 0.0277, a ~55x
-#: margin). Biased deliberately low because the expensive error is dropping a
-#: real utterance; the user confirmed live that quiet/mumbled speech transcribes
-#: today. "AC" means the mean is removed first, which is what makes a constant
-#: DC offset (the engine hallucinates "Thank you." on it at every level tested)
-#: measure as the silence it is. The honest limitation: a quiet speaker below
-#: this level *is* gated, and a loud-enough transient or mains hum is not caught.
-SILENCE_RMS_THRESHOLD: float = 0.0005
+#: Frame length for the sustained-energy gate. 20 ms is one 50 Hz mains cycle,
+#: so a hum's per-frame energy is steady rather than beating with the frame
+#: boundary; it is also short enough that a syllable spans several frames.
+SPEECH_FRAME_SECONDS: float = 0.02
+
+#: A frame counts as *active* when its AC RMS reaches this. Measured on the
+#: target populations (addendum to ``001-comment.md``): a 5 ms key click gives
+#: one active frame at every level that hallucinated; quiet speech that the real
+#: engine still transcribes (clip5 at 0.01 gain) gives a run of 4; the
+#: near-silent opening of clip5 gives no active frame; 0.005-amplitude 50 Hz hum
+#: gives none after the high-pass. Deliberately low -- it sits at the quietest
+#: gain the previous gate kept, so the sustained rule does not narrow the
+#: quiet-speech floor.
+SPEECH_FRAME_RMS_THRESHOLD: float = 0.0015
+
+#: How many consecutive active frames are needed before the buffer is speech.
+#: 3 frames = 60 ms. A single 5-30 ms transient never reaches it (measured:
+#: run 1 at 5-10 ms, 2 at 20-30 ms); a 100 ms vowel is 5 frames and the
+#: quietest 150 ms word tested is 3-4. A transient sustained for >=60 ms would
+#: still pass -- recorded as a limitation, because the alternative (a longer
+#: run) drops short real words.
+MIN_SPEECH_FRAMES: int = 3
+
+#: First-order high-pass corner applied to the *gate's* copy of the samples
+#: (never to the audio handed to the engine). 50 Hz mains hum is AC, so mean
+#: removal does not touch it; this attenuates it ~10 dB while leaving speech
+#: (mostly >300 Hz) nearly intact. Measured: it drops hum at 0.005 and 0.01 to
+#: zero active frames while costing real speech at most one frame.
+SPEECH_HIGHPASS_HZ: float = 150.0
 
 
 class WhistleTranscriberError(Exception):
@@ -195,15 +215,56 @@ def _ac_rms(samples: Sequence[float]) -> float:
     A constant offset is a capture artefact, not sound: the engine hallucinated
     "Thank you." on a flat DC buffer at every level tested, from 0.0005 to 0.1,
     while AC noise at the same or higher level produced nothing. Subtracting the
-    mean first makes that case measurable as the silence it is, at the cost of
-    one extra pass over the samples. ``math.fsum`` keeps the sum accurate for
-    the long buffers (up to 30 s) this runs on.
+    mean first makes that case measurable as the silence it is. ``math.fsum``
+    keeps the sum accurate for the long buffers (up to 30 s) this runs on.
     """
     count = len(samples)
     if count == 0:
         return 0.0
     mean = math.fsum(samples) / count
     return math.sqrt(math.fsum((value - mean) ** 2 for value in samples) / count)
+
+
+def _highpass(samples: Sequence[float], sample_rate: int) -> list[float]:
+    """Return a first-order high-pass copy of ``samples`` at 150 Hz.
+
+    Applied to the gate's **analysis** copy only -- the engine still receives the
+    original bytes. That is the point: the filter exists to stop 50 Hz mains hum
+    (which is AC, so :func:`_ac_rms` cannot remove it) from counting as speech,
+    and keeping it out of the engine path means it cannot colour a transcription
+    it lets through. ``y[n] = a * (y[n-1] + x[n] - x[n-1])``.
+    """
+    alpha = 1.0 / (1.0 + 2.0 * math.pi * SPEECH_HIGHPASS_HZ / sample_rate)
+    filtered: list[float] = []
+    previous_x = 0.0
+    previous_y = 0.0
+    for value in samples:
+        current_y = alpha * (previous_y + value - previous_x)
+        filtered.append(current_y)
+        previous_x = value
+        previous_y = current_y
+    return filtered
+
+
+def _longest_active_run(samples: Sequence[float], sample_rate: int) -> int:
+    """Longest run of consecutive 20 ms frames whose AC RMS reaches the floor.
+
+    Runs the high-pass first, then scans non-overlapping frames. Returns as soon
+    as the run reaches :data:`MIN_SPEECH_FRAMES`, so the common speech case does
+    not walk the whole buffer. A buffer shorter than one frame gives 0.
+    """
+    frame_size = max(1, round(SPEECH_FRAME_SECONDS * sample_rate))
+    filtered = _highpass(samples, sample_rate)
+    run = 0
+    for start in range(0, len(filtered) - frame_size + 1, frame_size):
+        frame = filtered[start : start + frame_size]
+        if _ac_rms(frame) >= SPEECH_FRAME_RMS_THRESHOLD:
+            run += 1
+            if run >= MIN_SPEECH_FRAMES:
+                return run
+        else:
+            run = 0
+    return run
 
 
 def _has_speech(buffer: AudioBuffer) -> bool:
@@ -213,16 +274,20 @@ def _has_speech(buffer: AudioBuffer) -> bool:
 
     1. **Duration** -- a buffer shorter than :data:`MIN_UTTERANCE_SECONDS` is an
        accidental double-tap, not an utterance. Checked first because it is
-       O(1) and an all-zero RMS scan on a discarded buffer is pure waste.
-    2. **Energy** -- :func:`_ac_rms` must reach
-       :data:`SILENCE_RMS_THRESHOLD`.
+       O(1).
+    2. **Sustained energy** -- :func:`_longest_active_run` must reach
+       :data:`MIN_SPEECH_FRAMES`. This is what an isolated transient fails: a
+       5 ms key click occupies one frame, while even a short word occupies
+       several consecutive frames. The threshold is deliberately low so that
+       quiet speech is not caught by the same rule.
 
     The gates are combined with ``and``, so the evaluation order cannot change
-    the outcome; it only decides whether the O(n) scan runs.
+    the outcome for real audio; it only decides how much work runs on a
+    discarded buffer.
     """
     if len(buffer.samples) < MIN_UTTERANCE_SECONDS * buffer.sample_rate:
         return False
-    return _ac_rms(buffer.samples) >= SILENCE_RMS_THRESHOLD
+    return _longest_active_run(buffer.samples, buffer.sample_rate) >= MIN_SPEECH_FRAMES
 
 
 def _speech_only(chunks: Iterable[AudioBuffer]) -> Iterator[AudioBuffer]:
@@ -533,12 +598,14 @@ class WhistleTranscriber:
         Validates the engine's hard audio contract first: 16 kHz and at most
         30 s per call. A violation raises :class:`WhistleInputError` naming the
         limit; it never truncates silently (ADR 0005). A recording the gate
-        judges to contain no speech (:func:`_has_speech`) returns an empty
-        result **without calling the engine at all** -- inference on silence is
-        both meaningless and billed, and the engine hallucinates phrases like
-        "Thank you." on it. Samples that pass the gate are handed to the engine
-        as raw float32 bytes, and its ``text``/``language``/``ttft_ms``/
-        ``decode_tps`` are returned unchanged (ADR 0007, ADR 0012).
+        judges to contain no speech (:func:`_has_speech`: shorter than 100 ms,
+        or no run of consecutive active frames) returns an empty result
+        **without calling the engine at all** -- inference on silence is both
+        meaningless and billed, and the engine hallucinates phrases like
+        "Thank you." on key clicks, DC offset and mains hum. Samples that pass
+        the gate are handed to the engine as raw float32 bytes, and its
+        ``text``/``language``/``ttft_ms``/``decode_tps`` are returned unchanged
+        (ADR 0007, ADR 0012).
         """
         engine = self._require_loaded()
         _validate_buffer(buffer)
@@ -573,18 +640,20 @@ class WhistleTranscriber:
         re-implemented here.
 
         The silence gate is applied **per incoming chunk** by
-        :func:`_speech_only`: a chunk that is not speech is never forwarded to
-        ``drive`` and therefore never reaches the engine. This is correct for
+        :func:`_speech_only`: a chunk that is not speech (the same
+        duration + sustained-energy test as the batch path) is never forwarded
+        to ``drive`` and therefore never reaches the engine. This is correct for
         streaming because silence carries no words -- skipping a pause
         *mid-sentence* loses nothing and, crucially, does **not** end the
         utterance; the speech chunks on either side of it are still fed into the
         same stream and committed normally. A fully silent utterance forwards no
-        chunk at all, so the engine performs no per-chunk pass. The
-        minimum-duration rule is worth applying per chunk here too: the default
-        1 s chunking makes a sub-100 ms buffer either a whole double-tap or a
-        negligible tail. The alternative -- deciding the gate on the whole
-        utterance -- would require buffering all audio and defeat the memory
-        bound streaming exists for (ADR 0011).
+        chunk at all, so the engine performs no per-chunk pass. A chunk that is
+        only a key click fails the sustained-energy test and is dropped just like
+        a silent one. The minimum-duration rule is worth applying per chunk here
+        too: the default 1 s chunking makes a sub-100 ms buffer either a whole
+        double-tap or a negligible tail. The alternative -- deciding the gate on
+        the whole utterance -- would require buffering all audio and defeat the
+        memory bound streaming exists for (ADR 0011).
 
         The call fails eagerly with :class:`WhistleNotLoadedError` when
         :meth:`load` has not run, rather than at first iteration, so a caller
