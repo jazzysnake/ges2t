@@ -50,3 +50,21 @@ transcriber a test can supply, because the fake returns what the fixture says. N
 testing finds this; only running it does.
 
 **It also confirms the decision to keep the epic's acceptance test user-owned was correct.**
+
+## Follow-up verification round (same user, same session)
+
+The user then ran the targeted checks suggested afterwards, and reported:
+
+| Check | Result |
+|---|---|
+| **`hu` mapping** — a phrase loaded with `y`/`z` and digits (the characters both keymap bugs broke) | **pass** — characters correct |
+| `ges2t cancel` mid-recording | **pass** |
+| Tray `Quit` (→ `SIGTERM`) | **pass** — the service exits cleanly |
+| Long phrase (20+ words) | **pass** |
+| **Quiet and mumbled speech** | **transcribes** — model output imperfect, which the user accepts |
+
+**The `hu` result is the important one.** `y`/`z` and digits are exactly what the original hardcoded-US-keymap corruption and the alias-keysym bug (`XF86Numeric*`/`KP_*` codes absent on a numpad-less keyboard → *nothing typed*) would have broken. Both are now confirmed fixed **in live use**, not merely against `xkbcli` in a test. That closes the workstream the user opened.
+
+**The quiet-speech result is the important one for ticket 29.** It is the **pre-gate baseline**: quiet real speech currently transcribes. That is precisely the error a badly-chosen RMS threshold would introduce, and it is the expensive direction (dropping a real utterance beats occasionally transcribing a hallucination). This was fed to the ticket 29 implementer while it was still running, and quiet speech is the **user-owned counter-test** once the gate lands — the user must re-verify it by voice.
+
+The user also accepted imperfect model output on mumbled speech, which is a reasonable v1 position for a ~16 MB model and is recorded here so it is not later mistaken for a defect.
