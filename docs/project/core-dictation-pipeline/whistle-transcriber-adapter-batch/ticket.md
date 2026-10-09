@@ -1,7 +1,7 @@
 # Whistle transcriber adapter (batch)
 
 - **Priority:** P0
-- **Status:** in review
+- **Status:** done
 - **Complexity:** M
 - **Epic:** ../epic.md
 
