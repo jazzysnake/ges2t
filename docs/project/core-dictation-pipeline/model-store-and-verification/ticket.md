@@ -1,7 +1,7 @@
 # Model store: pinned download, verification, and atomic install
 
 - **Priority:** P0
-- **Status:** in review
+- **Status:** done
 - **Complexity:** S
 - **Epic:** ../epic.md
 
