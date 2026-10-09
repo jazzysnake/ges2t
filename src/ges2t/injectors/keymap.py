@@ -26,6 +26,8 @@ so callers never see an XKB keycode. The ticket's research notes (``AD11``=34,
 ``BKSL``=51) are XKB keycodes; the Linux codes this module emits for them are
 26 and 43. ``KEY_RIGHTALT`` is XKB keycode 108 and Linux keycode 100 -- the
 ticket's ``100`` is therefore consistent with this choice, not with XKB codes.
+Downstream code (ticket 23) must pass :attr:`KeyEvent.keycode` straight into
+``ydotool key <code>:1 <code>:0`` with **no** offset.
 
 How a character is resolved
 ---------------------------
@@ -45,9 +47,14 @@ How a character is resolved
   ignored, and compose/dead-key *sequences* are deliberately not looked up in
   this ticket: only direct access is implemented. Dead keys are still emitted
   as ordinary key events (the application composes them).
-* Among several keys/levels that produce the same codepoint, the lowest
-  ``(modifier count, mask, level, layout, keycode)`` wins, which keeps ``0`` on
-  the main row rather than the keypad.
+* Among several keys/levels that produce the same codepoint, a **canonical**
+  keysym (:c:func:`xkb_utf32_to_keysym` for the codepoint, or its
+  ``0x01000000 | codepoint`` Unicode form) outranks any other match, so a
+  function-key *alias* such as ``KP_Multiply`` or ``XF86Numeric0`` -- whose
+  level needs no modifier -- can never displace the real character key. Ties
+  among equally canonical matches go to the lowest ``(modifier count, mask,
+  level, layout, keycode)``, which keeps ``0`` on the main row rather than the
+  keypad.
 
 Characters absent from the keymap are collected in :attr:`KeySequence.unreachable`
 (deduplicated, in first-seen order) instead of being dropped or raising: ADR
@@ -194,11 +201,17 @@ class _RuleNames(ctypes.Structure):
 
 @dataclass(frozen=True)
 class _Resolution:
-    """The winning keycode+modifiers for one codepoint, with its selection rank."""
+    """The winning keycode+modifiers for one codepoint, with its selection rank.
+
+    ``rank`` starts with the canonical-keysym flag (``0`` canonical, ``1``
+    alias) and then the existing ``(modifier count, mask, level, layout,
+    keycode)`` tie-break, so a canonical key always beats a ``KP_*``/
+    ``XF86Numeric*`` alias that needs no modifier.
+    """
 
     keycode: int
     modifier_keycodes: tuple[int, ...]
-    rank: tuple[int, int, int, int, int]
+    rank: tuple[int, int, int, int, int, int]
 
 
 _library: ctypes.CDLL | None = None
@@ -301,6 +314,8 @@ def _bind(lib: ctypes.CDLL) -> None:
 
     lib.xkb_keysym_to_utf32.restype = ctypes.c_uint32
     lib.xkb_keysym_to_utf32.argtypes = [ctypes.c_uint32]
+    lib.xkb_utf32_to_keysym.restype = ctypes.c_uint32
+    lib.xkb_utf32_to_keysym.argtypes = [ctypes.c_uint32]
 
     lib.xkb_state_new.restype = ctypes.c_void_p
     lib.xkb_state_new.argtypes = [ctypes.c_void_p]
@@ -525,6 +540,20 @@ class XkbKeymap:
 
     # -- low-level libxkbcommon helpers --------------------------------------
 
+    def _is_canonical_keysym(self, sym: int, codepoint: int) -> bool:
+        """Whether ``sym`` is the canonical keysym for ``codepoint``.
+
+        The canonical form is what :c:func:`xkb_utf32_to_keysym` reports, or the
+        Unicode keysym ``0x01000000 | codepoint``. Function keysyms that merely
+        alias a character (``KP_Multiply``, ``XF86Numeric0``, ...) are not
+        canonical: their levels need no modifier and would otherwise outrank
+        the real key on the modifier-count tie-break. The ``0x01000000|cp``
+        form *is* canonical, which keeps ``de`` ``…``/``′``/``″`` (reachable
+        only through that form) resolving correctly.
+        """
+        canonical = int(self._lib.xkb_utf32_to_keysym(codepoint))
+        return sym == canonical or sym == (0x01000000 | codepoint)
+
     def _syms_for_level(self, key: int, layout: int, level: int) -> tuple[int, ...]:
         syms = ctypes.POINTER(ctypes.c_uint32)()
         count = int(
@@ -675,17 +704,27 @@ class XkbKeymap:
                     keycode = key - LINUX_KEYCODE_OFFSET
                     if keycode <= 0:
                         continue
-                    rank = (mask.bit_count(), mask, level, layout, keycode)
-                    resolution = _Resolution(
-                        keycode=keycode,
-                        modifier_keycodes=modifiers,
-                        rank=rank,
-                    )
                     for sym in syms:
                         codepoint = int(self._lib.xkb_keysym_to_utf32(sym))
                         if codepoint == 0:
                             continue
+                        # Canonical keysyms rank ahead of aliases regardless of
+                        # modifier cost, so KEY_KPEQUAL/KEY_NUMERIC_* never win
+                        # over the real character key. See _is_canonical_keysym.
+                        alias = 0 if self._is_canonical_keysym(sym, codepoint) else 1
+                        rank = (
+                            alias,
+                            mask.bit_count(),
+                            mask,
+                            level,
+                            layout,
+                            keycode,
+                        )
                         existing = best.get(codepoint)
                         if existing is None or rank < existing.rank:
-                            best[codepoint] = resolution
+                            best[codepoint] = _Resolution(
+                                keycode=keycode,
+                                modifier_keycodes=modifiers,
+                                rank=rank,
+                            )
         return best

@@ -37,6 +37,11 @@ LINUX_KEY_LEFTSHIFT = 42
 LINUX_KEY_CAPS = 58
 LINUX_KEY_RIGHTALT = 100
 
+#: Keypad/function-key aliases that must never win over the real character key:
+#: ``KP_Equal`` (117) and ``KEY_NUMERIC_0`` (``0x200`` = 512).
+LINUX_KEY_KPEQUAL = 117
+LINUX_KEY_NUMERIC_0 = 512
+
 #: XKB keycodes from the research notes, for the direct Hungarian letters.
 XKB_KEY_AD11 = 34
 XKB_KEY_BKSL = 51
@@ -54,6 +59,24 @@ def us_keymap() -> Iterator[XkbKeymap]:
 @pytest.fixture(scope="session")
 def hu_keymap() -> Iterator[XkbKeymap]:
     keymap = XkbKeymap.from_names("hu")
+    try:
+        yield keymap
+    finally:
+        keymap.close()
+
+
+@pytest.fixture(scope="session")
+def de_keymap() -> Iterator[XkbKeymap]:
+    keymap = XkbKeymap.from_names("de")
+    try:
+        yield keymap
+    finally:
+        keymap.close()
+
+
+@pytest.fixture(scope="session")
+def fr_keymap() -> Iterator[XkbKeymap]:
+    keymap = XkbKeymap.from_names("fr")
     try:
         yield keymap
     finally:
@@ -204,6 +227,97 @@ def test_hu_double_acute_is_not_mistaken_for_a_shifted_key(
     sequence = hu_keymap.sequence_for("y")
     assert len(sequence.events) == 2
     assert [event.keycode for event in sequence.events] == [44, 44]
+
+
+# --- canonical keysym vs keypad/function-key alias (REGRESSION) ---------------
+
+
+def test_hu_equal_uses_the_real_key_not_keypad_equal(hu_keymap: XkbKeymap) -> None:
+    """REGRESSION: a keypad alias must not outrank the canonical keysym.
+
+    ``xkb_keysym_to_utf32(KP_Equal) == '='`` and the keypad level needs no
+    modifier, so an equality-only match used to emit ``KEY_KPEQUAL`` (Linux 117)
+    instead of the Shift + ``AE07`` key (Linux 8) that ``xkbcli how-to-type
+    --layout hu -- =`` reports. On a keyboard without a numeric keypad that
+    former output types nothing at all.
+    """
+    sequence = hu_keymap.sequence_for("=")
+    assert codes(sequence) == [
+        (LINUX_KEY_LEFTSHIFT, True),
+        (8, True),
+        (8, False),
+        (LINUX_KEY_LEFTSHIFT, False),
+    ]
+    assert LINUX_KEY_KPEQUAL not in [event.keycode for event in sequence.events]
+
+
+def test_fr_zero_uses_the_main_row_not_the_numeric_keypad(
+    fr_keymap: XkbKeymap,
+) -> None:
+    """REGRESSION: ``XF86Numeric0`` aliases made every ``fr`` digit a phone key.
+
+    ``xkb_keysym_to_utf32(XF86Numeric0) == '0'`` with no modifier, so equality
+    matching made every digit on ``fr`` resolve to a ``KEY_NUMERIC_*`` code
+    (Linux 512) instead of the real ``AE10`` key (Linux 11) with Shift.
+    """
+    sequence = fr_keymap.sequence_for("0")
+    assert codes(sequence) == [
+        (LINUX_KEY_LEFTSHIFT, True),
+        (11, True),
+        (11, False),
+        (LINUX_KEY_LEFTSHIFT, False),
+    ]
+    assert LINUX_KEY_NUMERIC_0 not in [event.keycode for event in sequence.events]
+
+
+@pytest.mark.parametrize(
+    ("character", "expected"),
+    [
+        (
+            "…",
+            [
+                (LINUX_KEY_RIGHTALT, True),
+                (52, True),
+                (52, False),
+                (LINUX_KEY_RIGHTALT, False),
+            ],
+        ),
+        (
+            "′",
+            [
+                (LINUX_KEY_RIGHTALT, True),
+                (41, True),
+                (41, False),
+                (LINUX_KEY_RIGHTALT, False),
+            ],
+        ),
+        (
+            "″",
+            [
+                (LINUX_KEY_LEFTSHIFT, True),
+                (LINUX_KEY_RIGHTALT, True),
+                (41, True),
+                (41, False),
+                (LINUX_KEY_RIGHTALT, False),
+                (LINUX_KEY_LEFTSHIFT, False),
+            ],
+        ),
+    ],
+)
+def test_de_unicode_keysym_alias_still_resolves(
+    de_keymap: XkbKeymap, character: str, expected: list[tuple[int, bool]]
+) -> None:
+    """Ranking canonical keysyms first must still admit alias *Unicode* keysyms.
+
+    On ``de``, ``…``/``′``/``″`` are reachable only through the Unicode keysym
+    form (``U2026``/``U2032``/``U2033``), which is not what
+    :c:func:`xkb_utf32_to_keysym` returns, so ``xkbcli how-to-type`` finds no
+    direct access for them. The canonical-first ranking must keep them
+    resolving, not turn them into ``unreachable``.
+    """
+    sequence = de_keymap.sequence_for(character)
+    assert sequence.unreachable == ()
+    assert codes(sequence) == expected
 
 
 # --- unreachable characters ---------------------------------------------------
