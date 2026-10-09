@@ -38,7 +38,7 @@ speak → `ges2t toggle` types the right text into a text editor and a terminal.
 | 20 | [type-check-whole-tree](core-dictation-pipeline/type-check-whole-tree/ticket.md) — fix the tests-not-type-checked gap | XS | done | 4 | feat/type-check-whole-tree (merged) |
 | 21 | [status-ui-outside-lock](core-dictation-pipeline/status-ui-outside-lock/ticket.md) — fix the reproduced status_ui-under-lock deadlock | XS | done | 9 | feat/status-ui-outside-lock (merged) |
 | 26 | [pin-cli-test-guarantees](core-dictation-pipeline/pin-cli-test-guarantees/ticket.md) — pin the two falsified CLI test guarantees | XS | done | 10 | feat/pin-cli-test-guarantees (merged) |
-| 27 | [pin-layout-test-guarantees](core-dictation-pipeline/pin-layout-test-guarantees/ticket.md) — pin the three falsified layout-detection test guarantees | XS | in review | 24 | feat/pin-layout-test-guarantees |
+| 27 | [pin-layout-test-guarantees](core-dictation-pipeline/pin-layout-test-guarantees/ticket.md) — pin the three falsified layout-detection test guarantees | XS | done | 24 | feat/pin-layout-test-guarantees (merged) |
 
 ### Injection rework (added 2026-10-09 after the `hu` keymap discovery)
 
