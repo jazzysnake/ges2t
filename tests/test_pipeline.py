@@ -16,7 +16,16 @@ import pytest
 
 from ges2t import model_store, pipeline
 from ges2t.audio.pw_record import PwRecordAudioSource
-from ges2t.config import AudioConfig, Config, TranscriberConfig, UIConfig
+from ges2t.config import (
+    AudioConfig,
+    Config,
+    InjectionConfig,
+    TranscriberConfig,
+    UIConfig,
+    load_config,
+)
+from ges2t.injectors.clipboard import ClipboardPasteInjector
+from ges2t.injectors.layout import DEFAULT_PASTE_KEYS
 from ges2t.injectors.ydotool import XkbKeySequenceSource, YdotoolInjector
 from ges2t.interfaces import AudioBuffer, Transcriber, TranscriptionResult
 from ges2t.notify import NotifyingStatusUI
@@ -148,6 +157,135 @@ def test_build_injector_defaults_when_the_ydotool_block_is_absent() -> None:
     assert isinstance(injector, YdotoolInjector)
     # 0 ms is the measured default (ticket 23 `001-comment.md`); do not "tidy".
     assert injector.key_delay_ms == 0
+
+
+# --- build_injector: backend selection (ticket 25) ----------------------------
+
+
+def test_build_injector_returns_the_clipboard_backend_when_selected() -> None:
+    config = Config(injection=InjectionConfig(backend="clipboard"))
+
+    injector = pipeline.build_injector(config)
+
+    assert isinstance(injector, ClipboardPasteInjector)
+    assert injector.paste_keys == list(DEFAULT_PASTE_KEYS)
+
+
+def test_build_injector_reads_the_clipboard_paste_keys() -> None:
+    config = Config(
+        injection=InjectionConfig(backend="clipboard"),
+        injection_blocks={"clipboard": {"paste_keys": ["ctrl+shift+v"]}},
+    )
+
+    injector = pipeline.build_injector(config)
+
+    assert isinstance(injector, ClipboardPasteInjector)
+    assert injector.paste_keys == ["ctrl+shift+v"]
+
+
+def test_build_injector_clipboard_defaults_when_the_block_is_absent() -> None:
+    # The generic layer never synthesizes ``[injection.clipboard]``; its absence
+    # must mean all defaults, never a KeyError (ADR 0009).
+    config = Config(injection=InjectionConfig(backend="clipboard"))
+
+    injector = pipeline.build_injector(config)
+
+    assert isinstance(injector, ClipboardPasteInjector)
+    assert injector.paste_keys == ["ctrl+v"]
+    assert injector.last_warnings == []
+
+
+def test_build_injector_clipboard_carries_the_trailing_space_setting() -> None:
+    config = Config(
+        injection=InjectionConfig(backend="clipboard"), ui=UIConfig(trailing_space=False)
+    )
+
+    injector = pipeline.build_injector(config)
+
+    assert isinstance(injector, ClipboardPasteInjector)
+    assert injector.trailing_space is False
+
+
+def test_build_injector_clipboard_surfaces_the_block_warnings() -> None:
+    config = Config(
+        injection=InjectionConfig(backend="clipboard"),
+        injection_blocks={"clipboard": {"past_keys": ["ctrl+v"]}},
+    )
+
+    injector = pipeline.build_injector(config)
+
+    assert isinstance(injector, ClipboardPasteInjector)
+    assert injector.last_warnings == [
+        "injection.clipboard: unknown key 'past_keys'"
+    ]
+
+
+def test_build_injector_rejects_an_unknown_backend_instead_of_defaulting() -> None:
+    config = Config(injection=InjectionConfig(backend="clipbord"))
+
+    with pytest.raises(pipeline.PipelineError) as excinfo:
+        pipeline.build_injector(config)
+
+    message = str(excinfo.value)
+    assert "clipbord" in message
+    assert "ydotool" in message
+    assert "clipboard" in message
+
+
+def test_build_injector_keeps_ydotool_for_the_explicit_value() -> None:
+    config = Config(injection=InjectionConfig(backend="ydotool"))
+
+    assert isinstance(pipeline.build_injector(config), YdotoolInjector)
+
+
+def test_build_injector_from_real_toml_selects_the_clipboard_backend(
+    tmp_path: Path,
+) -> None:
+    # End-to-end through the generic loader: a real file, the generic selector,
+    # the raw block, and the adapter -- proving the block name matches the
+    # backend value (ticket 24's hand-off contract).
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[injection]
+backend = "clipboard"
+
+[injection.clipboard]
+paste_keys = ["ctrl+shift+v"]
+
+[injection.ydotool]
+layout = "hu"
+""",
+        encoding="utf-8",
+    )
+
+    loaded = load_config(config_path)
+    injector = pipeline.build_injector(loaded.config)
+
+    assert loaded.warnings == []
+    assert isinstance(injector, ClipboardPasteInjector)
+    assert injector.paste_keys == ["ctrl+shift+v"]
+
+
+def test_build_injector_from_real_toml_defaults_to_ydotool(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[injection]\nbackend = \"ydotool\"\n", encoding="utf-8")
+
+    loaded = load_config(config_path)
+
+    assert isinstance(pipeline.build_injector(loaded.config), YdotoolInjector)
+
+
+def test_build_injector_unknown_backend_from_real_toml_raises(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[injection]\nbackend = \"magic\"\n", encoding="utf-8"
+    )
+
+    loaded = load_config(config_path)
+
+    with pytest.raises(pipeline.PipelineError):
+        pipeline.build_injector(loaded.config)
 
 
 # --- BatchDictationSession ----------------------------------------------------
