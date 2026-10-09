@@ -55,7 +55,7 @@ speak → `ges2t toggle` types the right text into a text editor and a terminal.
 | 25 | [clipboard-paste-injector](core-dictation-pipeline/clipboard-paste-injector/ticket.md) — `wl-copy` + paste chord as a configured alternative | S | in progress | 23, 24 | feat/clipboard-paste-injector (merged 2646212; **manual gate FAILED** — `wl-copy` forks and we waited on its inherited pipes, so no paste ever happened. See 36) |
 | 28 | [injection-delay-default](core-dictation-pipeline/injection-delay-default/ticket.md) — set `key_delay_ms` from ticket 23's measurement (12 → 0) | XS | done | 23, 24 | feat/injection-delay-default (merged) |
 | 36 | [clipboard-injection-timeout](core-dictation-pipeline/clipboard-injection-timeout/ticket.md) — `wl-copy` forks by default, so the immediate path blocked on its inherited stdout/stderr pipes and reported failure after a successful write (corrective for 25; found by the user's manual run) | S | done | 25 | feat/clipboard-injection-timeout (merged ddeb278) |
-| 37 | [pin-clipboard-real-seam-payload](core-dictation-pipeline/pin-clipboard-real-seam-payload/ticket.md) — pin that a non-empty payload actually reaches the child's stdin in the real immediate runner (mutating it to `b""` left all 877 tests green) | XS | in progress | 36 | feat/pin-clipboard-real-seam-payload |
+| 37 | [pin-clipboard-real-seam-payload](core-dictation-pipeline/pin-clipboard-real-seam-payload/ticket.md) — pin that a non-empty payload actually reaches the child's stdin in the real immediate runner (mutating it to `b""` left all 877 tests green) | XS | in review | 36 | feat/pin-clipboard-real-seam-payload |
 
 ## Epic 2 — [Live dictation UX](live-dictation-ux/epic.md) · P1
 

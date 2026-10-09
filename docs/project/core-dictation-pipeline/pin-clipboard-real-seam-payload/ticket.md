@@ -1,7 +1,7 @@
 # Pin the real-seam payload delivery (clipboard immediate runner)
 
 - **Priority:** P1 (test gap on a path that has now broken twice)
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** XS
 - **Epic:** ../../core-dictation-pipeline/epic.md
 
@@ -30,22 +30,22 @@ the same kind of ticket.
 
 ## Definition of done
 
-- [ ] **A real-seam test that asserts a non-empty payload reaches the child's stdin** through the
+- [x] **A real-seam test that asserts a non-empty payload reaches the child's stdin** through the
       **real** `_run_command` immediate path — no fake runner, and **no clipboard**: use a harmless
       stand-in such as `cat` writing to a path under `tmp_path` and assert the bytes round-trip
       exactly (including a multi-byte payload).
-- [ ] **Assert the stdout round-trip too** — stdout is captured from a regular file now, and it
+- [x] **Assert the stdout round-trip too** — stdout is captured from a regular file now, and it
       carries `wl-paste`'s previous selection, so the capture path must be pinned, not just the input.
-- [ ] **Falsify it**: mutate `input=stdin_bytes` → `input=b""` and show the new test **fails**; revert
+- [x] **Falsify it**: mutate `input=stdin_bytes` → `input=b""` and show the new test **fails**; revert
       byte-identically (sha256) and show it passes. A test that passes both before and after tests
       nothing — say so rather than keeping it.
-- [ ] Confirm the new test **does not** touch the real clipboard (no `wl-copy`/`wl-paste` with data)
+- [x] Confirm the new test **does not** touch the real clipboard (no `wl-copy`/`wl-paste` with data)
       and does not leak child processes.
-- [ ] **Fix a transcription error in ticket 36's artifact**: `001-comment.md` quotes
+- [x] **Fix a transcription error in ticket 36's artifact**: `001-comment.md` quotes
       `git show HEAD:src/ges2t/injectors/clipboard.py` as producing the pre-fix blob hash. `HEAD`
       contains the fix; the pre-fix blob comes from `main` (`git show main:…`). The **recorded hash is
       correct** — only the quoted command is wrong. Correct it in place.
-- [ ] `uv run pytest`, `uv run mypy src/ges2t tests` green.
+- [x] `uv run pytest`, `uv run mypy src/ges2t tests` green.
 
 ## Notes
 
