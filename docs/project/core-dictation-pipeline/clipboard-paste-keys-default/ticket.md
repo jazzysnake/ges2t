@@ -1,7 +1,7 @@
 # Change the `paste_keys` default to `ctrl+shift+v`
 
 - **Priority:** P1 (v1's fresh-machine first experience)
-- **Status:** in review
+- **Status:** done
 - **Complexity:** XS
 - **Epic:** ../../core-dictation-pipeline/epic.md
 
