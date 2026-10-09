@@ -55,7 +55,8 @@ speak → `ges2t toggle` types the right text into a text editor and a terminal.
 | 25 | [clipboard-paste-injector](core-dictation-pipeline/clipboard-paste-injector/ticket.md) — `wl-copy` + paste chord as a configured alternative | S | done | 23, 24 | feat/clipboard-paste-injector (merged 2646212; **manual gate PASSED** after 36 — the user verified paste + clipboard restore with `paste_keys = ["ctrl+shift+v"]`, see `008-comment.md`) |
 | 28 | [injection-delay-default](core-dictation-pipeline/injection-delay-default/ticket.md) — set `key_delay_ms` from ticket 23's measurement (12 → 0) | XS | done | 23, 24 | feat/injection-delay-default (merged) |
 | 36 | [clipboard-injection-timeout](core-dictation-pipeline/clipboard-injection-timeout/ticket.md) — `wl-copy` forks by default, so the immediate path blocked on its inherited stdout/stderr pipes and reported failure after a successful write (corrective for 25; found by the user's manual run) | S | done | 25 | feat/clipboard-injection-timeout (merged ddeb278) |
-| 37 | [pin-clipboard-real-seam-payload](core-dictation-pipeline/pin-clipboard-real-seam-payload/ticket.md) — pin that a non-empty payload actually reaches the child's stdin in the real immediate runner (mutating it to `b""` left all 877 tests green) | XS | in progress | 36 | feat/pin-clipboard-real-seam-payload |
+| 37 | [pin-clipboard-real-seam-payload](core-dictation-pipeline/pin-clipboard-real-seam-payload/ticket.md) — pin that a non-empty payload actually reaches the child's stdin in the real immediate runner (mutating it to `b""` left all 877 tests green) | XS | in review | 36 | feat/pin-clipboard-real-seam-payload |
+| 38 | [clipboard-paste-keys-default](core-dictation-pipeline/clipboard-paste-keys-default/ticket.md) — default `paste_keys` `ctrl+v` → `ctrl+shift+v` (the shipped default had been exercised by nobody) | XS | in progress | 25 | feat/clipboard-paste-keys-default |
 
 ## Epic 2 — [Live dictation UX](live-dictation-ux/epic.md) · P1
 
@@ -73,7 +74,7 @@ documentation that takes a fresh machine to a working dictation.
 | 19 | [user-documentation-and-setup-guide](live-dictation-ux/user-documentation-and-setup-guide/ticket.md) — README + setup guide + unit file | M | to do | 10, 11, 12, 16, 17, 18 | — |
 | 32 | [commit-cadence-diagnostic](live-dictation-ux/commit-cadence-diagnostic/ticket.md) — measure commit cadence and prove the committed deltas are new text (the gate for 34) | S | done | 13, 14, 15, 16 | feat/commit-cadence-diagnostic (merged 1356f88) |
 | 33 | [committed-delta-interface](live-dictation-ux/committed-delta-interface/ticket.md) — carry committed text separately from the pending tail | S | done | 32 | feat/committed-delta-interface (merged 78f87fc) |
-| 34 | [incremental-typing](live-dictation-ux/incremental-typing/ticket.md) — type committed words as they are committed (amends ADR 0011) | M | to do | 32, 33 | — |
+| 34 | [incremental-typing](live-dictation-ux/incremental-typing/ticket.md) — type committed words as they are committed (**amends ADR 0011**) | M | in progress | 32, 33 | feat/incremental-typing |
 | 35 | [streaming-vs-batch-quality](live-dictation-ux/streaming-vs-batch-quality/ticket.md) — measure streaming vs batch **accuracy against ground truth** (gates nothing, blocks nothing) | M | to do | — | — |
 
 ---
@@ -106,6 +107,7 @@ independent and may run in parallel (they touch disjoint files).
 | 18 | 35 (independent: **nothing depends on it and it gates nothing**) |
 | 19 | 36 (corrective: the clipboard write timeout) |
 | 20 | 37 (pin the real-seam payload delivery) |
+| 21 | 38 (the `paste_keys` default) · 34 (incremental typing; disjoint files apart from a `pipeline.py` docstring) |
 
 Serialization is also required wherever two tickets touch the same file: `10 → 11/12`
 (`cli.py`, `doctor.py`), `11 → 16` (`pipeline.py`), `17 → 18` (`pipeline.py`).

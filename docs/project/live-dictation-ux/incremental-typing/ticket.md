@@ -38,10 +38,25 @@ This ticket changes that decision and implements the feature.
 - [ ] During a streaming dictation, committed text is injected **as it is committed**, using only the
       committed value exposed by ../committed-delta-interface/ticket.md — **never** the pending tail,
       and never `committed + pending`.
-- [ ] A **typed-watermark** guarantees each committed character is typed **exactly once**. The final
-      segment is **cumulative** while the per-pass values are **deltas**; a naive "type each delta,
-      then type the final segment" duplicates the entire utterance. The watermark is what prevents it,
-      and there must be a test that fails if the final segment is typed in full.
+- [ ] A **typed-watermark** guarantees each committed character is typed **exactly once**. Ticket 33
+      carries the committed text **cumulatively**, so the watermark is a position in
+      `live.committed`, not a sum of deltas.
+- [ ] **⚠️ Reconcile against `finish()`, do not merely iterate `partials()`.** Ticket 33's review proved
+      this: `partials()` dedups on consecutive identical **display** strings, so a pass where
+      `committed` grows by exactly what `pending` shrinks is **collapsed and never yielded by
+      `partials()`**. It is recovered from the final segment's `committed`. Measured:
+      `partials()+final` types `abcdef` exactly once, while `partials()` **alone** types `abc` and
+      silently **loses `def`**. A watermark that never consults `finish()` loses the tail of every
+      utterance that ends on a collapsed advance.
+- [ ] **The typed document must match today's end-injection result.** This is the ticket's
+      load-bearing acceptance criterion: for the same utterance, the text typed incrementally must be
+      **byte-identical** to what the current single end-of-utterance injection produces — including
+      **exactly one trailing space** when `ui.trailing_space` is enabled (ADR 0012). Pin it with a test.
+- [ ] **The trailing-space rule is a whole-utterance rule, not a per-commit one.** Committed deltas in
+      real runs arrive as `'Good morning.'`, `' Last'`, `' night storm …'` — later deltas already carry
+      the leading separator. Typing each delta through the normal trailing-space path would insert a
+      space per commit; typing deltas **raw** and applying the trailing space once at the end does not.
+      Decide the split explicitly and document it.
 - [ ] Injection never blocks the recording loop. The service already has a lock discipline and a
       bounded command loop (ADR 0015); a slow or wedged injector must not stall capture or shutdown.
 - [ ] The **batch** path is unchanged, and `streaming.enabled = false` behaves exactly as it does
@@ -76,11 +91,21 @@ Surface it in the hand-back report.
 
 - ADR 0011's *decision* to stream, and ADR 0003's *no automatic fallback* rule, both still hold. This
   changes **when** text is injected, not **how**.
-- The measured commit cadence from ticket 32 governs the design: if commits land every few hundred
-  milliseconds, injection must be cheap and non-blocking; if they land every few seconds, batching the
-  per-commit deltas is acceptable.
-- **If ticket 32 found the engine restates committed text, this ticket is cancelled.** Say so rather
-  than engineering around it — the whole safety argument is the prefix property.
+- **Measured cadence, from ticket 32's real-device run** (use these, do not re-derive them): median
+  **17 characters per commit**, one commit per **1.00 s** of source audio (p90 2.50 s, max 4.00 s),
+  `pending` median 18 characters persisting ~1.00 s. Injection at ticket 23's measured **0.38 ms/char**
+  means a median commit is ~6 ms of typing — cheap enough that the real risk is *locking*, not speed.
+- **⚠️ A pause does not make this safer.** Ticket 32 found that the deliberate mid-utterance pause made
+  the engine emit `' Great night.'`, which **nothing later contradicted**, so the two-pass rule
+  **committed** it. The commit rule protects against *revision*, not against a *stable hallucination* —
+  so incremental typing will deliver that hallucination mid-dictation. This is exactly what the user's
+  decision #2 (stop → delete → continue) covers; state it in the artifact rather than let it be a
+  surprise.
+- **The `Thank you.` hallucination is filtered, and that is the design's best evidence:** on the user's
+  real recording it appeared in `pending` twice and was **never committed**, so committed-only typing
+  types none of it.
+- **If ticket 32 had found a restatement this ticket would be cancelled** — it did not (0 restatements
+  over 57 s across clips and a real recording).
 - Consider, but do not necessarily build, a guard that refuses to type if focus moved since the last
   commit. It is a plausible mitigation for decision 1; if it is not built, record why.
 
