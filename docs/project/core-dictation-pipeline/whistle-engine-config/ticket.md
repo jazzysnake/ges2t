@@ -1,7 +1,7 @@
 # Whistle engine-specific config block
 
 - **Priority:** P0
-- **Status:** in review
+- **Status:** done
 - **Complexity:** S
 - **Epic:** ../epic.md
 
