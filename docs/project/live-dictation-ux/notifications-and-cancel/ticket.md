@@ -1,7 +1,7 @@
 # Notifications: turn silent failures into actionable messages
 
 - **Priority:** P1
-- **Status:** in review
+- **Status:** done
 - **Complexity:** S
 - **Epic:** ../epic.md
 

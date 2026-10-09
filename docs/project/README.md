@@ -66,7 +66,7 @@ documentation that takes a fresh machine to a working dictation.
 | 15 | [streaming-session](live-dictation-ux/streaming-session/ticket.md) — `DictationSession` over capture + window | M | done | 9, 14 | feat/streaming-session (merged) |
 | 16 | [streaming-wiring-and-e2e](live-dictation-ux/streaming-wiring-and-e2e/ticket.md) — selection rule + >30 s E2E | S | done | 11, 15 | feat/streaming-wiring-and-e2e (merged) |
 | 17 | [tray-status-ui](live-dictation-ux/tray-status-ui/ticket.md) — pystray AppIndicator + backend assertion | M | done | 10, 11, 21 | feat/tray-status-ui (merged) |
-| 18 | [notifications-and-cancel](live-dictation-ux/notifications-and-cancel/ticket.md) — `notify-send` on failure | S | in review | 16, 17 | feat/notifications-and-cancel |
+| 18 | [notifications-and-cancel](live-dictation-ux/notifications-and-cancel/ticket.md) — `notify-send` on failure | S | done | 16, 17 | feat/notifications-and-cancel (merged) |
 | 19 | [user-documentation-and-setup-guide](live-dictation-ux/user-documentation-and-setup-guide/ticket.md) — README + setup guide + unit file | M | to do | 10, 11, 12, 16, 17, 18 | — |
 
 ---
