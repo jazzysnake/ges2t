@@ -1,7 +1,7 @@
 # Commit-cadence diagnostic (the gate for incremental typing)
 
 - **Priority:** P1
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** S
 - **Epic:** ../epic.md
 
