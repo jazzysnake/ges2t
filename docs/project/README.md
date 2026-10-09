@@ -28,7 +28,7 @@ speak → `ges2t toggle` types the right text into a text editor and a terminal.
 | 3 | [config-loading](core-dictation-pipeline/config-loading/ticket.md) — generic TOML layer + engine selector | S | done | 1, 2 | feat/config-loading (merged) |
 | 4 | [whistle-engine-config](core-dictation-pipeline/whistle-engine-config/ticket.md) — `[engine.whistle]` validation | S | done | 3 | feat/whistle-engine-config (merged) |
 | 5 | [model-store-and-verification](core-dictation-pipeline/model-store-and-verification/ticket.md) — pinned download + sha256 | S | done | 2 | feat/model-store-and-verification (merged) |
-| 6 | [audio-capture-pw-record](core-dictation-pipeline/audio-capture-pw-record/ticket.md) — PipeWire capture, drain on stop | M | in review | 2, 3 | feat/audio-capture-pw-record |
+| 6 | [audio-capture-pw-record](core-dictation-pipeline/audio-capture-pw-record/ticket.md) — PipeWire capture, drain on stop | M | done | 2, 3 | feat/audio-capture-pw-record (merged) |
 | 7 | [ydotool-injector](core-dictation-pipeline/ydotool-injector/ticket.md) — uinput injection + trailing space | S | done | 2, 3 | feat/ydotool-injector (merged) |
 | 8 | [whistle-transcriber-adapter-batch](core-dictation-pipeline/whistle-transcriber-adapter-batch/ticket.md) — batch `transcribe()` | M | to do | 2, 4, 5 | — |
 | 9 | [service-state-machine-and-socket](core-dictation-pipeline/service-state-machine-and-socket/ticket.md) — states, single instance, socket | M | to do | 2, 3 | — |

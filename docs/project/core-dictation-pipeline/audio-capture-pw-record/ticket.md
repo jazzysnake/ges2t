@@ -1,7 +1,7 @@
 # Audio capture via pw-record
 
 - **Priority:** P0
-- **Status:** in review
+- **Status:** done
 - **Complexity:** M
 - **Epic:** ../epic.md
 
