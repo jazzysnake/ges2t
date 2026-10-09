@@ -172,10 +172,24 @@ someone **trying to falsify a claim**. Ask reviewers for that explicitly every t
 6. Re-run `uv run pytest` and `uv run mypy src/ges2t tests` on `main`, plus
    `uv sync` and the link check (below).
 
-**⚠️ The mistake made once:** chaining the merge and the follow-up steps on separate shell lines
-meant that when the merge conflicted, the follow-ups still ran and **committed `README.md` with
-conflict markers in it**. Run the merge as its own command, check `git diff --name-only
---diff-filter=U`, and only then continue.
+**⚠️ Two ways this has been got wrong — both shipped a committed `README.md` containing conflict
+markers.**
+
+1. *Chaining.* Running the merge and the follow-up steps on separate shell lines meant the
+   follow-ups ran even though the merge had conflicted. Run the merge as **its own command**, check
+   `git diff --name-only --diff-filter=U`, and only then continue.
+2. *Interleaving tool calls — hit again on ticket 26.* Issuing the `edit` that resolves the markers
+   and the `bash` that runs `git add` **in the same tool block** let them interleave: `git add`
+   staged the file *before* the edit landed, so the commit captured the **unresolved** version while
+   the working tree looked correct. The check then passed, because it grepped the working tree, not
+   the index. **Never put `git add`/`git commit` in the same block as an `edit`.** Do the edits,
+   then run the git commands in a **separate** step.
+
+**Verify the committed object, not the working tree.** After any merge or conflict resolution,
+assert against `HEAD`, not the filesystem: `git show HEAD:docs/project/README.md | grep -n '^<<<<<<<'`
+and `git grep -n '^<<<<<<<' HEAD -- docs` must both be empty. A clean `git status` proves nothing if
+the index was staged from the wrong moment. If it slips through, `git commit --amend --no-edit`
+repairs a merge at the tip while preserving both parents.
 
 **Link check** (run after any docs change; must report 0):
 
