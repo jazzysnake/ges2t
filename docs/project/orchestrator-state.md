@@ -44,12 +44,13 @@ Original orchestrator brief: `.pi/prompts/orchestrate-project.md`.
 
 ## 4. Current baselines on `main`
 
-- `uv run pytest` → **589 passed** (~2.7 s)
-- **`uv run mypy src/ges2t tests` → 0 errors (39 files)** — this is the required command. ADR 0019
+- `uv run pytest` → **639 passed** (~1.9 s)
+- **`uv run mypy src/ges2t tests` → 0 errors (45 files)** — this is the required command. ADR 0019
   was amended 2026-10-09: the old `mypy src/ges2t`-only check let a real violation through a
   completed review (see ticket 20).
-- `main` HEAD when last checked: `37e8937` (ticket 28 closed). Merged this session: 24 `a6ba892`,
-  21 `11b1bf3`, 26 `ceee7a2`, 11 `338cdc2`, 22 `0a2074a`, 23 `b4aa911`, 15 `2ba0a3a`, 28 `37e8937`.
+- `main` HEAD when last checked: `ca545f0`. Merged this session: 24, 21, 26, 11, 22, 23, 15, 28,
+  17 (four review rounds), 16. **Four agents were in flight when this was written** (12, 18, 25, 29),
+  so expect `main` to have advanced by the time you read this — **the board is authoritative.**
 - 21 ADRs (0000–0020), **28 tickets**, 2 epics.
 
 ## 5. Board state (24 of 29 done)
