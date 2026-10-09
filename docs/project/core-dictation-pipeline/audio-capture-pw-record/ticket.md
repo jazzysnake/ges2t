@@ -44,22 +44,12 @@ ADR 0011 (1 s chunks feed the streaming path).
       stop path must let the process exit cleanly and read what it produced before
       finalising (ADR 0008). The returned buffer's sample count must match the sum of the
       chunks yielded.
-- [x] Failure modes each raise a clear, actionable error instead of returning a short or
+- [ ] Failure modes each raise a clear, actionable error instead of returning a short or
       empty buffer silently:
       - no PipeWire session / `pw-record` missing from `PATH`;
+      - an unknown `--target` device;
       - `pw-record` exiting non-zero before any audio — the error must include its **stderr**;
       - `stop()` before `start()`, or `start()` twice.
-- [x] **CORRECTED DURING IMPLEMENTATION (2026-10-09): "an unknown `--target` device" was a
-      wrong assumption in this ticket and has been removed as a requirement.** Measured:
-      `--target` is only a `node.target` *hint* to PipeWire. An unresolved target makes
-      `pw-record` silently fall back to the default node, exit normally, and print nothing on
-      stderr — no flag makes it fatal. Detecting it would require device enumeration
-      (`pw-dump`/`wpctl`), i.e. a second external dependency and new scope that no ADR
-      authorises. Accepted behaviour: an unresolved target yields a **full recording from the
-      default device**, which still satisfies this bullet's real purpose (never a silent short
-      or empty buffer). The user-facing safety net is a `ges2t doctor` check that the
-      *configured* device exists — see `../doctor-command/ticket.md`. ADR 0008's failure-mode
-      list has been amended to record this.
 - [ ] A recording that captured **zero samples** returns an empty `AudioBuffer` rather than
       raising; the caller decides not to call the engine (ADR 0005, ADR 0012).
 - [ ] `tests/test_pw_record.py` runs with **no microphone**: it injects a fake process
