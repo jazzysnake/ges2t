@@ -9,6 +9,7 @@ There is no microphone, engine, subprocess, or ``/dev/uinput`` anywhere.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
@@ -18,6 +19,7 @@ from typing import TypeVar
 
 import pytest
 
+from ges2t import service as service_module
 from ges2t.service import (
     CommandResponse,
     DictationSession,
@@ -620,6 +622,41 @@ def test_raising_status_ui_does_not_skip_shutdown_cleanup(tmp_path: Path) -> Non
     partials = service._partials_thread
     assert worker is None or not worker.is_alive()
     assert partials is None or not partials.is_alive()
+
+
+def test_shutdown_surfaces_a_transcription_it_gave_up_on(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A ``finish()`` slower than the shutdown bound is surfaced, not silenced.
+
+    ADR 0011 makes this a lost utterance (nothing is injected until release),
+    never partial text. The 5 s production bound is shortened here so the test is
+    fast; the WARNING is what makes the loss visible instead of silent (ticket
+    16's shutdown-window decision). ``shutdown()`` must still return promptly
+    rather than wait for the wedged finish.
+    """
+    monkeypatch.setattr(service_module, "_SHUTDOWN_JOIN_TIMEOUT_SECONDS", 0.05)
+    injector = FakeInjector()
+    session = FakeDictationSession(text="never typed", block_finish=True)
+    service = Service(
+        SessionScript([session]), injector, FakeStatusUI(), tmp_path / "ges2t.sock"
+    )
+    try:
+        assert service.handle("toggle").state is ServiceState.RECORDING
+        assert service.handle("toggle").state is ServiceState.TRANSCRIBING
+        assert session.finish_started.wait(timeout=2.0)
+
+        with caplog.at_level(logging.WARNING, logger="ges2t.service"):
+            shutdown_with_timeout(service, timeout=1.0)
+
+        # Nothing was injected at give-up time: the loss is a missing
+        # transcript, never partial text (ADR 0011).
+        assert injector.injected == []
+        assert any("gave up" in record.getMessage() for record in caplog.records)
+    finally:
+        session.release_finish.set()
 
 
 # -- rapid / out-of-order commands (ADR 0004) ------------------------
