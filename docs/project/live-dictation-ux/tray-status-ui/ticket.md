@@ -80,7 +80,12 @@ display-only).
 
 ## Related tickets
 
-- depends on: ../../core-dictation-pipeline/dictation-pipeline-batch/ticket.md,
+- depends on: ../../core-dictation-pipeline/status-ui-outside-lock/ticket.md (that ticket
+  fixes a **reproduced deadlock**: the service currently calls `StatusUI` while holding a plain
+  non-reentrant `threading.Lock`, so a tray that reads `service.state` back would hang the
+  socket loop — meaning the hotkey stops responding with no error. Do **not** work around it by
+  avoiding `service.state` in this ticket),
+  ../../core-dictation-pipeline/dictation-pipeline-batch/ticket.md,
   ../../core-dictation-pipeline/cli-surface-and-commands/ticket.md
 - blocks: ../notifications-and-cancel/ticket.md,
   ../user-documentation-and-setup-guide/ticket.md
