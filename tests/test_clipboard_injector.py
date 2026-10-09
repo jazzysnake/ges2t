@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import re
+import signal
 import subprocess
 import threading
 import time
@@ -32,7 +33,9 @@ from pathlib import Path
 
 import pytest
 
+from ges2t.injectors import clipboard as clipboard_module
 from ges2t.injectors.clipboard import (
+    CLIPBOARD_COMMAND_TIMEOUT_SECONDS,
     CLIPBOARD_RESTORE_DELAY_SECONDS,
     ClipboardError,
     ClipboardInjectionError,
@@ -569,6 +572,86 @@ def test_restore_bytes_reach_the_real_deferred_child(tmp_path: Path) -> None:
     _wait_for_bytes(target, b"previous")
     assert target.exists()
     assert target.read_bytes() == b"previous"
+
+
+# --- the real immediate runner seam: a forking child must not stall it (36) ---
+
+
+def _kill_pid_file(pid_file: Path) -> None:
+    """Kill the harmless background ``sleep`` a forking-child test left behind."""
+    try:
+        pid = int(pid_file.read_text().strip())
+    except (OSError, ValueError):
+        return
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def test_real_forking_child_does_not_block_the_immediate_path(
+    tmp_path: Path,
+) -> None:
+    """The REAL immediate ``_run_command`` must not wait on a forked child's pipes.
+
+    ``wl-copy`` forks by default and the forked child lives on to serve the
+    selection, inheriting whatever stdout/stderr descriptors the runner handed
+    it. With ``capture_output=True`` those are **pipes**, and ``subprocess.run``
+    reads them to EOF -- which never arrives while the daemon holds a write end,
+    so the run blocked for the whole timeout and every successful write was
+    reported as a failure before the paste chord (ticket 36). This drives the
+    real seam with a harmless ``sh`` stand-in that forks a long-lived ``sleep``
+    the way ``wl-copy`` does, writes a marker under ``tmp_path``, emits stderr and
+    exits non-zero. Nothing here touches the clipboard. Against the pre-fix
+    ``capture_output=True`` the call raises ``subprocess.TimeoutExpired``; the
+    fixed redirect completes at once and still captures stderr.
+    """
+    marker = tmp_path / "forked-child-marker.txt"
+    pid_file = tmp_path / "forked-child.pid"
+    script = (
+        f"sleep 30 & echo $! > {pid_file}; "
+        f"printf 'wrote-and-forked' > {marker}; "
+        "echo 'no compositor' >&2; exit 7"
+    )
+
+    started = time.monotonic()
+    try:
+        completed = _run_command(("sh", "-c", script), b"", dict(os.environ))
+        elapsed = time.monotonic() - started
+    finally:
+        _kill_pid_file(pid_file)
+
+    assert elapsed < CLIPBOARD_COMMAND_TIMEOUT_SECONDS / 2, (
+        "the immediate path waited on a pipe the forked child still holds"
+    )
+    assert completed.returncode == 7
+    assert b"no compositor" in completed.stderr, (
+        "stderr must still be captured and reach the typed error message"
+    )
+    assert marker.read_text() == "wrote-and-forked"
+
+
+def test_real_immediate_runner_still_captures_stdout() -> None:
+    """The fix must not cost stdout: ``wl-paste``'s previous selection needs it."""
+    completed = _run_command(("sh", "-c", "printf PREVIOUS"), b"", dict(os.environ))
+
+    assert completed.returncode == 0
+    assert completed.stdout == b"PREVIOUS"
+    assert completed.stderr == b""
+
+
+def test_real_immediate_runner_still_bounds_a_wedged_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The file redirect must not remove the bound: a genuine hang still times out."""
+    monkeypatch.setattr(
+        clipboard_module, "CLIPBOARD_COMMAND_TIMEOUT_SECONDS", 0.2
+    )
+
+    with pytest.raises(subprocess.TimeoutExpired) as excinfo:
+        _run_command(("sh", "-c", "sleep 30"), b"", dict(os.environ))
+
+    assert excinfo.value.timeout == 0.2
 
 
 # --- delivery failures are typed and actionable -------------------------------
