@@ -1,7 +1,7 @@
 # Config loading: generic layer, engine selector, engine-specific blocks
 
 - **Priority:** P0
-- **Status:** in review
+- **Status:** done
 - **Complexity:** S
 - **Epic:** ../epic.md
 
@@ -21,12 +21,12 @@ selector).
 
 ## Definition of done
 
-- [ ] `src/ges2t/config.py` defines frozen dataclasses for the generic sections:
+- [x] `src/ges2t/config.py` defines frozen dataclasses for the generic sections:
       `TranscriberConfig(engine: str, model_path: str)`, `HotkeyConfig(mode: str, key: str)`,
       `AudioConfig(device: str)`, `InjectionConfig(backend: str)`, `UIConfig(tray: bool,
       notifications: bool, trailing_space: bool)`, `StreamingConfig(enabled: bool)`, and a
       top-level `Config` holding them plus `engine_blocks: Mapping[str, Mapping[str, Any]]`.
-- [ ] `load_config(path: Path | None = None) -> ConfigLoadResult` returns a **frozen
+- [x] `load_config(path: Path | None = None) -> ConfigLoadResult` returns a **frozen
       dataclass** `ConfigLoadResult(config: Config, warnings: list[str])` — warnings are a
       typed field, not a tuple element (ADR 0019). It implements exactly ADR 0009's rules:
       - a **missing file yields all defaults**, and is not an error;
@@ -39,17 +39,17 @@ selector).
       - a `transcriber.engine` value that is not a known engine name raises a clear error
         listing the known names;
       - `hotkey.mode` accepts only `"ptt"` and `"toggle"`; anything else is an error.
-- [ ] The set of known engine names is a single module-level constant (a tuple), so the
+- [x] The set of known engine names is a single module-level constant (a tuple), so the
       factory and the error message cannot drift apart.
-- [ ] `--config <path>` resolution is provided as a helper the CLI can call, with the XDG
+- [x] `--config <path>` resolution is provided as a helper the CLI can call, with the XDG
       default used when the flag is absent.
-- [ ] `tests/test_config.py` covers every bullet above, including: absent file →
+- [x] `tests/test_config.py` covers every bullet above, including: absent file →
       defaults; unknown generic key → warning not error; unknown engine name → error
       listing known names; `[engine.whistle]` and `[engine.something_else]` both survive
       into `engine_blocks` verbatim; and a bad-type case.
-- [ ] `uv run pytest tests/test_config.py` passes and `uv run pytest` stays green.
+- [x] `uv run pytest tests/test_config.py` passes and `uv run pytest` stays green.
 
-- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
+- [x] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
       signature interface-typed — ADR 0019.
 
 ## Notes

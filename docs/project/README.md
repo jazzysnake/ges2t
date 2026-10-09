@@ -25,7 +25,7 @@ speak → `ges2t toggle` types the right text into a text editor and a terminal.
 |---|---|---|---|---|---|
 | 1 | [project-scaffold](core-dictation-pipeline/project-scaffold/ticket.md) — uv project, console script, pytest | S | done | — | feat/project-scaffold (merged) |
 | 2 | [core-interfaces-and-fakes](core-dictation-pipeline/core-interfaces-and-fakes/ticket.md) — `Transcriber`/`AudioSource`/`Injector`/`StatusUI` + fakes | S | to do | 1 | — |
-| 3 | [config-loading](core-dictation-pipeline/config-loading/ticket.md) — generic TOML layer + engine selector | S | in review | 1, 2 | feat/config-loading |
+| 3 | [config-loading](core-dictation-pipeline/config-loading/ticket.md) — generic TOML layer + engine selector | S | done | 1, 2 | feat/config-loading (merged) |
 | 4 | [whistle-engine-config](core-dictation-pipeline/whistle-engine-config/ticket.md) — `[engine.whistle]` validation | S | to do | 3 | — |
 | 5 | [model-store-and-verification](core-dictation-pipeline/model-store-and-verification/ticket.md) — pinned download + sha256 | S | to do | 2 | — |
 | 6 | [audio-capture-pw-record](core-dictation-pipeline/audio-capture-pw-record/ticket.md) — PipeWire capture, drain on stop | M | to do | 2, 3 | — |
