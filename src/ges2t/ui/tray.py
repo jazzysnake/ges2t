@@ -57,6 +57,9 @@ _TITLE = "ges2t"
 #: The exact module a visible, AppIndicator-backed ``pystray`` icon comes from.
 _APPINDICATOR_MODULE = "pystray._appindicator"
 
+#: The typelibs ``pystray._appindicator`` accepts, in its own preference order.
+_APPINDICATOR_TYPELIBS = ("AppIndicator3", "AyatanaAppIndicator3")
+
 #: The Arch packages the AppIndicator backend needs (ADR 0013).
 _REQUIRED_PACKAGES = "'python-gobject', 'gtk3' and 'libappindicator'"
 
@@ -106,9 +109,13 @@ def assert_appindicator_backend() -> None:
 
     Two checks, in order, so the failure is named precisely:
 
-    1. ``gi.require_version("AppIndicator3", "0.1")`` — proves ``python-gobject``
-       and the ``libappindicator`` typelib are visible to this interpreter. A
-       venv created without ``--system-site-packages`` fails here with
+    1. ``gi.require_version`` for ``AppIndicator3`` (or, when only the Ayatana
+       fork is installed, ``AyatanaAppIndicator3``) — proves ``python-gobject``
+       and an ``libappindicator`` typelib are visible to this interpreter. The
+       two namespaces mirror ``pystray._appindicator``'s own fallback, so a
+       working Ayatana-only system is accepted rather than falsely refused
+       (review 002, non-blocking finding). A venv created without
+       ``--system-site-packages`` fails here with
        ``ModuleNotFoundError: No module named 'gi'``.
     2. ``pystray.Icon``'s defining module — ``pystray`` resolves its backend at
        import time by trying ``_appindicator``, then ``_gtk``, then ``_xorg``,
@@ -120,12 +127,19 @@ def assert_appindicator_backend() -> None:
     """
     try:
         import gi
+    except Exception as exc:
+        raise _backend_error(f"'gi' could not be imported ({exc})") from exc
 
-        gi.require_version("AppIndicator3", "0.1")
-    except Exception as exc:  # ImportError, or ValueError from a missing typelib
+    for namespace in _APPINDICATOR_TYPELIBS:
+        try:
+            gi.require_version(namespace, "0.1")
+        except ValueError:
+            continue
+        break
+    else:
         raise _backend_error(
-            f"'gi' or the AppIndicator3 typelib is unavailable ({exc})"
-        ) from exc
+            "'gi' has neither the AppIndicator3 nor the AyatanaAppIndicator3 typelib"
+        )
 
     try:
         import pystray

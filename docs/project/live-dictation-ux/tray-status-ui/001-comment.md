@@ -306,3 +306,168 @@ ticked. This agent may not start the tray itself.
   that is ticket 18's job.
 - No keystrokes were injected, no `ydotool`, no clipboard, no `sudo`, no service
   change, no network, no GUI window were used. No ADR changed.
+
+---
+
+## 001a — Addendum: review-002 fixes (fallback breadth, observability guard, Ayatana)
+
+Status: still **in review**. Review `002-review.md` raised one blocking finding
+and two required/optional ones. Two targeted fixes and one non-blocking fix
+were made; nothing was rewritten. The backend assertion's core check
+(`pystray.Icon.__module__ == "pystray._appindicator"`), the `_guard`/failure
+recording, import discipline, and the socket/`SIGTERM` wiring are untouched.
+
+### Fix 1 (blocking) — `build_status_ui` only swallows environmental failures
+
+`src/ges2t/pipeline.py`: the bare `except Exception` (which turned
+`AttributeError`/`TypeError`/`NameError`/`AssertionError`/`KeyError` from tray
+construction into `NullStatusUI` + a one-line warning) was replaced with:
+
+```python
+except (ImportError, ModuleNotFoundError, OSError) as exc:
+    _print_tray_warning(f"the tray could not be created ({exc})")
+    return NullStatusUI()
+```
+
+`TrayBackendError` keeps its own branch above, so its exact two-line ADR 0013
+message is byte-for-byte unchanged.
+
+**Why this set:**
+
+- `TrayBackendError` — the tray's own backend/typelib/backend-selection error
+  (a `RuntimeError` subclass, caught by its own branch).
+- `ImportError` / `ModuleNotFoundError` — a missing `gi`, `pystray` or `PIL`
+  (`_create_icon` and `_state_image` import them lazily). `ModuleNotFoundError`
+  is a subclass of `ImportError`; both are listed deliberately to mirror the
+  review's wording, and because this is the one environmental class that can
+  also come from our own lazy import.
+- `OSError` — no display/DBus (`pystray`/GTK can raise it while constructing
+  the icon; the ``Gtk could not be initialised`` case is already converted to
+  `ImportError` inside `pystray._util.gtk`).
+
+**Deliberate omissions:** `RuntimeError` is *not* caught even though a failed
+`threading.Thread.start()` would raise it: `TrayBackendError` is itself a
+`RuntimeError`, and an arbitrary `RuntimeError` is exactly the kind of
+programming error that must stay loud. The reviewer's suggested set named the
+thread-start `RuntimeError`; catching it generically would re-open the blocking
+finding, and wrapping only `thread.start()` is outside `build_status_ui`'s
+reach, so it is left out rather than half-done. `ValueError` from
+`gi.require_version` is already converted to `TrayBackendError` inside
+`assert_appindicator_backend`; catching bare `ValueError` here would swallow
+genuine argument bugs. No specific `gi`/`pystray` error could be named without
+importing `gi` at module import time (for example `GLib.GError`), which ADR
+0014 forbids; the import-only `Gtk.init_check()` failure is already an
+`ImportError`.
+
+`tests/test_tray_backend.py` gained:
+
+- `test_build_status_ui_propagates_programming_errors`, parametrized over
+  `AttributeError`, `TypeError`, `NameError`, `AssertionError`, `KeyError`
+  (the exact classes review 002 proved were swallowed).
+- `test_build_status_ui_falls_back_for_environmental_failures`, parametrized
+  over `ImportError`, `ModuleNotFoundError`, `OSError`, asserting
+  `NullStatusUI` plus the two warning lines — so the fix cannot over-narrow and
+  break ADR 0013's required fallback.
+
+**Falsification (blocking fix):** temporarily restoring `except Exception` and
+running only the new test:
+
+```
+FAILED tests/test_tray_backend.py::test_build_status_ui_propagates_programming_errors[AttributeError]
+FAILED tests/test_tray_backend.py::test_build_status_ui_propagates_programming_errors[TypeError]
+FAILED tests/test_tray_backend.py::test_build_status_ui_propagates_programming_errors[NameError]
+FAILED tests/test_tray_backend.py::test_build_status_ui_propagates_programming_errors[AssertionError]
+FAILED tests/test_tray_backend.py::test_build_status_ui_propagates_programming_errors[KeyError]
+5 failed in 0.16s
+```
+
+Each failure was `DID NOT RAISE`, with the warning
+`the tray could not be created ('a genuine bug in tray construction')` on
+stderr — the exact quiet degradation the review described. Reverted
+immediately.
+
+### Fix 2 (required, N1/R3) — the shutdown summary is now guarded
+
+`tests/test_pipeline.py` gained `_DiagnosticStatusUI`, a fake that
+structurally satisfies `StatusUI`, `StoppableStatusUI` and
+`DiagnosticStatusUI`, records `stop()`, and returns a fixed `TrayFailure`. Two
+tests drive `run_service` with it injected:
+
+- `test_run_service_reports_the_status_ui_failure_on_the_normal_path` —
+  `Service.serve` is monkeypatched to return immediately (bounded; no wait),
+  result `0`, `stop_calls == 1`, and
+  `the tray has failed 3 times: state update: no display available` on stderr.
+- `test_run_service_reports_the_status_ui_failure_on_a_serve_error_path` —
+  `Service.serve` raises `OSError`, result non-zero, same assertions, proving
+  the `finally` covers the failure path too.
+
+Both monkeypatch `_missing_artifacts` and `build_transcriber` and reuse the
+existing `_forbid_downloads`, so no model, display, subprocess or network is
+involved and there is no unbounded wait.
+
+**Falsification (N1/R3):** deleting `finally: _shutdown_status_ui(ui)` from
+`run_service` and running the two new tests:
+
+```
+FAILED tests/test_pipeline.py::test_run_service_reports_the_status_ui_failure_on_the_normal_path
+FAILED tests/test_pipeline.py::test_run_service_reports_the_status_ui_failure_on_a_serve_error_path
+2 failed in 0.14s
+```
+
+Both failed on `assert ui.stop_calls == 1` (`assert 0 == 1`) and the missing
+summary. Reverted immediately.
+
+### Fix 3 (optional) — Ayatana typelib is now accepted
+
+Done, and it does not touch the core module check. `assert_appindicator_backend`
+step 1 used to hard-require `gi.require_version("AppIndicator3", "0.1")`, which
+false-negatives a working system where `pystray._appindicator` fell back to
+`AyatanaAppIndicator3`. The new code tries the two namespaces in pystray's own
+order via `_APPINDICATOR_TYPELIBS = ("AppIndicator3", "AyatanaAppIndicator3")`,
+accepting whichever resolves; `pystray.Icon.__module__ ==
+"pystray._appindicator"` is checked exactly as before, so the change cannot
+admit `_xorg`/`_gtk`/`_dummy`. On the reference machine (both typelibs present)
+`AppIndicator3` is still preferred, so the observable behaviour here is
+identical. `test_assertion_accepts_ayatana_when_appindicator3_is_absent` and
+`test_assertion_rejects_when_neither_typelib_is_available` pin both branches.
+Falsified by narrowing the constant back to `("AppIndicator3",)`:
+
+```
+FAILED tests/test_tray_backend.py::test_assertion_accepts_ayatana_when_appindicator3_is_absent
+1 failed in 0.12s
+```
+
+### Verification and scope
+
+```
+$ uv run pytest -q
+549 passed in 2.50s
+
+$ rm -rf .mypy_cache && uv run mypy src/ges2t tests
+Success: no issues found in 39 source files
+```
+
+Before: **537** tests / 39 mypy source files. After: **549** tests (12 added,
+none deleted, skipped, xfailed or weakened) / 39 mypy source files. Real-machine
+re-checks (import-only, no icon/window): `assert_appindicator_backend()` still
+passes and resolves to `pystray._appindicator`; `PYSTRAY_BACKEND=xorg` is still
+refused with the identical ADR 0013 message.
+
+Files touched by this addendum: `src/ges2t/pipeline.py`,
+`src/ges2t/ui/tray.py`, `tests/test_pipeline.py`, `tests/test_tray_backend.py`,
+and this file. No test deleted; `_FakeGi` gained only an optional keyword
+(`unavailable`), and `tests/test_pipeline.py`'s import line only gained
+`TrayFailure`.
+
+### What the re-reviewer must check
+
+1. The narrowed tuple really is only
+   `(ImportError, ModuleNotFoundError, OSError)` plus the `TrayBackendError`
+branch, and the programming-error test calls `pytest.raises` for all five
+classes review 002 proved were swallowed.
+2. The two `run_service` tests fail when `finally: _shutdown_status_ui(ui)` is
+deleted (R3), and are bounded (monkeypatched `serve`, no waits).
+3. FIX 3 accepted either typelib, and the core
+   `pystray.Icon.__module__ == "pystray._appindicator"` check is byte-identical.
+4. The manual desktop tray-visibility DoD remains user-owned and unticked; this
+   agent opened no window, created no tray icon and ran no `ges2t run`.

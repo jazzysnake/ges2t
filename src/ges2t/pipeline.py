@@ -208,11 +208,13 @@ def build_status_ui(config: Config) -> StatusUI:
     """Choose the status display: the tray, or the documented no-op (ADR 0013).
 
     With ``ui.tray = false`` this is :class:`NullStatusUI`. Otherwise it asserts
-    the AppIndicator backend and starts the tray. Any failure to build a visible
-    tray — the backend assertion, or ``pystray``/GTK refusing to construct the
-    icon — prints an actionable warning and degrades to :class:`NullStatusUI`,
-    because a missing tray must never make ges2t unusable and nothing may be
-    reachable only through the tray (ADR 0013).
+    the AppIndicator backend and starts the tray. An *environmental* failure to
+    build a visible tray — the backend assertion, a missing ``gi``/``pystray``,
+    or ``pystray``/GTK refusing to construct the icon for want of a display —
+    prints an actionable warning and degrades to :class:`NullStatusUI`, because
+    a missing tray must never make ges2t unusable and nothing may be reachable
+    only through the tray (ADR 0013). A programming error is **not** swallowed:
+    it propagates so a bug fails loudly instead of quietly disabling the tray.
     """
     if not config.ui.tray:
         return NullStatusUI()
@@ -221,7 +223,13 @@ def build_status_ui(config: Config) -> StatusUI:
     except TrayBackendError as exc:
         _print_tray_warning(str(exc))
         return NullStatusUI()
-    except Exception as exc:  # no visible tray is better than no ges2t at all
+    except (ImportError, ModuleNotFoundError, OSError) as exc:
+        # Only an *environmental* failure may fall back: ``gi``/``pystray``/PIL
+        # missing, or no display/DBus (review 002, blocking finding). A
+        # programming error (``AttributeError``, ``TypeError``, ...) must
+        # propagate and fail loudly rather than ship as "the tray sometimes
+        # does not appear" (ADR 0013). ``TrayBackendError`` is handled above so
+        # its exact, actionable message is preserved.
         _print_tray_warning(f"the tray could not be created ({exc})")
         return NullStatusUI()
 
