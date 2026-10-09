@@ -48,9 +48,15 @@ ADR 0011 (1 s chunks feed the streaming path).
 - [x] Failure modes each raise a clear, actionable error instead of returning a short or
       empty buffer silently:
       - no PipeWire session / `pw-record` missing from `PATH`;
-      - an unknown `--target` device — **cannot raise: on this machine `pw-record` silently
-        falls back to the default node and records normally, printing nothing on stderr;
-        documented in `001-comment.md` → "The blocker". This is the single open item**;
+      - ~~an unknown `--target` device~~ — **REMOVED 2026-10-09; no longer a requirement.**
+        Measured: `--target` is only a PipeWire `node.target` *hint*, so an unresolved target
+        silently falls back to the default node, exits normally and prints nothing on stderr,
+        and no `pw-record` flag makes it fatal. Detecting it needs `pw-dump`/`wpctl`
+        enumeration — new scope no ADR authorises. Accepted: an unresolved target yields a
+        **full recording from the default device**, which still satisfies this bullet's real
+        purpose (never a silent short or empty buffer). Recorded as an amendment in ADR 0008;
+        the user-facing safety net is the `ges2t doctor` check that the *configured* device
+        exists in the session's node list.
       - `pw-record` exiting non-zero before any audio — the error must include its **stderr**;
       - `stop()` before `start()`, or `start()` twice.
 - [x] A recording that captured **zero samples** returns an empty `AudioBuffer` rather than
