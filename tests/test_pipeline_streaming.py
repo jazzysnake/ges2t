@@ -32,7 +32,12 @@ from ges2t import pipeline
 from ges2t.config import Config, StreamingConfig, UIConfig
 from ges2t.injectors.keymap import KeyEvent, KeySequence
 from ges2t.injectors.ydotool import YdotoolInjector
-from ges2t.interfaces import AudioBuffer, TranscriptionResult, TranscriptionSegment
+from ges2t.interfaces import (
+    AudioBuffer,
+    LiveText,
+    TranscriptionResult,
+    TranscriptionSegment,
+)
 from ges2t.pipeline import BatchDictationSession
 from ges2t.service import Service, ServiceState
 from ges2t.streaming_session import StreamingDictationSession
@@ -60,11 +65,21 @@ def _buffer(seconds: float = 0.5) -> AudioBuffer:
 
 
 def _partial(text: str) -> TranscriptionSegment:
-    return TranscriptionSegment(text=text, language="en", is_final=False, pass_ms=None)
+    return TranscriptionSegment(
+        live=LiveText(committed=text, pending=""),
+        language="en",
+        is_final=False,
+        pass_ms=None,
+    )
 
 
 def _final(text: str) -> TranscriptionSegment:
-    return TranscriptionSegment(text=text, language="en", is_final=True, pass_ms=None)
+    return TranscriptionSegment(
+        live=LiveText(committed=text, pending=""),
+        language="en",
+        is_final=True,
+        pass_ms=None,
+    )
 
 
 def _result(text: str) -> TranscriptionResult:
@@ -258,7 +273,9 @@ def test_wired_streaming_path_displays_partials_but_injects_only_the_final_text(
         assert "transcribe" not in transcriber.calls
         assert injector.injected == ["published transcript"]
         assert all("POISON" not in text for text in injector.injected)
-        assert "POISON display only" in status_ui.partials
+        assert "POISON display only" in [
+            live.display for live in status_ui.partials
+        ]
     finally:
         service.shutdown()
 

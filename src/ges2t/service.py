@@ -47,7 +47,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from ges2t.interfaces import Injector, StatusUI
+from ges2t.interfaces import Injector, LiveText, StatusUI
 
 __all__ = [
     "Command",
@@ -122,8 +122,9 @@ class DictationSession(Protocol):
     * :meth:`start` begins capture; it must return promptly (it may start a
       background thread, but it must not transcribe).
     * :meth:`partials` yields display-only live text while recording and may
-      yield nothing at all; it is forwarded to ``status_ui.partial()`` and is
-      never injected (ADR 0011).
+      yield nothing at all; the service forwards it to ``status_ui.partial()``
+      and it is never injected (ADR 0011). Each value keeps the committed prefix
+      and the pending tail apart (ticket ``committed-delta-interface``).
     * :meth:`finish` is blocking and returns the final text; the service calls it
       on a worker thread so the socket loop is never blocked.
     * :meth:`cancel` abandons the recording without transcribing.
@@ -133,7 +134,7 @@ class DictationSession(Protocol):
         """Begin capturing audio."""
         ...
 
-    def partials(self) -> Iterator[str]:
+    def partials(self) -> Iterator[LiveText]:
         """Yield display-only live text as it advances."""
         ...
 
@@ -487,10 +488,10 @@ class Service:
 
         def forward() -> None:
             try:
-                for text in session.partials():
+                for live in session.partials():
                     if stop.is_set():
                         break
-                    self._status_ui.partial(text)
+                    self._status_ui.partial(live)
             except Exception:
                 # Partials are display-only; a failing iterator must never
                 # disturb the recording or the state machine.

@@ -27,7 +27,7 @@ from ges2t.config import (
 from ges2t.injectors.clipboard import ClipboardPasteInjector
 from ges2t.injectors.layout import DEFAULT_PASTE_KEYS
 from ges2t.injectors.ydotool import XkbKeySequenceSource, YdotoolInjector
-from ges2t.interfaces import AudioBuffer, Transcriber, TranscriptionResult
+from ges2t.interfaces import AudioBuffer, LiveText, Transcriber, TranscriptionResult
 from ges2t.notify import NotifyingStatusUI
 from ges2t.service import DictationSession, Service
 from ges2t.transcribers.whistle import WhistleTranscriber
@@ -325,7 +325,7 @@ def test_batch_session_start_starts_capture() -> None:
 def test_batch_session_partials_yields_nothing() -> None:
     session, _, _ = _session()
 
-    partials: Iterator[str] = session.partials()
+    partials: Iterator[LiveText] = session.partials()
 
     assert list(partials) == []
 
@@ -440,7 +440,7 @@ class _DiagnosticStatusUI:
     def error(self, message: str) -> None:
         """No-op."""
 
-    def partial(self, text: str) -> None:
+    def partial(self, live: LiveText) -> None:
         """No-op."""
 
     def stop(self) -> None:

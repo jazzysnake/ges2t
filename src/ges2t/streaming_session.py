@@ -62,7 +62,7 @@ import threading
 from collections.abc import Iterator
 from enum import StrEnum
 
-from ges2t.interfaces import AudioSource, Transcriber, TranscriptionSegment
+from ges2t.interfaces import AudioSource, LiveText, Transcriber, TranscriptionSegment
 
 __all__ = ["StreamingDictationSession", "StreamingSessionError"]
 
@@ -117,8 +117,10 @@ class StreamingDictationSession:
         self._lifecycle = _Lifecycle.NEW
         self._worker: threading.Thread | None = None
         #: Advancing, consecutive-deduplicated display text. The last element is
-        #: the latest partial. Read only by :meth:`partials`.
-        self._partials: list[str] = []
+        #: the latest partial's :class:`~ges2t.interfaces.LiveText`, so a
+        #: consumer can type the committed prefix without losing the pending
+        #: tail's display string. Read only by :meth:`partials`.
+        self._partials: list[LiveText] = []
         #: The final segment's text. Read only by :meth:`finish`; partial text
         #: must never reach this field (ADR 0011).
         self._final_text: str | None = None
@@ -149,12 +151,15 @@ class StreamingDictationSession:
             self._worker = worker
         worker.start()
 
-    def partials(self) -> Iterator[str]:
+    def partials(self) -> Iterator[LiveText]:
         """Yield display-only partial text as it advances, deduplicated.
 
-        The same string is never yielded twice in a row. This is a blocking
-        generator that ends when the session finishes or is cancelled; it shares
-        no state with :meth:`finish`, which never waits for it (ADR 0011).
+        Each value carries the committed prefix and the pending tail separately
+        (ticket ``committed-delta-interface``); the dedup rule is on the display
+        string (``committed + pending``), so consecutive identical live text is
+        never yielded twice in a row. This is a blocking generator that ends
+        when the session finishes or is cancelled; it shares no state with
+        :meth:`finish`, which never waits for it (ADR 0011).
         """
         index = 0
         while True:
@@ -165,9 +170,9 @@ class StreamingDictationSession:
                     self._condition.wait()
                 if index >= len(self._partials):
                     return
-                text = self._partials[index]
+                live = self._partials[index]
                 index += 1
-            yield text
+            yield live
 
     def finish(self) -> str:
         """Stop capture, join the worker, and return the final transcript.
@@ -278,7 +283,11 @@ class StreamingDictationSession:
             if segment.is_final:
                 # The authoritative transcript: only ever the final segment.
                 self._final_text = segment.text
-            elif not self._partials or self._partials[-1] != segment.text:
-                # Advance the display text, dropping consecutive duplicates.
-                self._partials.append(segment.text)
+            elif (
+                not self._partials
+                or self._partials[-1].display != segment.live.display
+            ):
+                # Advance the display text, dropping consecutive duplicates. The
+                # committed/pending split is preserved for the consumer.
+                self._partials.append(segment.live)
                 self._condition.notify_all()

@@ -23,7 +23,7 @@ from typing import TypeVar
 
 import pytest
 
-from ges2t.interfaces import AudioBuffer, TranscriptionSegment
+from ges2t.interfaces import AudioBuffer, LiveText, TranscriptionSegment
 from ges2t.service import DictationSession, Service, ServiceState
 from ges2t.streaming_session import (
     StreamingDictationSession,
@@ -49,13 +49,29 @@ def _buffer(seconds: float) -> AudioBuffer:
 
 def _partial(text: str) -> TranscriptionSegment:
     return TranscriptionSegment(
-        text=text, language="en", is_final=False, pass_ms=None
+        live=LiveText(committed=text, pending=""),
+        language="en",
+        is_final=False,
+        pass_ms=None,
     )
 
 
 def _final(text: str) -> TranscriptionSegment:
     return TranscriptionSegment(
-        text=text, language="en", is_final=True, pass_ms=None
+        live=LiveText(committed=text, pending=""),
+        language="en",
+        is_final=True,
+        pass_ms=None,
+    )
+
+
+def _live(committed: str, pending: str) -> TranscriptionSegment:
+    """A non-final segment with a committed prefix and a pending tail apart."""
+    return TranscriptionSegment(
+        live=LiveText(committed=committed, pending=pending),
+        language="en",
+        is_final=False,
+        pass_ms=None,
     )
 
 
@@ -268,7 +284,7 @@ def test_partials_advance_and_consecutive_duplicates_are_dropped() -> None:
             _final("a b c d"),
         ]
     )
-    collected: list[str] = []
+    collected: list[LiveText] = []
     consumer_done = threading.Event()
 
     def consume() -> None:
@@ -283,8 +299,8 @@ def test_partials_advance_and_consecutive_duplicates_are_dropped() -> None:
     assert consumer_done.wait(timeout=2.0)
     consumer.join(timeout=2.0)
     assert text == "a b c d"
-    assert collected == ["a", "a b", "a b c"]
-    assert "a b c d" not in collected
+    assert [live.display for live in collected] == ["a", "a b", "a b c"]
+    assert "a b c d" not in [live.display for live in collected]
 
 
 def test_partials_allow_a_legitimate_non_consecutive_repeat() -> None:
@@ -306,7 +322,7 @@ def test_partials_allow_a_legitimate_non_consecutive_repeat() -> None:
             _final("a b final"),
         ]
     )
-    collected: list[str] = []
+    collected: list[LiveText] = []
     consumer_done = threading.Event()
 
     def consume() -> None:
@@ -321,7 +337,7 @@ def test_partials_allow_a_legitimate_non_consecutive_repeat() -> None:
     assert consumer_done.wait(timeout=2.0)
     consumer.join(timeout=2.0)
     assert text == "a b final"
-    assert collected == ["a", "a b", "a"]
+    assert [live.display for live in collected] == ["a", "a b", "a"]
 
 
 def test_partials_are_readable_after_finish_without_re_running_the_stream() -> None:
@@ -329,15 +345,56 @@ def test_partials_are_readable_after_finish_without_re_running_the_stream() -> N
     session.start()
     _call_with_timeout(session.finish, timeout=2.0)
 
-    assert list(session.partials()) == ["a", "a b"]
+    assert [live.display for live in session.partials()] == ["a", "a b"]
     assert transcriber.calls == ["stream"]
+
+
+def test_partials_preserve_the_committed_value_separately_from_pending() -> None:
+    """The session must not merge the two lifetimes before the consumer sees them."""
+    session, _, _ = _session(
+        [
+            _live("hello", " wor"),
+            _live("hello", " world"),
+            _final("hello world"),
+        ]
+    )
+    session.start()
+    text = _call_with_timeout(session.finish, timeout=2.0)
+
+    forwarded = list(session.partials())
+    assert text == "hello world"
+    assert [live.committed for live in forwarded] == ["hello", "hello"]
+    assert [live.pending for live in forwarded] == [" wor", " world"]
+    assert [live.display for live in forwarded] == ["hello wor", "hello world"]
+
+
+def test_partials_dedup_on_the_display_not_the_committed_value() -> None:
+    """A committed advance that leaves the display unchanged is still dropped.
+
+    Consecutive dedup is on ``committed + pending`` (the string the tray shows),
+    exactly as before the split, so the number of forwarded partials does not
+    change when the two halves happen to cancel out.
+    """
+    session, _, _ = _session(
+        [
+            _live("a b", " c"),
+            _live("a b c", ""),
+            _live("a b c", "d"),
+            _final("a b c d"),
+        ]
+    )
+    session.start()
+    _call_with_timeout(session.finish, timeout=2.0)
+
+    forwarded = list(session.partials())
+    assert [live.display for live in forwarded] == ["a b c", "a b cd"]
 
 
 def test_a_waiting_partials_consumer_does_not_block_finish() -> None:
     audio = _BlockingAudioSource([_buffer(0.5)])
     transcriber = FakeTranscriber(segments=[_partial("a"), _final("a b")])
     session = StreamingDictationSession(audio, transcriber, chunk_seconds=1.0)
-    collected: list[str] = []
+    collected: list[LiveText] = []
     consumer_done = threading.Event()
 
     def consume() -> None:
@@ -354,7 +411,7 @@ def test_a_waiting_partials_consumer_does_not_block_finish() -> None:
     assert text == "a b"
     assert consumer_done.wait(timeout=2.0)
     consumer.join(timeout=2.0)
-    assert collected == ["a"]
+    assert [live.display for live in collected] == ["a"]
 
 
 def test_finish_does_not_drain_unconsumed_partials() -> None:
@@ -451,7 +508,10 @@ def test_service_displays_partials_but_never_injects_them(tmp_path: Path) -> Non
         buffers=[_buffer(0.5)], stop_buffer=_buffer(0.5)
     )
     transcriber = FakeTranscriber(
-        segments=[_partial("POISON display only"), _final("published transcript")]
+        segments=[
+            _live("POISON committed ", "POISON pending"),
+            _final("published transcript"),
+        ]
     )
     session = StreamingDictationSession(audio, transcriber, chunk_seconds=0.25)
     injector = FakeInjector()
@@ -471,6 +531,11 @@ def test_service_displays_partials_but_never_injects_them(tmp_path: Path) -> Non
 
         assert injector.injected == ["published transcript"]
         assert all("POISON" not in text for text in injector.injected)
-        assert "POISON display only" in status_ui.partials
+        # The service exposes both halves to the UI layer, unchanged.
+        forwarded = status_ui.partials
+        assert len(forwarded) == 1
+        assert forwarded[0].committed == "POISON committed "
+        assert forwarded[0].pending == "POISON pending"
+        assert forwarded[0].display == "POISON committed POISON pending"
     finally:
         service.shutdown()

@@ -18,6 +18,7 @@ from ges2t.interfaces import (
     AudioBuffer,
     AudioSource,
     Injector,
+    LiveText,
     StatusUI,
     Transcriber,
     TranscriptionResult,
@@ -115,12 +116,34 @@ def test_transcription_classes_use_named_fields() -> None:
     result = TranscriptionResult(
         text="hello", language="en", ttft_ms=12.5, decode_tps=199.0
     )
-    segment = TranscriptionSegment(text="hel", language="en", is_final=False, pass_ms=39.0)
+    segment = TranscriptionSegment(
+        live=LiveText(committed="hel", pending=""),
+        language="en",
+        is_final=False,
+        pass_ms=39.0,
+    )
 
     assert result.text == "hello"
     assert result.ttft_ms == 12.5
+    assert segment.live.committed == "hel"
+    assert segment.text == "hel"
     assert segment.is_final is False
     assert segment.pass_ms == 39.0
+
+
+def test_live_text_keeps_committed_and_pending_apart() -> None:
+    live = LiveText(committed="hello ", pending="world")
+
+    assert live.committed == "hello "
+    assert live.pending == "world"
+    assert live.display == "hello world"
+
+
+def test_live_text_is_frozen() -> None:
+    live = LiveText(committed="a", pending="b")
+
+    with pytest.raises(FrozenInstanceError):
+        live.committed = "c"  # type: ignore[misc]
 
 
 def test_fake_audio_source_stop_returns_everything_captured() -> None:
@@ -176,8 +199,18 @@ def test_fake_transcriber_ensure_model_reports_progress_and_records_it() -> None
 
 def test_fake_transcriber_stream_yields_configured_segments() -> None:
     segments = [
-        TranscriptionSegment(text="hel", language="en", is_final=False, pass_ms=12.0),
-        TranscriptionSegment(text="hello", language="en", is_final=True, pass_ms=13.0),
+        TranscriptionSegment(
+            live=LiveText(committed="hel", pending=""),
+            language="en",
+            is_final=False,
+            pass_ms=12.0,
+        ),
+        TranscriptionSegment(
+            live=LiveText(committed="hello", pending=""),
+            language="en",
+            is_final=True,
+            pass_ms=13.0,
+        ),
     ]
     transcriber = FakeTranscriber(segments=segments)
     chunks = [AudioBuffer(samples=[0.0], sample_rate=16000)]
@@ -198,7 +231,10 @@ def test_fake_transcriber_stream_defaults_to_one_final_segment() -> None:
 
     assert len(segments) == 1
     assert segments[0] == TranscriptionSegment(
-        text="hello", language="en", is_final=True, pass_ms=None
+        live=LiveText(committed="hello", pending=""),
+        language="en",
+        is_final=True,
+        pass_ms=None,
     )
 
 
@@ -220,8 +256,8 @@ def test_fake_status_ui_records_transitions_and_payloads() -> None:
     ui = FakeStatusUI()
 
     ui.recording()
-    ui.partial("hello")
-    ui.partial("hello world")
+    ui.partial(LiveText(committed="hello", pending=""))
+    ui.partial(LiveText(committed="hello", pending=" world"))
     ui.transcribing()
     ui.error("engine failed")
     ui.idle()
@@ -234,7 +270,7 @@ def test_fake_status_ui_records_transitions_and_payloads() -> None:
         "error",
         "idle",
     ]
-    assert ui.partials == ["hello", "hello world"]
+    assert [live.display for live in ui.partials] == ["hello", "hello world"]
     assert ui.errors == ["engine failed"]
     assert ui.idle_calls == 1
     assert ui.recording_calls == 1

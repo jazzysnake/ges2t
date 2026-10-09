@@ -20,6 +20,7 @@ from typing import TypeVar
 import pytest
 
 from ges2t import service as service_module
+from ges2t.interfaces import LiveText
 from ges2t.service import (
     CommandResponse,
     DictationSession,
@@ -66,9 +67,11 @@ class FakeDictationSession:
         if self.start_error is not None:
             raise self.start_error
 
-    def partials(self) -> Iterator[str]:
+    def partials(self) -> Iterator[LiveText]:
         self.calls.append("partials")
-        yield from self.partial_texts
+        yield from (
+            LiveText(committed=text, pending="") for text in self.partial_texts
+        )
 
     def finish(self) -> str:
         self.calls.append("finish")
@@ -356,7 +359,7 @@ class StateReadingStatusUI:
     def error(self, message: str) -> None:
         self._read()
 
-    def partial(self, text: str) -> None:
+    def partial(self, live: LiveText) -> None:
         self._read()
 
 
@@ -506,8 +509,8 @@ class RaisingStatusUI(FakeStatusUI):
         super().error(message)
         self._maybe_raise("error")
 
-    def partial(self, text: str) -> None:
-        super().partial(text)
+    def partial(self, live: LiveText) -> None:
+        super().partial(live)
         self._maybe_raise("partial")
 
 
@@ -900,11 +903,17 @@ def test_partials_are_forwarded_but_never_injected(tmp_path: Path) -> None:
     )
     try:
         scenario.service.handle("toggle")
-        wait_for(lambda: scenario.status_ui.partials == ["Hel", "hell"])
+        wait_for(
+            lambda: [live.display for live in scenario.status_ui.partials]
+            == ["Hel", "hell"]
+        )
         assert scenario.injector.calls == []
         scenario.service.handle("toggle")
         wait_for(lambda: scenario.injector.injected == ["hello"])
-        assert scenario.status_ui.partials == ["Hel", "hell"]
+        assert [live.display for live in scenario.status_ui.partials] == [
+            "Hel",
+            "hell",
+        ]
     finally:
         cleanup(scenario)
 
