@@ -49,11 +49,22 @@ shipped `drive()` / streaming adapter, and reports:
       where a restatement is most likely. See the lesson in
       ../../core-dictation-pipeline/silence-gate/ticket.md: **"verified against constructed inputs" is
       not "works on real inputs"**. Synthetic signals are not evidence here.
+- [ ] **The capture step is user-owned and self-announcing.** The harness must be a script the **user**
+      runs in their own terminal — the agent must **not** record the microphone itself, because it has
+      no way to tell the user when to start. The script must make the start unambiguous:
+      print the device it will use, wait for the user to press **Enter**, show a **3-2-1 countdown**,
+      then print an unmistakable **`● RECORDING — speak now`** cue with a visible seconds counter, and
+      print **`■ stopped`** at the end. It must also write its full report to a file, not only stdout,
+      so the user can hand the numbers back without copy-pasting from a terminal.
 - [ ] **A recommendation with the numbers behind it** — proceed / proceed with a named caveat / stop —
       including the injection cadence the measurements support.
 
 ## Notes
 
+- **Note on which input exercises what.** `clip30.wav` is 30 s, so it already crosses the 5 s window
+  **six** times — the flush path is exercised by the clips alone. The fresh capture is for **realism**,
+  not for reaching the flush: it is the only input that carries this device's own noise floor and the
+  user's own speech, which is the whole lesson of the silence saga.
 - **Ask before recording.** Any fresh capture uses the user's microphone; that is a separate permission
   from wanting the feature. State the duration up front.
 - **Never commit audio.** `/tmp` only.

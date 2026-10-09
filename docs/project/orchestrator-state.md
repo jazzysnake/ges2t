@@ -73,7 +73,7 @@ Original orchestrator brief: `.pi/prompts/orchestrate-project.md`.
 |---|---|---|
 | **19** | user-documentation-and-setup-guide | **not started** — the last core ticket; deliberately last because it documents final behaviour |
 | **25** | clipboard-paste-injector | **REVIEW PASS** (`1c93a35`), **NOT MERGED** — D1/D2/D3 fixed and independently verified (the new tests were run against the *actual* rejected revision `2b5fb26`: **25 failures** = exactly 2 D1 + 1 D3 + 21 letters + 1 chord). 4 non-blocking residuals: **R1** a >64 KiB restore truncates to exactly 65536 B if the process exits inside the delay window; **R2 an uncaught `Thread.start()` `RuntimeError`**; R3 a blocked daemon thread if the restore child never reads; R4 (pre-existing) a non-`FileNotFoundError` `OSError` on the read path still escapes raw. The **user's manual test is the last gate**. |
-| **32** | commit-cadence-diagnostic | **to do** — the **gate** for incremental typing: measure the engine's commit cadence, `pending` size, and prove the append-only prefix on **real speech**. Makes no behaviour change, and its numbers may cancel 33 and 34 |
+| **32** | commit-cadence-diagnostic | **MEASURED — the gate is POSITIVE, awaiting review.** Real-device recording (25 s) + clips (32 s): **0 restatements**, 0 committed-word repeats, median **17 chars/commit**, median gap **1.00 s** of source audio (p90 2.50 s, max 4.00 s). The `Thank you.` hallucination appeared in `pending` **twice** and was **never committed** — the two-pass rule filters exactly the failure the silence saga chased. Harness `8ccf017`/`e9f47ed`; review in flight. Then fold the fresh numbers into `001-comment.md` (its own CAVEAT 2) and close the gate |
 | **33** | committed-delta-interface | **to do** — carry the committed text separately from `pending` on the segment (the boundary is destroyed by `text = transcript + pending` and cannot be recovered downstream) |
 | **34** | incremental-typing | **to do** — type committed words as they are committed; **amends ADR 0011** (surface the amendment explicitly, with 32's numbers). User's design decisions are recorded in the ticket and must not be re-opened |
 | **30** | tray-failure-diagnostics | filed follow-up; needs a read-only socket verb (**requires an ADR 0016 amendment**) |
@@ -342,6 +342,44 @@ needs the user's live test in **both** a quiet room and a noisy one. If their re
 it, the options are to lower `SPEECH_BAND_RATIO` (accepting more hallucination on noise) or to fix
 the noise **at the input** (PipeWire high-pass, another device, disable AGC/ALC) — **neither to be
 built speculatively.**
+
+## 10a. NEW FINDING — the streaming default may be materially worse than batch
+
+Ticket 32's harness compares the **streaming** transcript (the shipped default since ticket 16) against
+the **batch** transcript for the same audio through the same adapter. They diverge by **17 substitutions
++ 4 insertions, WER 0.339** on the user's own 25 s recording; **0.261** on `clip30.wav`; **0.000** on
+`clip5.wav`. Eyeballing the user's recording against the passage they read confirms batch is closer:
+
+| passage | streaming (the default) | batch |
+|---|---|---|
+| `last night's` | `Last night` ✗ | `last night's` ✓ |
+| `midnight` | `Great night.` ✗ | `midnight` ✓ |
+| `ferry` | `fairy` ✗ | `ferry` ✓ |
+| `Two low-lying roads remain closed tonight` | `Do low light. road drawing close to night` ✗ | `Two low lying roads remain closed night` ✓ |
+
+**Caveats before treating this as settled — do not turn it into a ticket on this evidence alone:**
+- The harness number is streaming-**vs**-batch divergence. That is a *detector*, not an accuracy
+  metric: the two agreeing would not prove either correct.
+- `clip5` agreeing perfectly at 0.000 shows the effect **grows with utterance length**, so a fair
+  measurement must vary length.
+- It needs its own measurement against a **ground-truth reference** before it means anything.
+
+**If it holds, the shipped *default* path is the worse one** — a user-facing quality issue entirely
+independent of the silence saga, and worth its own ticket.
+
+## 10b. The pause produced a *committed* hallucination — and what that means for ticket 34
+
+On the real recording the user left the deliberate mid-utterance pause. At that pause the model emitted
+`' Great night.'`, and because nothing later contradicted it, **the two-pass rule committed it** — so it
+is in the final transcript and would be typed. Two consequences:
+
+- **The two-pass rule protects against *revision*, not against *stable hallucination*.** Typing
+  committed-only therefore does not make pauses safer; a pause is exactly where a stable hallucination
+  can be committed. This is covered by the user's decision #2 (stop → delete → continue), and should be
+  stated plainly in ticket 34 rather than discovered later.
+- **It also validates the design's best property:** the `Thank you.` hallucination appeared in
+  `pending` twice and was **never committed**, so committed-only typing would have typed none of it.
+  The commit rule filters the *revised* hallucination; it cannot filter the *stable* one.
 
 ### ⚠️ THE LESSON — put this first when briefing any future audio/signal work
 
