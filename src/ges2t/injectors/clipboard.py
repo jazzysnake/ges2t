@@ -368,7 +368,29 @@ def _run_command(
     # does the write so a selection larger than the pipe buffer cannot block the
     # service's command loop while the child is still sleeping; the thread keeps
     # the ``Popen`` alive, so the pipe stays open until the bytes are in it.
-    _start_deferred_stdin(proc, stdin_bytes)
+    #
+    # R2: only this deferred (restore) branch tolerates a failed thread start.
+    # ``Thread.start`` raises ``RuntimeError`` under thread exhaustion, and the
+    # payload has already been pasted by the time the restore runs, so the
+    # failure has to stay best effort: a synthetic non-zero status that
+    # ``_restore_clipboard`` turns into a ``ClipboardRestoreWarning`` rather than
+    # an exception escaping ``inject()`` (ticket 17 shipped the opposite bug by
+    # narrowing a restore ``except``). The ``except`` is deliberately scoped to
+    # the thread start and **not** widened to ``Exception`` around the whole
+    # runner: the payload write (``wl-copy``) and the paste chord keep their
+    # typed fatal errors in ``_run``
+    # (``ClipboardInjectionError``/``ClipboardNotFoundError``/
+    # ``ClipboardTimeoutError``/``ClipboardSpawnError``). Swallowing those would
+    # hide a broken paste (D3's lesson).
+    try:
+        _start_deferred_stdin(proc, stdin_bytes)
+    except RuntimeError:
+        return subprocess.CompletedProcess(
+            args=list(argv),
+            returncode=1,
+            stdout=b"",
+            stderr=b"restore thread could not be started",
+        )
     return subprocess.CompletedProcess(
         args=list(argv), returncode=0, stdout=b"", stderr=b""
     )

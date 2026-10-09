@@ -25,6 +25,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import threading
 import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -428,6 +429,60 @@ def test_restore_spawn_failure_does_not_fail_injection() -> None:
     assert runner.restore_calls() != []
 
 
+def test_restore_thread_start_failure_does_not_fail_injection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R2: a ``Thread.start`` failure is best effort, never an injection failure.
+
+    ``threading.Thread.start`` raises ``RuntimeError`` ("can't start new
+    thread") when the process is out of threads. The restore runs *after* the
+    payload has been pasted, so that failure must degrade to a
+    ``ClipboardRestoreWarning`` rather than escaping ``inject()`` (ticket 17
+    shipped the opposite bug by narrowing a restore ``except``). The deferred
+    restore is routed through the real ``_run_command``/``_start_deferred_stdin``
+    seam -- payload write and chord stay on the fake -- so the real
+    ``Thread.start`` is what fails. The restore child is ``true`` (reads no
+    stdin, exits on its own), so no process is left behind when the writer
+    thread never starts.
+    """
+
+    def failing_start(self: threading.Thread) -> None:
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(threading.Thread, "start", failing_start)
+
+    runner = DelegatingRestoreRunner(target=None)
+    injector = ClipboardPasteInjector(
+        paste_keys=("ctrl+v",),
+        trailing_space=True,
+        restore_delay_s=0.0,
+        runner=runner,
+    )
+
+    with pytest.warns(ClipboardRestoreWarning) as record:
+        injector.inject("hi")
+
+    assert injector.last_injection_ms is not None
+    # The transcript still reached wl-copy (with ADR 0012's trailing space) ...
+    payload_calls = [
+        call
+        for call in runner.calls
+        if call.argv[0] == WL_COPY_BINARY and call.delay_s is None
+    ]
+    assert [call.stdin for call in payload_calls] == [b"hi "]
+    # ... and the paste chord was still emitted ...
+    assert [call for call in runner.calls if call.argv[0] == YDOTOOL_BINARY] != []
+    # ... and the only consequence is a recorded restore warning (a GC'd
+    # still-running child may also emit a ResourceWarning, so select ours).
+    restore_warnings = [
+        item
+        for item in record
+        if issubclass(item.category, ClipboardRestoreWarning)
+    ]
+    assert restore_warnings != []
+    assert "previous clipboard" in str(restore_warnings[0].message)
+
+
 # --- the real deferred runner seam: stdin actually reaches the child (D1) -----
 
 
@@ -441,7 +496,10 @@ class DelegatingRestoreRunner:
     real-seam contract without touching the clipboard.
     """
 
-    def __init__(self, target: Path) -> None:
+    def __init__(self, target: Path | None) -> None:
+        # ``target is None`` keeps the *real* deferred branch but points it at a
+        # command (``true``) that never reads stdin, so the R2 test spawns no
+        # child that could block when the writer thread never starts.
         self._target = target
         self._fake = FakeClipboardRunner(paste_stdout=b"previous")
         self.calls: list[ClipboardRunnerCall] = []
@@ -460,9 +518,12 @@ class DelegatingRestoreRunner:
             )
         )
         if delay_s is not None and argv[0] == WL_COPY_BINARY:
-            return _run_command(
-                ("tee", str(self._target)), stdin_bytes, env, delay_s=delay_s
+            destination = (
+                ("tee", str(self._target))
+                if self._target is not None
+                else ("true",)
             )
+            return _run_command(destination, stdin_bytes, env, delay_s=delay_s)
         return self._fake(argv, stdin_bytes, env, delay_s=delay_s)
 
 
