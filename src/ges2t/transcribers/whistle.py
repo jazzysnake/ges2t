@@ -29,11 +29,17 @@ The batch path, in brief:
 ``numpy`` is deliberately **not** used: the conversion is the standard library's
 ``array('f', samples).tobytes()``.
 
+The streaming path is implemented by :class:`WhistleTranscriber.stream`, which
+delegates the windowing to :func:`ges2t.streaming.drive` and supplies a private
+:class:`_WhistleStreamingDecoder`. The decoder steps ``needle.Whistle.stream``
+incrementally: one package-level generator per window, fed one chunk per
+``process()`` call and ended at the window boundary so the generator's own
+``stop()`` commits the tail (ADR 0011). The engine returns bare words, so the
+decoder owns the inter-delta whitespace that ``drive()`` concatenates verbatim.
+
 The ``needle`` import is lazy and bound to the module global :data:`_needle`, so
 importing this module has no backend side effects and the test suite can
-substitute a fake with no engine installed (ADR 0014). :meth:`stream` is a
-:class:`NotImplementedError` stub: the streaming adapter ticket owns that path
-(ADR 0011), and implementing it here would make that ticket a rewrite.
+substitute a fake with no engine installed (ADR 0014).
 """
 
 from __future__ import annotations
@@ -41,17 +47,19 @@ from __future__ import annotations
 import os
 import time
 from array import array
+from collections import deque
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from ges2t import model_store
+from ges2t import model_store, streaming
 from ges2t.interfaces import (
     AudioBuffer,
     ProgressCallback,
     TranscriptionResult,
     TranscriptionSegment,
 )
+from ges2t.streaming import StreamingPass
 from ges2t.transcribers.whistle_config import WhistleConfig
 
 __all__ = [
@@ -175,6 +183,153 @@ def _transcription_from_engine(raw: Mapping[str, Any]) -> TranscriptionResult:
         ttft_ms=None if ttft_ms is None else float(ttft_ms),
         decode_tps=None if decode_tps is None else float(decode_tps),
     )
+
+
+def _stream_text(raw: Mapping[str, Any], key: str) -> str:
+    """Return one of the engine's string fields, or ``""`` when it is absent.
+
+    The streaming engine returns bare words (the package's own reader joins
+    them with a space), so the adapter owns the separators: this helper must
+    **not** add whitespace.
+    """
+    value = raw.get(key)
+    return "" if value is None else str(value)
+
+
+def _stream_language(raw: Mapping[str, Any]) -> str | None:
+    """Return the language the engine reported for one streaming pass, if any."""
+    value = raw.get("language")
+    return None if value is None else str(value)
+
+
+class _ChunkFeeder(Iterator[bytes]):
+    """The pull-side iterator handed to one ``needle`` stream generator.
+
+    ``needle.Whistle.stream()`` consumes an iterable and owns the engine's
+    ``stop()`` call: it pulls one chunk per ``next()`` and issues ``stop()`` as
+    soon as the iterable is exhausted. The adapter must choose when that
+    happens -- at a window boundary, not at end of utterance -- so it feeds
+    exactly one chunk through this object per
+    :meth:`_WhistleStreamingDecoder.process` and ends the iterable in
+    :meth:`_WhistleStreamingDecoder.flush`.
+
+    A pull with nothing queued and no end signalled is a programming error, not
+    end of input: it raises rather than silently terminating the engine stream
+    early and losing audio.
+    """
+
+    def __init__(self) -> None:
+        self._pending: deque[bytes] = deque()
+        self._ended: bool = False
+
+    def feed(self, chunk: bytes) -> None:
+        """Queue the next chunk of raw float32 bytes for the generator to pull."""
+        self._pending.append(chunk)
+
+    def end(self) -> None:
+        """Mark the input exhausted so the generator pulls its terminal ``stop()``."""
+        self._ended = True
+
+    def __iter__(self) -> _ChunkFeeder:
+        return self
+
+    def __next__(self) -> bytes:
+        if self._pending:
+            return self._pending.popleft()
+        if self._ended:
+            raise StopIteration
+        raise WhistleTranscriberError(
+            "the needle stream generator pulled a chunk that was never fed; the "
+            "streaming decoder must feed exactly one chunk per process() call"
+        )
+
+
+class _WhistleStreamingDecoder:
+    """Adapts ``needle.Whistle.stream`` to the generic :class:`streaming.StreamingDecoder`.
+
+    One package-level generator is alive per window. :meth:`process` pushes the
+    buffer into the generator's feeder and advances the generator once, so the
+    generator's ``process`` call and its yielded dict line up one-to-one.
+    :meth:`flush` ends the feeder, which makes the generator exhaust its input
+    and issue the engine's ``stop()``; the resulting tail dict is the window's
+    committed tail. A fresh generator is opened immediately afterwards, so the
+    next window starts on a reset engine stream (ADR 0011).
+
+    The engine returns bare words, while :func:`ges2t.streaming.drive`
+    concatenates every delta **verbatim**, so this class owns the inter-delta
+    whitespace: a non-empty delta that continues a non-empty transcript gets a
+    single leading space. ``pending`` is display-only and is never used to
+    reconstruct the transcript.
+
+    ``engine`` is the already-:meth:`load` -ed ``needle.Whistle`` handle; the
+    decoder never imports ``needle`` itself and never creates a second engine
+    (ADR 0005, ADR 0010). ``language`` is ``WhistleConfig.language`` passed
+    through verbatim; the empty string lets the engine auto-detect.
+    """
+
+    def __init__(self, engine: Any, language: str) -> None:
+        self._engine: Any = engine
+        self._language: str = language
+        self._emitted: bool = False
+        self._feeder: _ChunkFeeder = _ChunkFeeder()
+        self._generator: Iterator[Mapping[str, Any]] = self._engine.stream(
+            self._feeder, language=self._language
+        )
+
+    def _open_stream(self) -> None:
+        """Start a fresh engine stream for the next window."""
+        self._feeder = _ChunkFeeder()
+        self._generator = self._engine.stream(
+            self._feeder, language=self._language
+        )
+
+    def _format(self, text: str) -> str:
+        """Return a concatenation-safe delta: prepend a space only for a continuation."""
+        if not text:
+            return ""
+        if self._emitted:
+            return " " + text
+        self._emitted = True
+        return text
+
+    def process(self, buffer: AudioBuffer) -> StreamingPass:
+        """Append ``buffer`` to the current window and return this pass's commit.
+
+        The buffer is handed to the engine as raw float32 bytes, never a WAV
+        path (ADR 0007). ``committed`` carries its own leading space when it
+        continues the transcript; ``pending`` is display-only and is prefixed
+        the same way so live text does not run words together (ADR 0011).
+        """
+        _validate_buffer(buffer)
+        self._feeder.feed(_float32_bytes(buffer.samples))
+        raw = next(self._generator)
+        committed = self._format(_stream_text(raw, "text"))
+        pending = _stream_text(raw, "pending")
+        if pending and self._emitted:
+            pending = " " + pending
+        return StreamingPass(
+            committed=committed,
+            pending=pending,
+            language=_stream_language(raw),
+        )
+
+    def flush(self) -> str:
+        """Commit the window's tail, reset the engine stream, return the tail text.
+
+        Ending the feeder makes the package generator exhaust its input and
+        call ``needle_stream_transcribe_stop``, which commits the unconfirmed
+        tail and resets the engine. The generator is then exhausted and a fresh
+        one is opened, so the next :meth:`process` starts a new stream.
+        """
+        self._feeder.end()
+        raw = next(self._generator)
+        tail = self._format(_stream_text(raw, "text"))
+        try:
+            next(self._generator)
+        except StopIteration:
+            pass
+        self._open_stream()
+        return tail
 
 
 def _loaded_engine_path(needle_module: Any) -> Path | None:
@@ -327,16 +482,27 @@ class WhistleTranscriber:
     def stream(
         self, chunks: Iterable[AudioBuffer]
     ) -> Iterator[TranscriptionSegment]:
-        """Not implemented here: the streaming adapter ticket owns this path.
+        """Transcribe a live chunk iterable on the windowed streaming path (ADR 0011).
 
-        ``supports_streaming`` reports the engine's capability, but implementing
-        the streaming loop in the batch adapter would make the dedicated
-        streaming ticket a rewrite rather than an addition (ADR 0011).
+        The window/commit algorithm is :func:`ges2t.streaming.drive`: the
+        adapter only supplies the engine-facing decoder, while ``drive`` groups
+        chunks, flushes at the configured window boundary, accumulates the
+        committed deltas, and yields display-only partials plus one final
+        segment. The knobs come from ``[engine.whistle]``
+        (``window_seconds``/``chunk_seconds``) and are validated there, not
+        re-implemented here.
+
+        The call fails eagerly with :class:`WhistleNotLoadedError` when
+        :meth:`load` has not run, rather than at first iteration, so a caller
+        does not start capturing audio for a stream that cannot run.
         """
-        raise NotImplementedError(
-            "WhistleTranscriber streaming is implemented by the streaming "
-            "adapter ticket (ADR 0011); only the batch transcribe() path exists "
-            "here"
+        engine = self._require_loaded()
+        decoder = _WhistleStreamingDecoder(engine, self.config.language)
+        return streaming.drive(
+            decoder,
+            chunks,
+            window_seconds=self.config.window_seconds,
+            chunk_seconds=self.config.chunk_seconds,
         )
 
     def close(self) -> None:

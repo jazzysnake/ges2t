@@ -9,8 +9,9 @@ was handed, which is how the raw-float32 conversion path is asserted (ADR 0007).
 
 Covered here: the ``Transcriber`` Protocol, the float32 conversion, the 16 kHz
 and 30 s validation, the before-``load()`` error, verbatim result pass-through,
-the managed-path assertions, ``ensure_model`` delegation, and the deliberate
-``stream()`` stub (ADR 0010, ADR 0011, ADR 0012, ADR 0017, ADR 0019).
+the managed-path assertions, ``ensure_model`` delegation, and the eager
+before-``load()`` failure of ``stream()`` (now implemented by the streaming
+adapter, ADR 0010, ADR 0011, ADR 0012, ADR 0017, ADR 0019).
 """
 
 from __future__ import annotations
@@ -410,8 +411,12 @@ def test_close_returns_the_adapter_to_the_unloaded_state(
         transcriber.transcribe(AudioBuffer(samples=[0.0], sample_rate=SAMPLE_RATE))
 
 
-def test_stream_is_a_not_implemented_stub(transcriber: WhistleTranscriber) -> None:
-    with pytest.raises(NotImplementedError):
+def test_stream_before_load_fails_eagerly(transcriber: WhistleTranscriber) -> None:
+    # The batch ticket's ``stream()`` was a NotImplementedError stub; the
+    # streaming adapter ticket replaced the body (ADR 0011). What is still worth
+    # guarding here is that the error is raised at call time, not on iteration:
+    # a caller must not start capturing audio for a stream that cannot run.
+    with pytest.raises(WhistleNotLoadedError):
         transcriber.stream([])
 
 

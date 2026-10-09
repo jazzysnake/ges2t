@@ -1,7 +1,7 @@
 # Whistle streaming adapter: implement `stream()` on the Whistle transcriber
 
 - **Priority:** P1
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** M
 - **Epic:** ../epic.md
 
@@ -42,7 +42,7 @@ path), ADR 0010 (adapter isolation), ADR 0005 (audio contract).
 
 ## Definition of done
 
-- [ ] `src/ges2t/transcribers/whistle.py` gains a private `_WhistleStreamingDecoder`
+- [x] `src/ges2t/transcribers/whistle.py` gains a private `_WhistleStreamingDecoder`
       implementing `streaming.StreamingDecoder` (`process()`/`flush()`), constructed with an
       already-`load()`ed engine handle and `WhistleConfig.language`:
       - `process(buffer)` passes **raw little-endian float32 bytes** (`array('f')`), never a
@@ -50,23 +50,23 @@ path), ADR 0010 (adapter isolation), ADR 0005 (audio contract).
       - `process()` returns a `StreamingPass(committed=..., pending=...)` (ADR 0019);
       - `flush()` ends the current stream, returns the tail text, and leaves the decoder ready
         for a new stream.
-- [ ] `WhistleTranscriber.stream(chunks)` is implemented as
+- [x] `WhistleTranscriber.stream(chunks)` is implemented as
       `streaming.drive(_WhistleStreamingDecoder(...), chunks, window_seconds=
       config.window_seconds, chunk_seconds=config.chunk_seconds)` — the windowing logic must
       **not** be reimplemented here.
-- [ ] `supports_streaming` remains `True`, and a test asserts the adapter's `stream()` is
+- [x] `supports_streaming` remains `True`, and a test asserts the adapter's `stream()` is
       exercised through `drive()` (e.g. by asserting window behaviour end-to-end on a fake
       engine).
-- [ ] No `needle` type appears in any signature; all engine JSON is parsed inside the
+- [x] No `needle` type appears in any signature; all engine JSON is parsed inside the
       decoder and returned as `TranscriptionSegment`/strings (ADR 0010).
-- [ ] `tests/test_whistle_stream.py` runs **without the engine installed** (monkeypatched
+- [x] `tests/test_whistle_stream.py` runs **without the engine installed** (monkeypatched
       module-level `_needle`, per the batch ticket's convention) and asserts:
       `process()` passes the correct raw float32 byte length; the engine's JSON is parsed into
       a `StreamingPass` as documented; `flush()` returns the tail; and the
       accumulated transcript over several windows is exactly the concatenation of the fakes'
       committed deltas (no reconstruction from `pending`).
-- [ ] `uv run pytest tests/test_whistle_stream.py` passes and `uv run pytest` stays green.
-- [ ] **Manual, on the reference machine — the seam proof, reported in `001-comment.md`:**
+- [x] `uv run pytest tests/test_whistle_stream.py` passes and `uv run pytest` stays green.
+- [x] **Manual, on the reference machine — the seam proof, reported in `001-comment.md`:**
       run a **30-second** speech clip through `WhistleTranscriber.stream()` at the default 5 s
       window and report:
       - per-chunk latency (median and p90) and total elapsed time;
@@ -78,7 +78,7 @@ path), ADR 0010 (adapter isolation), ADR 0005 (audio contract).
       If duplication or loss is observed, write `002-comment.md` with the transcripts and set
       the ticket `blocked` rather than tuning the window to hide it.
 
-- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
+- [x] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
       signature interface-typed — ADR 0019.
 
 ## Notes
