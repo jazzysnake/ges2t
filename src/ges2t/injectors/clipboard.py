@@ -62,6 +62,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import tempfile
 import threading
 import time
 import warnings
@@ -327,8 +328,9 @@ def _run_command(
 ) -> subprocess.CompletedProcess[bytes]:
     """The real :class:`ClipboardRunner`.
 
-    An immediate run is a bounded, captured ``subprocess.run``: a missing
-    executable raises :class:`FileNotFoundError` and a wedged compositor raises
+    An immediate run is a bounded, captured run through
+    :func:`_run_immediate`: a missing executable raises
+    :class:`FileNotFoundError` and a wedged compositor raises
     :class:`subprocess.TimeoutExpired`, both of which the caller classifies. A
     deferred run instead starts a **detached** ``sh -c 'sleep …; exec …'`` child
     that re-reads ``PATH`` itself, so a ``wl-copy`` that disappears between the
@@ -337,14 +339,7 @@ def _run_command(
     """
     environment = dict(env)
     if delay_s is None:
-        return subprocess.run(
-            list(argv),
-            input=stdin_bytes,
-            env=environment,
-            capture_output=True,
-            check=False,
-            timeout=CLIPBOARD_COMMAND_TIMEOUT_SECONDS,
-        )
+        return _run_immediate(argv, stdin_bytes, environment)
     script = "sleep " + format(delay_s, ".3f") + '; exec "$@"'
     try:
         proc = subprocess.Popen(
@@ -394,6 +389,49 @@ def _run_command(
     return subprocess.CompletedProcess(
         args=list(argv), returncode=0, stdout=b"", stderr=b""
     )
+
+
+def _run_immediate(
+    argv: Sequence[str], stdin_bytes: bytes, environment: Mapping[str, str]
+) -> subprocess.CompletedProcess[bytes]:
+    """Run one immediate command without waiting on pipes a daemonising child holds.
+
+    ``wl-copy`` **forks by default** and the forked child lives on to serve the
+    selection. A ``capture_output=True`` run creates stdout/stderr **pipes** that
+    the forked child inherits, and ``subprocess.run`` reads them to EOF -- which
+    never arrives while the daemon holds a write end. Every real clipboard write
+    therefore blocked for the full timeout and was reported as a failure even
+    though the write had succeeded, so the paste chord never ran (ticket 36).
+
+    Redirecting stdout and stderr to **regular files** removes the wait-on-EOF: a
+    forked child may inherit the descriptors, but reading a file never depends on
+    every writer closing it, so the bounded wait is only for the immediate
+    process. Both streams are still captured from those files: stdout carries
+    ``wl-paste``'s previous selection, and stderr still reaches ticket 25's typed
+    error messages. ``subprocess.run``'s ``timeout`` is unchanged, so a genuinely
+    wedged compositor still raises :class:`subprocess.TimeoutExpired`.
+    """
+    with (
+        tempfile.TemporaryFile() as stdout_file,
+        tempfile.TemporaryFile() as stderr_file,
+    ):
+        completed = subprocess.run(
+            list(argv),
+            input=stdin_bytes,
+            env=dict(environment),
+            stdout=stdout_file,
+            stderr=stderr_file,
+            check=False,
+            timeout=CLIPBOARD_COMMAND_TIMEOUT_SECONDS,
+        )
+        stdout_file.seek(0)
+        stderr_file.seek(0)
+        return subprocess.CompletedProcess(
+            args=list(argv),
+            returncode=completed.returncode,
+            stdout=stdout_file.read(),
+            stderr=stderr_file.read(),
+        )
 
 
 def _start_deferred_stdin(proc: subprocess.Popen[bytes], payload: bytes) -> None:
