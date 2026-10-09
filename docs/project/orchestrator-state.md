@@ -44,39 +44,40 @@ Original orchestrator brief: `.pi/prompts/orchestrate-project.md`.
 
 ## 4. Current baselines on `main`
 
-- `uv run pytest` → **491 passed** (~1.9 s)
-- **`uv run mypy src/ges2t tests` → 0 errors (32 files)** — this is the required command. ADR 0019
+- `uv run pytest` → **515 passed** (~2.0 s)
+- **`uv run mypy src/ges2t tests` → 0 errors (34 files)** — this is the required command. ADR 0019
   was amended 2026-10-09: the old `mypy src/ges2t`-only check let a real violation through a
   completed review (see ticket 20).
-- `main` HEAD when last checked: `37a1c09` (ticket 21 closed). Ticket 24 merged at `a6ba892`,
-  ticket 21 at `11b1bf3`; both worktrees removed.
+- `main` HEAD when last checked: `34f632c` (ticket 11 closed). Merged this session: 24 `a6ba892`,
+  21 `11b1bf3`, 26 `ceee7a2`, 11 `338cdc2`; all four worktrees removed.
 - 21 ADRs (0000–0020), **27 tickets**, 2 epics.
 
-## 5. Board state (15 of 27 done)
+## 5. Board state (17 of 27 done)
 
-**Done (14 of 27):** 1 project-scaffold · 2 core-interfaces-and-fakes · 3 config-loading ·
+**Done (17 of 27):** 1 project-scaffold · 2 core-interfaces-and-fakes · 3 config-loading ·
 4 whistle-engine-config · 5 model-store-and-verification · 6 audio-capture-pw-record ·
 7 ydotool-injector · 8 whistle-transcriber-adapter-batch · 9 service-state-machine-and-socket ·
 10 cli-surface-and-commands · 13 streaming-window-engine · 14 whistle-streaming-adapter ·
-20 type-check-whole-tree · 24 layout-detection-and-config (merged `a6ba892`) ·
-**21 status-ui-outside-lock** (merged `11b1bf3`, review `003` pass)
+20 type-check-whole-tree · 24 layout-detection-and-config (`a6ba892`) · 21 status-ui-outside-lock
+(`11b1bf3`) · 26 pin-cli-test-guarantees (`ceee7a2`) · **11 dictation-pipeline-batch** (`338cdc2`)
 
-**In review / in flight (see §6):** 22 xkb-keycode-mapping (implementation `d58a50d`, reviewer
-running **with an authorized live-injection probe**) · 26 pin-cli-test-guarantees (implementation
-`99ff8fb`, reviewer running) · 11 dictation-pipeline-batch (implementer dispatched)
+**In review / in flight (see §6):** 22 xkb-keycode-mapping (review returned **changes requested** —
+implementer fixing the alias-keysym bug) · 17 tray-status-ui, 15 streaming-session,
+27 pin-layout-test-guarantees (implementers dispatched)
 
-**To do:** 12 doctor-command · 15 streaming-session ·
-16 streaming-wiring-and-e2e · 17 tray-status-ui · 18 notifications-and-cancel ·
-19 user-documentation-and-setup-guide · 23 batched-key-emission · 25 clipboard-paste-injector ·
-**27 pin-layout-test-guarantees** (filed from ticket 24's review: both detectors' non-zero-exit
-guards are unexercised — empty stdout makes `rc=1` indistinguishable from success — and the 2 s
-timeout is never enforced, since `timeout=None` still passes the suite. Same failure class as
-tickets 20 and 26. The guards themselves were hand-verified, so it is a **test** gap, not a bug.)
+**To do:** 12 doctor-command · 16 streaming-wiring-and-e2e · 18 notifications-and-cancel ·
+19 user-documentation-and-setup-guide · 23 batched-key-emission · 25 clipboard-paste-injector
+
+**27 pin-layout-test-guarantees** was filed from ticket 24's review: both detectors' non-zero-exit
+guards are unexercised (empty stdout makes `rc=1` indistinguishable from success) and the 2 s
+timeout is never enforced (`timeout=None` still passes the suite). Same failure class as tickets 20
+and 26. The guards themselves were hand-verified, so it is a **test** gap, not a bug.
 
 Modules already on `main`: `interfaces.py`, `config.py`, `model_store.py`, `service.py`,
 `socket_proto.py`, `streaming.py`, `cli.py`, `audio/pw_record.py`, `injectors/ydotool.py`,
-**`injectors/layout.py`** (ticket 24), `transcribers/{whistle_config,whistle}.py`, `tests/fakes.py`.
-`injectors/keymap.py` (ticket 22) and `pipeline.py` (ticket 11) are in review, not yet merged.
+**`injectors/layout.py`** (ticket 24), **`pipeline.py`** (ticket 11),
+`transcribers/{whistle_config,whistle}.py`, `tests/fakes.py`. `injectors/keymap.py` (ticket 22) is
+in review, not yet merged.
 
 ## 6. In-flight agents (collect these first on resume)
 
@@ -86,11 +87,12 @@ worktree is dirty-but-complete — recover from artifacts, do not re-run blindly
 
 | Ticket | Worktree (`/home/matee/Workspace/Personal/ges2t/.worktrees/…`) | Branch | Task |
 |---|---|---|---|
-| 22 | `xkb-keycode-mapping` | `feat/xkb-keycode-mapping` | **Review** of `d58a50d`, incl. an authorized `ydotool key` round-trip probe |
-| 26 | `pin-cli-test-guarantees` | `feat/pin-cli-test-guarantees` | **Review** of `99ff8fb` |
-| 11 | `dictation-pipeline-batch` | `feat/dictation-pipeline-batch` | **Implement** — the composition root |
+| 22 | `xkb-keycode-mapping` | `feat/xkb-keycode-mapping` | **Fix** the alias-keysym bug (review `002` demanded changes) |
+| 17 | `tray-status-ui` | `feat/tray-status-ui` | **Implement** — the real `StatusUI` + backend assertion |
+| 15 | `streaming-session` | `feat/streaming-session` | **Implement** — streaming `DictationSession` (not wired) |
+| 27 | `pin-layout-test-guarantees` | `feat/pin-layout-test-guarantees` | **Implement** — pin three falsified layout tests |
 
-Tickets 21 and 24 are merged and their worktrees removed. Note ticket 26's branch will hit an **add/add conflict on
+Tickets 21, 24, 26 and 11 are merged and their worktrees removed. Note ticket 26's branch will hit an **add/add conflict on
 ticket.md** plus a row-26 conflict at merge (it was cut before the ticket folder and board row were
 committed to `main`); resolve to the branch's version — `ticket.md` `in review`, row 26 `in review`.
 Use three-dot diffs (`git diff main...<branch>`): several branches were cut before ticket 10 merged.
@@ -159,6 +161,21 @@ mattered were almost never found by a test: a US-only keymap that corrupted ever
 top-level forbidden import, exit-code tests that compared against their own constants, and a
 `sys.modules` assertion that was vacuous because the module was never installed. Each was caught by
 someone **trying to falsify a claim**. Ask reviewers for that explicitly every time.
+
+**Two operational traps found this session:**
+
+- **`mypy` caches stale errors.** A mutation that leaves a file the **same byte length** can make
+  `git checkout` restore it without invalidating `.mypy_cache`, so a review reads **stale** errors
+  and can reach the wrong conclusion. Run `rm -rf .mypy_cache` before trusting a mypy result after
+  any mutation or revert. (Ticket 11's reviewer found this.)
+- **Never take over the user's screen without asking.** A live-injection probe needed a focused
+  scratch terminal, and the `konsole` windows it opened **hid the user's chat** and startled them.
+  The probe did produce the project's strongest evidence on the `hu` bug — a **byte-exact 17/17**
+  round trip — so the lesson is not "don't probe" but **"ask for that specific side effect up
+  front"**: permission to inject keystrokes is *not* permission to take over the display, and an
+  agent should also state how long a window will be up. Current rule: any ticket whose verification
+  needs a **human voice** or a **visible GUI surface** has that step marked **user-owned**
+  (tickets 11 and 17) — the agent prepares a script and hands it over.
 
 ## 8. Merge procedure (and the mistake to avoid)
 
@@ -286,12 +303,25 @@ held in reserve pending the measurement. **Do not build it speculatively.**
 ## 12. Remaining work order (dependency-respecting)
 
 ```
-22 (in review) ─┐
-24 (merged) ─────┼─→ 23 (batch + MEASURE — the decision gate) ─→ 25 (clipboard)
-                │
-11 (pipeline) ──┴─→ 12 (doctor) · 15 (session) · 16 (wiring) · 17 (tray) ─→ 18 (notify) ─→ 19 (docs)
-26, 27 (test-guarantee pinning; independent)
+22 (fixing) ─┐
+24 (merged) ─┼─→ 23 (batch + MEASURE — the decision gate) ─→ 25 (clipboard)
+             │
+11 (merged) ─┴─→ 17 (tray, dispatched) ─→ 18 (notify) ─→ 19 (docs)
+                15 (session, dispatched) ─→ 16 (wiring)
+                12 (doctor — hold until 22 merges)
+26 (merged), 27 (dispatched) — test-guarantee pinning
 ```
+
+**Ticket 11's latency result sharpens ticket 23's gate:** the framework portion (socket RTT +
+capture stop/drain + handoff) is **~3.6–3.8 ms**, independently re-measured by the reviewer. The
+entire latency problem is therefore **injection** (~40 ms/char ≈ 4.8 s for ~120 chars today). So
+23's gate is one clean question — does batched `ydotool key` get a 20-word phrase under 1 s? If yes,
+latency work ends; if no, bring the user the incremental-injection choice rather than deciding it.
+
+**Accepted non-blocking gap (ticket 11, no ticket filed):** swapping the session factory's arguments
+is caught by **mypy** but not at runtime. Deliberately not ticketed — unlike the earlier gaps
+(`mypy` not covering tests, the vacuous laziness test, exit codes compared to themselves), a real
+check *does* cover it and any real run would fail loudly.
 
 **Ticket 11 owns `src/ges2t/pipeline.py` (the composition root), and several later tickets edit that
 same file.** Its DoD was amended before dispatch, because three of its criteria were invalidated by
@@ -303,12 +333,14 @@ no longer used; (ii) its manual end-to-end test needs a **human voice** and is t
 in-flight defects rather than blockers. Ticket 11 must not inject keystrokes.
 
 **Sequencing traps — check these before dispatching anything:**
-- **17 must follow 11**, not run beside it: 17 *moves* `NullStatusUI` out of `pipeline.py`, which 11
-  creates (17's own "depends on" list says so).
+- ~~**17 must follow 11**~~ — **satisfied**: 11 is merged, and 17 was dispatched after it.
 - **12 should follow 22**, since it now checks `libxkbcommon` loadability and the resolved keymap.
-- **23 and 25 both rework `build_injector`**, which 11 creates — read ticket 11's `001-comment.md`
-  before dispatching 23 so the backend-selection contract is consistent.
-- 15/16 depend on 9 + 14 (done) **and 11**. 19 is the final ticket: README + setup guide + systemd.
+- **23 and 25 both rework `build_injector`**, which 11 created — read ticket 11's `001-comment.md`
+  before dispatching 23 so the backend-selection contract is consistent. 11's reviewer noted 16 must
+  thread `config`/streaming settings into the **private** `_session_factory`, leaving the public
+  `run_service` signature unchanged.
+- 15/16 depend on 9 + 14 (done) **and 11** (done). 19 is the final ticket: README + setup guide +
+  systemd.
 
 **Epic 1's exit test** (not yet satisfied): `ges2t toggle` → speak → `ges2t toggle` types correct
 text into a **text editor** and a **terminal**; silence types nothing; framework overhead < 1 s
