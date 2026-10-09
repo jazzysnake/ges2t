@@ -1,7 +1,7 @@
 # Doctor command: diagnose every prerequisite
 
 - **Priority:** P0
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** M
 - **Epic:** ../epic.md
 
