@@ -59,23 +59,20 @@ Original orchestrator brief: `.pi/prompts/orchestrate-project.md`.
   first on resume** — it is faster than reading the environment table above.
 - 21 ADRs (0000–0020), **34 tickets**, 2 epics.
 
-## 5. Board state (27 of 34 done)
+## 5. Board state (31 of 37 done)
 
-**Done (27):** 1–18, 20, 21, 22, 23, 24, 26, 27, 28, 29. Highlights and merge commits:
-- 11 `338cdc2` pipeline/composition root · 12 `036d1e2` doctor · 15 `2ba0a3a` streaming session ·
-  16 streaming wiring · 17 tray (four review rounds) · 18 `829937a` notifications ·
-  20 type-check · 21 `11b1bf3` status-ui deadlock · 22 `0a2074a` keymap ·
-  23 `b4aa911` batched emission · 24 `a6ba892` layout/config · 26 `ceee7a2` cli test guarantees ·
-  27 layout test guarantees · 28 `37e8937` delay default · 29 `f9df8a0` silence gate
+**Done (31):** 1–18, 20–29, 32, 33, 36, plus 25 (manual gate passed). Merge commits worth knowing:
+- 11 `338cdc2` · 12 `036d1e2` · 15 `2ba0a3a` · 17 (four rounds) · 18 `829937a` · 21 `11b1bf3` ·
+  22 `0a2074a` · 23 `b4aa911` · 24 `a6ba892` · 26 `ceee7a2` · 28 `37e8937` · 29 `f9df8a0` ·
+  **32 `1356f88`** · **25 `2646212`** · **33 `78f87fc`** · **36 `ddeb278`**
 
-**Remaining (7):**
+**Remaining (6):**
 | # | Ticket | State |
 |---|---|---|
-| **19** | user-documentation-and-setup-guide | **not started** — the last core ticket; deliberately last because it documents final behaviour |
-| **25** | clipboard-paste-injector | **REBASED, MERGE-READY — NOT MERGED** (the user holds merges). Review lineage: `002` request-changes → `004` pass (D1/D2/D3 verified against the *actual* rejected revision) → `006` pass (R2 delta) → doc corrections in `005`/`007`. Rebased onto `main@1610537`, HEAD `dba0c3d`. **The orchestrator verified the reconciliation structurally** (AST compare vs `main`): only `build_injector` changed and `_build_clipboard_injector`/`_build_ydotool_injector` were added — `_session_factory`, `_select_session_kind`, `_send_command_to_service` and `run_service` are **byte-identical to main**, so the rebase dropped nothing. 865 tests, mypy 51 files. Residuals (non-blocking, in `007-comment.md`): R1 truncated >64 KiB restore on exit; R3 blocked daemon thread; R4 pre-existing read-path `OSError`; **R5** a leaked blocked restore child per failed `Thread.start` — the fix is `proc.kill()`, **not** `stdin.close()` (closing would restore an *empty* selection). The **user's manual test is the last gate**. |
-| **32** | commit-cadence-diagnostic | **DONE — gate CLOSED, PASS** (`004-review.md` `efbc3e7`). **Tickets 33 and 34 are unblocked.** Real-device recording (25 s, user-run) + clips (32 s): **0 restatements**, median **17 chars/commit**, median gap **1.00 s** of source audio (p90 2.50 s, max 4.00 s). The `Thank you.` hallucination sat in `pending` twice and was **never committed**. The re-review reproduced the non-adjacent-repeat mutation on real `clip30` itself (detector 1 missed, detector 2 caught, summary said STOP) and confirmed the user's recording stays quiet. Not merged yet. |
-| **33** | committed-delta-interface | **to do** — carry the committed text separately from `pending` on the segment (the boundary is destroyed by `text = transcript + pending` and cannot be recovered downstream) |
-| **34** | incremental-typing | **to do** — type committed words as they are committed; **amends ADR 0011** (surface the amendment explicitly, with 32's numbers). User's design decisions are recorded in the ticket and must not be re-opened |
+| **19** | user-documentation-and-setup-guide | **not started** — the last core ticket; deliberately last because it documents final behaviour. **Must also decide the `paste_keys` default** (§11b) |
+| **34** | incremental-typing | **to do** — the payload ticket of the incremental-typing chain; 32 (gate) and 33 (interface) are merged, so it is unblocked. **Amends ADR 0011** (surface it explicitly, with 32's numbers). The user's design decisions are recorded in the ticket and must not be re-opened. **Must reconcile against `finish()`, not just iterate `partials()`** (see 33's `002-review.md` §3) |
+| **35** | streaming-vs-batch-quality | **to do**, P2, **gates nothing** (`depends on: —`, `blocks: —`, verified). Measure streaming vs batch accuracy **against ground truth**, not streaming-vs-batch divergence |
+| **37** | pin-clipboard-real-seam-payload | **in review** — pins that a non-empty payload reaches the child's stdin in the real immediate runner (mutating it to `b""` left all 877 tests green) |
 | **30** | tray-failure-diagnostics | filed follow-up; needs a read-only socket verb (**requires an ADR 0016 amendment**) |
 | **31** | speech-gate-recalibration | **`blocked`** on the board — implemented and review-passed, branch exists, **not merged**, parked at the user's direction pending their live test in **both** a quiet room and a noisy one. See §10 |
 
@@ -164,6 +161,16 @@ per-criterion findings / **evidence (commands + real output)** / risks / an expl
 
 ### Other hard-won rules
 
+- **⚠️ A fake that models a *simpler contract than the real binary* is not a test of the seam.**
+  Twice the whole suite was green while the real path was broken: ticket 25's **D1** (the double
+  recorded `stdin=previous` while the real deferred runner discarded it) and ticket 36 (`wl-copy`
+  **forks**; the forked child inherits the pipes `capture_output=True` created; `subprocess.run` waits
+  for an EOF that never arrives — so every clipboard write blocked the full 5 s and was reported as a
+  **failure after succeeding**). Both were found by the **user's manual run**. The clipboard fakes
+  "return when the call returns", which is strictly weaker than a binary that daemonises. **When a
+  seam wraps a real subprocess, at least one test must drive a real child** — harmless stand-ins
+  (`sh`, `cat`, `tee`) under `/tmp` or `tmp_path` do it and touch nothing. Ticket 37 exists because
+  mutating the payload to `b""` left all **877** tests green.
 - **Artifact numbering:** files inside a ticket folder share one sequence (`001-comment.md`,
   `002-review.md`, `003-comment.md`, …). List the folder, take the next free number, **never
   renumber or rewrite** — append addenda instead.
@@ -467,6 +474,27 @@ restored?** Any failure here is a real defect, not a flake — report it as foun
 **Honest caveats to pass on:** the restore is a **courtesy with a bounded delay (~0.4 s)**, not a
 guarantee; a long transcript must not be replaced before the target app has pasted it. And the
 clipboard is *written* by design — that is the mechanism, not a bug.
+
+## 11b. OPEN DECISION — the `paste_keys` default (belongs to ticket 19)
+
+The user's manual run used **`ctrl+shift+v`** from the start — nvim needs it, and in their experience
+it also works in browsers and regular editors — and it worked in every target, so **one config covered
+both DoD targets** and the planned second pass was unnecessary.
+
+**The shipped default is `["ctrl+v"]`, which has now been exercised by nobody.** The only chord with
+real evidence behind it is `ctrl+shift+v`.
+
+Honest trade, both directions:
+- In most GUI toolkits `ctrl+shift+v` means **paste as plain text** — for dictation that is arguably
+  **better** (no rich formatting carried in), and it covers **terminals**, which are a first-class
+  target (the epic's exit test names one).
+- But it is a **different binding, not a superset**: an application that leaves it unbound pastes
+  nothing, whereas `ctrl+v` fails *predictably* in terminals — which is already documented.
+- One user across several applications is strong practical evidence and is **not** a survey.
+
+**Cheap to change now** — the backend is brand new, opt-in, and nobody depends on the default. Decide
+it in **ticket 19** or as a one-line config change; do not leave it undecided, because a fresh machine's
+first experience is exactly where a wrong default hurts.
 
 ## 12. User preferences and escalation rules
 
