@@ -233,7 +233,11 @@ def test_window_above_the_engine_limit_is_rejected(window: float) -> None:
 
 
 def test_range_errors_name_the_key_the_value_and_the_allowed_range() -> None:
-    cases = [
+    # Each first element is a raw `[engine.whistle]` TOML mapping, which is exactly
+    # what `_error_message` takes. The explicit annotation is the real fix, not a
+    # suppression: mypy joins the three differently-valued dicts in this literal to
+    # `object`, so without it `raw` would be `object` and no longer match the helper.
+    cases: list[tuple[Mapping[str, Any], str, str, str]] = [
         ({"chunk_seconds": 0.1}, "engine.whistle.chunk_seconds", "0.1", "0.25"),
         (
             {"window_seconds": 5, "chunk_seconds": 5},

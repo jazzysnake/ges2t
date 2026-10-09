@@ -1,7 +1,7 @@
 # Make the whole tree type-clean, tests included
 
 - **Priority:** P2
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** XS
 - **Epic:** ../epic.md
 
@@ -32,20 +32,26 @@ Relevant decisions: ADR 0019 (typing rules and enforcement), ADR 0014 (quality b
 
 ## Definition of done
 
-- [ ] `uv run mypy src/ges2t tests` exits **0**.
-- [ ] The violation at `tests/test_whistle_config.py:247` is fixed by giving the test helper a
+- [x] `uv run mypy src/ges2t tests` exits **0**. **MET** — the second violation at
+      `tests/test_model_store.py:349` (`[exit-return]`, from ticket 5) was fixed by widening
+      this ticket's scope by exactly one annotation (`-> bool` → `-> Literal[False]`); see
+      `001-comment.md` §002. The wide check now reports no issues at all.
+- [x] The violation at `tests/test_whistle_config.py:247` is fixed by giving the test helper a
       correct type — **not** by `cast(Any, ...)`, not by a blanket `# type: ignore`, and not by
       deleting or weakening the assertion. Work out what the helper actually receives and
       annotate it accordingly. If the helper genuinely accepts a raw TOML mapping, `Mapping[str,
       Any]` is right and the *caller* is what needs fixing; determine which and say so.
-- [ ] The test's **intent and coverage are unchanged**: `uv run pytest` passes with the same
+      (The helper's `Mapping[str, Any]` was already correct; the *caller*'s inferred
+      `list[tuple[object, ...]]` was the defect and is now annotated
+      `list[tuple[Mapping[str, Any], str, str, str]]`.)
+- [x] The test's **intent and coverage are unchanged**: `uv run pytest` passes with the same
       number of tests as before the change, and the specific behaviour that test covers is still
-      asserted. Report the before/after test counts.
-- [ ] `uv run mypy src/ges2t` still exits 0.
-- [ ] `uv run pytest` passes.
-- [ ] No behaviour change anywhere: this is a typing fix only. If you find yourself changing
+      asserted. Report the before/after test counts. (181 → 181; 63 → 63 for the file.)
+- [x] `uv run mypy src/ges2t` still exits 0.
+- [x] `uv run pytest` passes.
+- [x] No behaviour change anywhere: this is a typing fix only. If you find yourself changing
       production code, stop and write a comment instead — that would mean the error was real.
-- [ ] `001-comment.md` records: the exact cause of the error, what you changed and why that is
+- [x] `001-comment.md` records: the exact cause of the error, what you changed and why that is
       the correct fix rather than a suppression, the before/after test counts, and whether you
       found any *other* latent type problems while the wider check was running.
 

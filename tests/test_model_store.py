@@ -14,6 +14,7 @@ import sys
 import zipfile
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
@@ -346,7 +347,13 @@ class FakeResponse:
     def __enter__(self) -> FakeResponse:
         return self
 
-    def __exit__(self, *exc: object) -> bool:
+    # ``Literal[False]`` rather than ``bool`` or ``None``: the double must never
+    # swallow an exception, and ``Literal[False]`` states that invariant exactly,
+    # whereas ``bool`` admits a possible ``True`` (mypy's [exit-return] complaint).
+    # ``None`` would be equally safe for mypy but would mean rewriting the body,
+    # since returning a value from a ``-> None`` method is itself an error; keeping
+    # the explicit ``return False`` preserves the double's existing behaviour.
+    def __exit__(self, *exc: object) -> Literal[False]:
         return False
 
 
