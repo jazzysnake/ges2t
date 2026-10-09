@@ -17,11 +17,15 @@ What it builds
   ``KeyError`` (ADR 0009; ticket 4's hand-off note).
 * :func:`build_audio_source` — a :class:`~ges2t.audio.pw_record.PwRecordAudioSource`
   for the configured device.
-* :func:`build_injector` — a :class:`~ges2t.injectors.ydotool.YdotoolInjector`
-  carrying ``ui.trailing_space`` (ADR 0012) and the ``[injection.ydotool]``
-  layout/key-delay settings (ADR 0009, ADR 0020); it emits one batched
-  ``ydotool key`` invocation and never calls ``ydotool type`` (ADR 0003's
-  amendment).
+* :func:`build_injector` — a :class:`~ges2t.injectors.ydotool.YdotoolInjector` or a
+  :class:`~ges2t.injectors.clipboard.ClipboardPasteInjector`, chosen by
+  ``injection.backend``. The ``ydotool`` backend carries ``ui.trailing_space``
+  (ADR 0012) and the ``[injection.ydotool]`` layout/key-delay settings (ADR
+  0009, ADR 0020) and emits one batched ``ydotool key`` invocation, never
+  ``ydotool type`` (ADR 0003's amendment). The clipboard backend carries the
+  ``[injection.clipboard]`` ``paste_keys`` and delivers the text through
+  ``wl-copy`` plus one raw-keycode paste chord (ticket 25). An unknown backend
+  value raises rather than silently choosing one (ADR 0003, ADR 0020).
 * :class:`BatchDictationSession` — the batch ``DictationSession``: record the
   whole utterance, transcribe once, return the text.
 * :class:`~ges2t.streaming_session.StreamingDictationSession` — the windowed
@@ -56,7 +60,8 @@ from pathlib import Path
 from ges2t import model_store
 from ges2t.audio.pw_record import PwRecordAudioSource
 from ges2t.config import Config
-from ges2t.injectors.layout import YdotoolConfig
+from ges2t.injectors.clipboard import ClipboardPasteInjector
+from ges2t.injectors.layout import ClipboardConfig, YdotoolConfig
 from ges2t.injectors.ydotool import XkbKeySequenceSource, YdotoolInjector
 from ges2t.interfaces import AudioSource, Injector, StatusUI, Transcriber
 from ges2t.notify import NotifyingStatusUI
@@ -211,16 +216,13 @@ def build_audio_source(config: Config) -> AudioSource:
     return PwRecordAudioSource(config.audio.device)
 
 
-def build_injector(config: Config) -> Injector:
-    """Construct the batched ``ydotool`` injector (ADR 0003, ADR 0012, ADR 0020).
+def _build_ydotool_injector(config: Config) -> Injector:
+    """Build the batched ``ydotool`` injector (ADR 0003, ADR 0012, ADR 0020).
 
     ``[injection.ydotool]`` supplies the layout and ``key_delay_ms``; an absent
-    block means all defaults (``.get(..., {})``, ADR 0009), and the config's
-    unknown-key warnings are left for ``ges2t doctor`` to surface. The
+    block means all defaults (``.get(..., {})``, ADR 0009). The
     ``XkbKeySequenceSource`` holds only the layout names: it rebuilds its keymap
-    per utterance, so a layout switch is picked up (ADR 0020). v1 has exactly
-    one injector backend; ``injection.backend`` is preserved in the generic
-    config for the clipboard paste injector that a later ticket adds.
+    per utterance, so a layout switch is picked up (ADR 0020).
     """
     settings = YdotoolConfig.from_mapping(config.injection_blocks.get("ydotool", {}))
     return YdotoolInjector(
@@ -228,6 +230,60 @@ def build_injector(config: Config) -> Injector:
         trailing_space=config.ui.trailing_space,
         key_delay_ms=settings.config.key_delay_ms,
     )
+
+
+def _build_clipboard_injector(config: Config) -> Injector:
+    """Build the clipboard-paste injector (ticket 25, ADR 0003 amended).
+
+    ``[injection.clipboard]`` supplies ``paste_keys`` (default ``["ctrl+v"]``;
+    most terminals need ``ctrl+shift+v``); an absent block means all defaults
+    (``.get(..., {})``, ADR 0009). The block's unknown-key warnings are carried
+    on the injector's ``last_warnings`` for ``ges2t doctor`` to surface instead
+    of being swallowed.
+    """
+    settings = ClipboardConfig.from_mapping(
+        config.injection_blocks.get("clipboard", {})
+    )
+    return ClipboardPasteInjector(
+        paste_keys=settings.config.paste_keys,
+        trailing_space=config.ui.trailing_space,
+        warnings=settings.warnings,
+    )
+
+
+#: The ``injection.backend`` identifiers :func:`build_injector` can build, mapped
+#: to their builder. The key is matched against ``config.injection.backend`` and
+#: this mapping is the factory's single source of truth: an unknown backend gets
+#: a clear error naming the handled ones rather than a silent default -- a silent
+#: mechanism switch is exactly what ADR 0003/0020 forbid.
+_INJECTOR_BUILDERS: Mapping[str, Callable[[Config], Injector]] = {
+    "ydotool": _build_ydotool_injector,
+    "clipboard": _build_clipboard_injector,
+}
+
+
+def build_injector(config: Config) -> Injector:
+    """Choose and construct the configured :class:`~ges2t.interfaces.Injector`.
+
+    The backend is an explicit configuration choice (``injection.backend``,
+    default ``"ydotool"``), never an automatic fallback: a failure in one
+    backend must not silently switch to the other (ADR 0003, ADR 0020). An
+    unhandled backend value raises :class:`PipelineError` naming the backends
+    this build can construct, so a typo fails at startup rather than by quietly
+    choosing something the user did not ask for. The selected backend's
+    ``[injection.<name>]`` block is read with ``.get(..., {})``: the generic
+    layer never synthesises one, so its absence is the normal case and means all
+    defaults, never a ``KeyError`` (ADR 0009).
+    """
+    backend = config.injection.backend
+    builder = _INJECTOR_BUILDERS.get(backend)
+    if builder is None:
+        known = ", ".join(repr(name) for name in sorted(_INJECTOR_BUILDERS))
+        raise PipelineError(
+            f"injection backend {backend!r} is not handled by this build; "
+            f"handled backends: {known}"
+        )
+    return builder(config)
 
 
 def _send_command_to_service(command: str) -> CommandResponse:
