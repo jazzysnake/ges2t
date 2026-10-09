@@ -40,8 +40,10 @@ Relevant decisions: ADR 0011 (default-on, capability flag, window/chunk from
       - `streaming.enabled = false` + a streaming-capable fake → the **batch** session is
         used, and the produced text and injected text are identical to the core epic's
         behaviour;
-      - a non-default `window_seconds`/`chunk_seconds` from `[engine.whistle]` reaches the
-        session (assert the constructor arguments).
+      - a non-default `chunk_seconds` from `[engine.whistle]` reaches the **session**, and a
+        non-default `window_seconds` reaches the **transcriber adapter** (assert both
+        constructor arguments) — the window is the adapter's property and the feed granularity
+        is the session's, so they are asserted separately (see `../streaming-session/ticket.md`);
 - [ ] `uv run pytest tests/test_pipeline_streaming.py` passes and `uv run pytest` stays green.
 - [ ] **Manual, end-to-end, on the reference machine, reported in `001-comment.md`:**
       1. with defaults, dictate a **~40-second** utterance (well past the engine's 30 s

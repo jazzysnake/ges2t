@@ -26,12 +26,23 @@ ADR 0008 (capture as a subprocess with drain-on-stop), ADR 0014 (fakes only in t
 
 - [ ] `src/ges2t/streaming_session.py` defines `class StreamingDictationSession`
       implementing `DictationSession`:
-      - `__init__(self, audio: AudioSource, transcriber: Transcriber, *, window_seconds:
-        float, chunk_seconds: float)`;
+      - `__init__(self, audio: AudioSource, transcriber: Transcriber, *, chunk_seconds:
+        float)`. **Note there is no `window_seconds` parameter**: the commit window is an
+        engine-specific property already owned by the adapter (`WhistleConfig`), and `ticket
+        14` applies it inside `WhistleTranscriber.stream()` by calling `streaming.drive()`.
+        This session only needs `chunk_seconds` to size its reads from `AudioSource.chunks()`;
       - `start()` starts capture and a **worker thread** that consumes
-        `audio.chunks(chunk_seconds)` and feeds them through
-        `transcriber.stream(...)`/`streaming.drive(...)`, accumulating committed text and
-        recording the latest partial;
+        `audio.chunks(chunk_seconds)` and passes that iterable to
+        **`transcriber.stream(...)`** — the `Transcriber` protocol, nothing lower-level. It
+        records the latest **non-final** segment's text as the partial and keeps the
+        **final** segment as the transcript;
+      - **This module must not import `ges2t.streaming` and must not know that
+        `StreamingDecoder`/`drive()` exist.** Accumulating committed deltas across window
+        boundaries is the adapter's job (tickets 13/14); the session's job is capture,
+        threading, and turning the segment stream into partials plus a final transcript. If
+        you find yourself re-implementing delta accumulation here, stop — that is a layering
+        error, and this was an inconsistency in an earlier draft of this ticket that a
+        reviewer caught;
       - `partials() -> Iterator[str]` yields the latest non-final display text as it advances
         (deduplicated — do not yield the same string twice in a row), and **never** blocks
         `finish()`;
@@ -44,27 +55,28 @@ ADR 0008 (capture as a subprocess with drain-on-stop), ADR 0014 (fakes only in t
       shared fields (accumulated text, latest partial, stop flag). The lock is **never held
       across an engine call or across `audio.stop()`**, because that is how this design
       deadlocks.
-- [ ] **The final text is authoritative.** `finish()` returns the transcript built by the
-      windowed driver; partial text is never used to construct it (ADR 0011).
+- [ ] **The final text is authoritative.** `finish()` returns the text of the **final**
+      segment yielded by `transcriber.stream()`; partial text is never used to construct it
+      (ADR 0011).
 - [ ] If the worker thread raises (engine error, audio error), `finish()` **propagates** that
       error rather than returning a short transcript, and `finish()` does not hang. The
       service converts that into its `ERROR` state and a notification.
 - [ ] Cancelling mid-utterance types nothing and returns no text.
-- [ ] `tests/test_streaming_session.py` uses `FakeAudioSource`/`FakeTranscriber` plus the
-      **fake `StreamingDecoder` defined by `../streaming-window-engine/ticket.md`** (the
-      session drives `streaming.drive()`, so that double is part of its test surface, not a
-      redefinition of ticket 2's fakes):
-      `finish()` returns exactly the fake's committed text; `partials()` yields advancing,
+- [ ] `tests/test_streaming_session.py` uses `FakeAudioSource` and a **streaming-capable
+      `FakeTranscriber`** (from `tests/fakes.py`) whose `stream()` yields a **configurable
+      sequence of segments** — partials followed by one final. That is the whole test surface;
+      the session is typed against the `Transcriber` protocol, so no decoder double is needed
+      here. Tests must cover:
+      `finish()` returns exactly the fake's final-segment text; `partials()` yields advancing,
       deduplicated display text; `cancel()` returns nothing and leaves no thread running
       (assert the worker joined); a raising worker surfaces through `finish()`; `finish()`
-      before `start()` and `finish()` twice are defined; and a **short utterance**
-      (fewer samples than one window) still produces its text (the final partial group is not
-      dropped).
+      before `start()` and `finish()` twice are defined; and a **short utterance** (fewer
+      samples than one window) still produces its text (the final segment is not dropped).
 - [ ] `uv run pytest tests/test_streaming_session.py` passes and `uv run pytest` stays green,
       with **no test taking longer than a few seconds** (assert no real sleeping/thread leak).
 
-- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
-      signature interface-typed — ADR 0019.
+- [ ] `uv run mypy src/ges2t tests` exits 0: every definition fully annotated and every
+      signature interface-typed — ADR 0019 (amended 2026-10-09 to cover tests too).
 
 ## Notes
 
