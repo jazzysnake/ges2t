@@ -264,13 +264,15 @@ quick check of `=`/`*`/`+`/`/`/`#` on `hu` in a terminal before deciding; the
   `_scan_key_for_mod` keeps an `exact` variable that is never assigned non-None
   (dead `exact if exact is not None else partial`); harmless but worth tidying.
 
-## Live injection probe — completed once, then stopped at the orchestrator's request
+## Live injection probe — one observed round trip (byte-exact); re-run inconclusive
 
-I must record this accurately: the probe **was run and produced a readable,
-byte-exact result before the orchestrator stopped the approach**, so a
-"not completed" heading would not be truthful. After the stop order I performed
-**no further injection**, killed every scratch window, and removed every probe
-file.
+I must record this accurately, because the instruction history is complex. The
+injection probe ran **twice**: once under the first authorisation, producing a
+readable byte-exact result; then the method was stopped, then explicitly
+re-authorised as **exactly one** 30-second, one-attempt re-run. That re-run
+executed but captured **nothing**, for a harness reason given below. I therefore
+treat the *first* round trip as the only observed injection evidence, and it is
+corroborating only — the unit ruling does not rest on it.
 
 - **Method.** A dedicated scratch `konsole` window capturing its pty raw
   (`stty -icanon -echo min 1 time 0; cat > file`). Before emitting anything I
@@ -298,13 +300,41 @@ file.
   emission) reproduced exactly 17/17 bytes, and an isolated `41:1 41:0`
   produced exactly `30` (`'0'`), so the argv itself is clean. The anomaly did
   not reproduce and is not attributable to the mapping.
-- **Conclusion.** The observed run supports the evdev ruling and shows the
+- **Run 1 conclusion.** The observed run supports the evdev ruling and shows the
   module types `0`, the `hu` repositions, `ö/ő/ű`, `„` and `°` correctly through
   real `ydotool key` on the live `hu` keymap. It does **not** cover the
-  keypad/alias characters in §2 (they were outside the authorised test string),
-  and it is a single bounded observation, not a formally verified procedure.
-  The orchestrator withdrew the method afterwards; I treat it as corroborating,
-  not as the load-bearing evidence.
+  keypad/alias characters in §2 (they were outside the authorised test string).
+  It is a single bounded observation, so I treat it as corroborating, not as the
+  load-bearing evidence.
+
+### Re-run (exactly one attempt, 30-second budget) — inconclusive, harness error
+
+- The method was re-authorised once. The attempt computed the argv from the live
+  keymap (identical to Run 1), launched a **self-closing** scratch `konsole`
+  (`sh -c 'stty -icanon -echo min 1 time 0; timeout 7 cat > file'`, no
+  `--hold`), and verified focus before emitting: a KWin script reported
+  `workspace.activeWindow` as `pid=3418970 class=org.kde.konsole`, which was the
+  scratch target's pid. Only then did it emit `ydotool key` (exit code 0).
+- **Result: the capture file was 0 bytes (mismatch).** The cause was my harness,
+  not the module: the reader was wrapped as `timeout 7 cat`, and GNU `timeout`
+  runs the child in its **own process group**, so `cat` reading the controlling
+  tty was stopped by `SIGTTIN` and never read the injected bytes. The window
+  self-closed; the whole attempt took **5.67 s** (well inside 30 s).
+- Per the one-attempt/no-second-window rule I did **not** retry. No konsole is
+  left open and no probe file remains. This attempt therefore contributes no
+  evidence either way.
+
+### How strongly is the unit ruling evidenced?
+
+- **Load-bearing:** `man ydotool` (the `key` command consumes
+  `/usr/include/linux/input-event-codes.h` `KEY_*` codes) and the header
+  constants (`KEY_LEFTCTRL=29`, `KEY_RIGHTALT=100`, `KEY_V=47`, …), plus the
+  `xkbcli` cross-check showing `ő`/`ű` are XKB 34/51. This is conclusive on its
+  own for "evdev is the right unit, no offset".
+- **Corroborating:** Run 1's observed round trip (byte-exact 17/17). The re-run
+  added nothing.
+- So the ruling rests on **documentation + headers + `xkbcli`**, not on the
+  probe. The observed round trip makes it stronger, but is not required.
 
 ## Risks
 
@@ -323,9 +353,11 @@ file.
 ## Could not verify
 
 - The real application-level effect of the alias keysyms (`KP_*`,
-  `XF86Numeric*`) in the user's terminal/editor. This would need the injection
-  probe, which the orchestrator stopped. The `xkbcli` disagreement and the
-  `xkb_state_key_get_utf32` nuance are documented above.
+  `XF86Numeric*`) in the user's terminal/editor. This would need a working
+  injection probe; Run 1 did not cover those characters and the authorised
+  re-run failed on a harness fault (`SIGTTIN`) before yielding data. The
+  `xkbcli` disagreement and the `xkb_state_key_get_utf32` nuance are documented
+  above.
 - Behaviour on layouts other than `hu`, `us`, `de`, `fr` and the live keymap;
   the algorithm is generic, and the exhaustive alias scan only covered those
   four.
