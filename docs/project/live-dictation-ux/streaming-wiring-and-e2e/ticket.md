@@ -1,7 +1,7 @@
 # Streaming wiring and end-to-end verification
 
 - **Priority:** P1
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** S
 - **Epic:** ../epic.md
 
