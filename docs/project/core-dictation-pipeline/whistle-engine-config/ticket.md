@@ -1,7 +1,7 @@
 # Whistle engine-specific config block
 
 - **Priority:** P0
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** S
 - **Epic:** ../epic.md
 
@@ -23,14 +23,14 @@ measured latency knee), ADR 0005 (engine's 30 s per-call ceiling).
 
 ## Definition of done
 
-- [ ] `src/ges2t/transcribers/__init__.py` exists (may be empty) so the package is importable.
-- [ ] `src/ges2t/transcribers/whistle_config.py` defines a frozen dataclass
+- [x] `src/ges2t/transcribers/__init__.py` exists (may be empty) so the package is importable.
+- [x] `src/ges2t/transcribers/whistle_config.py` defines a frozen dataclass
       `WhistleConfig(language: str = "", window_seconds: float = 5.0, chunk_seconds: float =
       1.0)`.
-- [ ] `WhistleConfig.from_mapping(raw: Mapping[str, Any]) -> WhistleConfigResult` returns a
+- [x] `WhistleConfig.from_mapping(raw: Mapping[str, Any]) -> WhistleConfigResult` returns a
       **frozen dataclass** `WhistleConfigResult(config: WhistleConfig, warnings: list[str])` —
       never a tuple (ADR 0019).
-- [ ] Validation, each with a clear error naming the key, the offending value, and the
+- [x] Validation, each with a clear error naming the key, the offending value, and the
       allowed range:
       - `language`: must be a string; any string is accepted (the engine auto-detects when
         empty) — do not hard-code an allowed-language list, because the engine's language set
@@ -41,14 +41,14 @@ measured latency knee), ADR 0005 (engine's 30 s per-call ceiling).
       - `window_seconds > 6` → **not an error**, but append a warning explaining that the
         measured per-chunk latency crosses the 1 s budget above ~6 s of buffer (ADR 0011),
         so the user is knowingly trading latency for context.
-- [ ] Wrong-typed values produce errors of the same quality (e.g. `window_seconds = "five"`).
-- [ ] `tests/test_whistle_config.py` covers: empty mapping → all defaults; unknown key →
+- [x] Wrong-typed values produce errors of the same quality (e.g. `window_seconds = "five"`).
+- [x] `tests/test_whistle_config.py` covers: empty mapping → all defaults; unknown key →
       warning and the key is ignored; each validation rule above (error and warn cases);
       wrong type; and that `window_seconds = 5`, `chunk_seconds = 1` is accepted with **no**
       warnings.
-- [ ] `uv run pytest tests/test_whistle_config.py` passes and `uv run pytest` stays green.
+- [x] `uv run pytest tests/test_whistle_config.py` passes and `uv run pytest` stays green.
 
-- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
+- [x] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
       signature interface-typed — ADR 0019.
 
 ## Notes
