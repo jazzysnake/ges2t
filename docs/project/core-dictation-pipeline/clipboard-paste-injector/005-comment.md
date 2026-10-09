@@ -160,10 +160,15 @@ is empty (the `ydotool` path and its tests are byte-identical).
   reproduced, only its exception contract.
 - **The real 0.4 s-vs-application-round-trip race** — unobservable without a live
   Wayland session.
-- **What the spawned restore child does when the writer thread never starts.** In
-  the test the child is `true`; in production it would be `wl-copy` reading EOF
-  once the unreferenced `Popen` is collected, i.e. an empty restore. That is a
-  best-effort outcome and is **not** cleaned up here (see R3/R1 below).
+- **What a real `wl-copy` does when the writer thread never starts.** In the test
+  the child is `true`; the pipe mechanics were probed with a real `tee` (which,
+  unlike `true`, reads stdin) and the child **blocks on stdin for the life of the
+  parent**, not a prompt EOF: a still-running `Popen` is retained in
+  `subprocess._active`, which keeps its stdin pipe open, so the child only exits
+  when the parent closes the fd (normally at process exit), at which point a
+  `wl-copy` would write an empty selection. The probe used `tee`, not a real
+  `wl-copy`. A real child is therefore **not** released on collection, unlike what
+  this file first claimed; see R5 below and `007-comment.md`. Not cleaned up here.
 
 ## Out of scope (not attempted, as instructed)
 
@@ -172,6 +177,13 @@ is empty (the `ydotool` path and its tests are byte-identical).
 - **R3** (a daemon writer thread blocked forever when the restore child never
   reads) is untouched. This fix only stops a *failed start* from failing the
   injection; it does not address a thread that starts and then blocks.
+- **R5** (the already-spawned restore child on the failed-start path is retained
+  in `subprocess._active` and blocks on stdin for the service lifetime; see
+  `007-comment.md`) is documented, not code-changed. Its **stdin is deliberately
+  not closed** — that would make the child restore an *empty* selection, worse for
+  the user than leaving the transcript on the clipboard. Killing the child would
+  avoid both the leak and the empty write, but is a separate change and was not
+  attempted here.
 
 ## Anything a reviewer must know
 
@@ -179,10 +191,17 @@ is empty (the `ydotool` path and its tests are byte-identical).
   for the restore; the immediate path (payload write and, via the injector, the
   read) is unchanged.
 - When `Thread.start` fails, the already-spawned restore child is not killed. It
-  is unreferenced and its stdin closes on collection, so a real `wl-copy` would
-  restore an empty selection. This is inside "restore is a courtesy, not a
-  guarantee"; if the reviewer wants the child terminated on this path, that is a
-  separate (larger) change.
+  is retained in `subprocess._active`, which keeps its stdin pipe open, so a real
+  `wl-copy` **blocks for the life of the service** (a genuine, rare leaked process
+  per occurrence) rather than reading EOF promptly; it is released only when the
+  parent closes the fd, normally at process exit, when it would write an empty
+  selection. The user-visible outcome is unchanged and acceptable — the clipboard
+  keeps the transcript and there is no corruption — and this is inside "restore is
+  a courtesy, not a guarantee". Recorded as **R5** (see `007-comment.md`); this
+  file's earlier "stdin closes on collection" wording was wrong and is corrected
+  here. Closing the child's stdin is **not** the fix (it would restore an empty
+  selection); killing the child would avoid both the leak and the empty write and
+  is a separate change.
 - The ticket status and `docs/project/README.md` row 25 already read `in review`
   on this branch; no row was changed (row 25 needs no update for this fix) and no
   renumbering was done. The folder now holds `001-comment.md`, `002-review.md`,
