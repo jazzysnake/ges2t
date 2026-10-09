@@ -7,13 +7,17 @@ and is read with the standard library ``tomllib``.
 The schema has two layers and the split is load-bearing:
 
 * the **generic layer** (this module) understands every key outside
-  ``[engine.*]`` and owns the engine *selector*, ``transcriber.engine``;
-* every ``[engine.<name>]`` table is passed through **uninterpreted** as a raw
-  ``Mapping[str, Any]`` for the selected engine's adapter to validate.
+  ``[engine.*]`` and ``[injection.*]`` and owns the two *selectors*,
+  ``transcriber.engine`` and ``injection.backend``;
+* every ``[engine.<name>]`` and ``[injection.<name>]`` table is passed through
+  **uninterpreted** as a raw ``Mapping[str, Any]`` for the selected backend's
+  adapter to validate.
 
-Nothing in this module knows what a key inside an ``[engine.*]`` table means.
-``tomllib`` is used here and nowhere else: this is the only module that opens
-the configuration file.
+Nothing in this module knows what a key inside an ``[engine.*]`` or
+``[injection.*]`` table means. ADR 0009's generic/backend-block pattern applies
+to injectors exactly as it does to engines, so the plumbing is the same for
+both. ``tomllib`` is used here and nowhere else: this is the only module that
+opens the configuration file.
 """
 
 from __future__ import annotations
@@ -147,7 +151,9 @@ class Config:
 
     ``engine_blocks`` holds every ``[engine.<name>]`` table exactly as parsed,
     including blocks for engines that are not currently selected. The generic
-    layer never reads inside them.
+    layer never reads inside them. ``injection_blocks`` is the same idea for
+    ``[injection.<name>]``: raw, uninterpreted, and complete, so a backend that
+    is not currently selected is preserved for when the user switches back.
     """
 
     transcriber: TranscriberConfig = TranscriberConfig()
@@ -157,6 +163,7 @@ class Config:
     ui: UIConfig = UIConfig()
     streaming: StreamingConfig = StreamingConfig()
     engine_blocks: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    injection_blocks: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -201,7 +208,8 @@ def load_config(path: Path | None = None) -> ConfigLoadResult:
     TOML or a wrong-typed value raises :class:`ConfigError`. Unknown keys in
     the generic sections are collected into :attr:`ConfigLoadResult.warnings`.
     Keys inside ``[engine.*]`` tables are never inspected: every such table
-    crosses the boundary verbatim as a raw mapping.
+    crosses the boundary verbatim as a raw mapping. ``[injection.<name>]`` blocks
+    are preserved the same way, while ``injection.backend`` is the selector.
     """
     resolved = path if path is not None else default_config_path()
 
@@ -232,9 +240,10 @@ def load_config(path: Path | None = None) -> ConfigLoadResult:
     _warn_unknown_keys(
         audio_table, _AUDIO_KEYS, path=resolved, section="audio", warnings=warnings
     )
-    _warn_unknown_keys(
-        injection_table, _INJECTION_KEYS, path=resolved, section="injection", warnings=warnings
-    )
+    # ``injection`` is validated by hand: it mixes the ``backend`` selector with
+    # nested ``[injection.<name>]`` blocks, so the generic ``_warn_unknown_keys``
+    # would flag every block name as an unknown key.
+    _warn_unknown_injection_keys(injection_table, path=resolved, warnings=warnings)
     _warn_unknown_keys(ui_table, _UI_KEYS, path=resolved, section="ui", warnings=warnings)
     _warn_unknown_keys(
         streaming_table, _STREAMING_KEYS, path=resolved, section="streaming", warnings=warnings
@@ -306,6 +315,7 @@ def load_config(path: Path | None = None) -> ConfigLoadResult:
             )
         ),
         engine_blocks=_read_engine_blocks(raw, path=resolved),
+        injection_blocks=_read_injection_blocks(raw, path=resolved),
     )
     return ConfigLoadResult(config=config, warnings=warnings)
 
@@ -345,6 +355,44 @@ def _read_engine_blocks(raw: Mapping[str, Any], *, path: Path) -> dict[str, Mapp
             )
         blocks[name] = block
     return blocks
+
+
+def _read_injection_blocks(
+    raw: Mapping[str, Any], *, path: Path
+) -> dict[str, Mapping[str, Any]]:
+    """Collect every ``[injection.<name>]`` table, uninterpreted (ADR 0009).
+
+    ``injection.backend`` is the selector and is not a block; every other key
+    under ``[injection]`` whose value is a table is a backend block and crosses
+    the boundary verbatim. Blocks for backends that are not selected are kept,
+    exactly as unselected ``[engine.*]`` blocks are, so switching backends does
+    not require re-adding configuration.
+    """
+    table = _expect_table(raw, "injection", path=path)
+    blocks: dict[str, Mapping[str, Any]] = {}
+    for name, block in table.items():
+        if name == "backend":
+            continue
+        if isinstance(block, Mapping):
+            blocks[name] = block
+    return blocks
+
+
+def _warn_unknown_injection_keys(
+    table: Mapping[str, Any], *, path: Path, warnings: list[str]
+) -> None:
+    """Warn about scalar keys under ``[injection]`` that are neither ``backend`` nor a block.
+
+    A nested table is a backend block and its *contents* are deliberately not
+    inspected here -- the selected backend's adapter warns about unknown keys
+    inside it, exactly as an engine adapter does. A non-table key other than
+    ``backend`` is a typo at the generic level and is tolerated-with-a-warning,
+    matching the generic layer's treatment of every other unknown key.
+    """
+    for key, value in table.items():
+        if key in _INJECTION_KEYS or isinstance(value, Mapping):
+            continue
+        warnings.append(f"{path}: unknown key {'injection.' + key!r}")
 
 
 def _warn_unknown_keys(
