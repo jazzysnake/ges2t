@@ -1,7 +1,7 @@
 # Dictation pipeline (batch): composition root and end-to-end wiring
 
 - **Priority:** P0
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** M
 - **Epic:** ../epic.md
 
@@ -26,7 +26,7 @@ the service enforces it too), ADR 0001 (the latency budget being measured here).
 
 ## Definition of done
 
-- [ ] `src/ges2t/pipeline.py` provides:
+- [x] `src/ges2t/pipeline.py` provides:
       - `build_transcriber(config) -> Transcriber` — maps `config.transcriber.engine` to a
         concrete transcriber (only `"whistle"` in v1, using `WhistleConfig.from_mapping` on
         `config.engine_blocks.get(config.transcriber.engine, {})`), and raises a clear error
@@ -47,19 +47,19 @@ the service enforces it too), ADR 0001 (the latency budget being measured here).
         error and a non-zero return), apply `model_store.env_overrides()`, `load()` the
         transcriber once, construct the `Service` with a session factory and a no-op status
         UI, run the socket server until `SIGINT`/`SIGTERM`, and return `0`.
-- [ ] Model location resolution honours `config.transcriber.model_path` when set (non-empty),
+- [x] Model location resolution honours `config.transcriber.model_path` when set (non-empty),
       and otherwise uses `model_store.default_data_dir()`. The engine path always comes from
       the model store — an override for the *engine* is not supported.
-- [ ] **No network can be reached from this path**: `run_service` must never call
+- [x] **No network can be reached from this path**: `run_service` must never call
       `ensure_model()`/`ensure_engine()`. A test asserts that with a monkeypatched
       `model_store.ensure_model` that raises if called.
-- [ ] `tests/test_pipeline.py` covers, with fakes only (no mic, no engine, no subprocess):
+- [x] `tests/test_pipeline.py` covers, with fakes only (no mic, no engine, no subprocess):
       `build_transcriber` returns a `WhistleTranscriber` for `"whistle"` and raises for an
       unknown engine; `BatchDictationSession.finish()` returns `""` on zero samples and does
       **not** call the transcriber in that case; `finish()` returns the transcriber's text
       unchanged otherwise; `cancel()` produces no transcription; and the no-download
       assertion above.
-- [ ] `uv run pytest tests/test_pipeline.py` passes and `uv run pytest` stays green.
+- [x] `uv run pytest tests/test_pipeline.py` passes and `uv run pytest` stays green.
 - [ ] **Manual, end-to-end, on the reference machine — this is the epic's headline check.**
       **This step is owned by the user, not by you:** it requires a human voice (someone must
       actually speak a phrase) and a focused window, so no agent can complete it, and no agent
@@ -86,11 +86,11 @@ the service enforces it too), ADR 0001 (the latency budget being measured here).
       `cancel` types nothing and returns to `idle`, two phrases give two space-separated words).
       If something fails **outside** those two known defects, that is a `blocked` ticket with a
       comment describing precisely what failed — not a workaround.
-- [ ] **Framework latency, measured and reported as a number** in `001-comment.md`: the
+- [x] **Framework latency, measured and reported as a number** in `001-comment.md`: the
       non-model portion of a round trip — socket call, capture stop and drain, buffer handoff,
       and injection of a ≤20-word phrase — measured by timing each stage. This must be
       **under 1 second** total (ADR 0001). State the method, not just the number.
-- [ ] **Injection latency: record the number as the pre-rewrite baseline.** Ticket 7 left
+- [x] **Injection latency: record the number as the pre-rewrite baseline.** Ticket 7 left
       `ydotool` at its default 12 ms per key event and asked this ticket to settle the
       `--key-delay` question. **That question is superseded** — ADR 0020 abandoned
       `ydotool type` altogether (US-only keymap, ~40 ms/char) in favour of a batched
@@ -104,7 +104,7 @@ the service enforces it too), ADR 0001 (the latency budget being measured here).
       and move on. `ydotoold` is already running and enabled on the reference machine, so no
       `sudo` and no service changes are needed — and none are permitted.
 
-- [ ] `uv run mypy src/ges2t tests` exits 0 (per ADR 0019's amendment the enforcement command
+- [x] `uv run mypy src/ges2t tests` exits 0 (per ADR 0019's amendment the enforcement command
       covers `tests/` too): every definition fully annotated and every
       signature interface-typed — ADR 0019.
 
