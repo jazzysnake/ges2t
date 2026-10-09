@@ -280,3 +280,102 @@ imports `ges2t.doctor` in a fresh interpreter and asserts `gi`, `pystray`,
 | no GUI/backend import at module load | `test_importing_doctor_pulls_in_no_gui_or_backend` |
 | ydotoold datagram socket type | `test_ydotoold_probe_accepts_a_datagram_socket`, `test_ydotoold_probe_rejects_a_stream_socket` |
 | CLI `--verify` and un-pre-empted config error | `test_doctor_parser_accepts_verify`, `test_doctor_cli_passes_the_path_and_verify_flag_to_run_doctor`, `test_doctor_cli_does_not_pre_empt_a_generic_config_error` |
+
+---
+
+## 001a — Addendum: review 002 fixes (tray-failure honesty, wording, missing-module path)
+
+Status: still **in review**. `002-review.md` returned **PASS — mergeable** with no
+blocking defects; this addendum records the one required change it asked for and
+two corrections. The hard gates (no network, no writes) are untouched, as are the
+other 21 checks, the `ydotoold` `SOCK_DGRAM` fix, the `systemctl` correction, the
+exit-code semantics, and the fix-line invariant. Ticket stays `in review`; the
+board row is unchanged.
+
+### FIX 1 (required) — `Tray failures` no longer reports a false green
+
+`check_tray_failures` used to return `OK` when `DoctorProbes.tray_failure_probe`
+was `None`, so a real run always showed a green line even though the record lives
+in the service process and doctor never sees it. **A check that cannot fail is
+worse than no check, because it reads as verification.** The check now says:
+
+- **no provider → `WARN`** ("tray failures cannot be determined from here ..."),
+  with a fix line naming where failures *do* surface (the service's stderr and
+  its shutdown summary). Not a `FAIL`, because nothing is known to be broken;
+  not `OK`, because doctor cannot claim health it cannot observe.
+- **provider present, no record → `OK`** ("the tray has recorded no failures").
+- **provider present, a record → `FAIL`** carrying `TrayFailure.summary()`.
+
+Real output on the reference machine (`uv run ges2t doctor`, exit **0**):
+
+```text
+Tray backend              OK    pystray selected the visible AppIndicator backend
+Tray failures             WARN  tray failures cannot be determined from here: the record lives in the running service process, and doctor does not connect to it or write a file
+                                fix: watch the service's stderr for 'ges2t: the tray has failed ...' lines and its shutdown summary, or run 'ges2t run' in a terminal to see them
+...
+Summary: 22 checks, 20 ok, 2 warning(s), 0 failure(s).
+```
+
+This is deliberate: **a check with no data says so rather than claiming health.**
+The proper long-term channel — a read-only `diagnostics` socket verb feeding the
+provider — is a separate ticket and is deliberately not implemented here.
+
+### FIX 2 — correction: the broad `except Exception` was never removed
+
+The original comment (and my report) could be read as claiming the broad
+`except Exception` fallback was removed. It was not, and should not be: it was
+present in the branch's first commit (`272c1cc`) and remains the correct crash
+guard. Precise statement of what actually happened: commit `9d11c92` was
+**tests only**; it strengthened the assertions so a check crash cannot pass as a
+clean config error. A crashing loader now yields a `FAIL` whose summary contains
+`"crashed"` and **not** `"invalid configuration"`, and the tests assert exactly
+that for `ConfigError`, `WhistleConfigError` and `InjectionConfigError`. Nothing
+in the implementation changed for this point. (The mutation harness's M26/M28
+entries describe this same test-strengthening, not a code removal.)
+
+### FIX 3 — the minor missing-module message path
+
+`_handle_doctor` imported `DoctorOptions` *before* `_load_doctor_entry_point()`,
+so a build with a genuinely missing `ges2t.doctor` hit the CLI's generic
+`except Exception` ("unexpected failure: No module named 'ges2t.doctor'") instead
+of the curated `MissingImplementationError`. The entry point is now resolved
+first, so the module is imported (and its absence detected) before
+`DoctorOptions` is imported. A fresh-interpreter test blocks `ges2t.doctor` with
+a `sys.meta_path` finder and asserts stderr contains
+`ges2t.doctor.run_doctor is not available in this build` and **not**
+`unexpected failure` — a case the existing in-process test could not catch,
+because that process has already imported `ges2t.doctor`.
+
+### Falsification (both directions, plus the ordering)
+
+The mutation harness was extended and re-run: **36/36 mutations caught, all files
+restored byte-for-byte.** The three relevant ones:
+
+```text
+CAUGHT  M20 tray failure record ignored            (FAIL -> OK; test_tray_failures_fail_with_the_recorded_summary)
+CAUGHT  M35 tray failures with no provider claimed OK (WARN -> OK; test_tray_failures_warn_without_a_provider_instead_of_claiming_ok)
+CAUGHT  M36 missing-module ordering reverted       (DoctorOptions before the entry point; fresh-interpreter test)
+caught 36/36
+files restored: True
+```
+
+Both tray directions fail the moment they are broken: no-provider claimed `OK`,
+and a recorded failure ignored. The full harness output is in
+`/tmp/mutation-run.txt`.
+
+### Verification after the fixes
+
+```text
+$ uv run pytest tests/test_doctor.py -q
+86 passed in 0.96s
+
+$ timeout 300 uv run pytest -q
+710 passed in 3.19s (exit 0)
+
+$ rm -rf .mypy_cache __pycache__ && uv run mypy src/ges2t tests
+Success: no issues found in 46 source files
+```
+
+No test was deleted, skipped or weakened; two tray-failure tests changed to the
+new (correct) expectations and two tests were added (no-provider `WARN`, and the
+fresh-interpreter missing-module path).
