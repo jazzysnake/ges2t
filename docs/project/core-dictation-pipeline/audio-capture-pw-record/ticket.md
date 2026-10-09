@@ -1,7 +1,7 @@
 # Audio capture via pw-record
 
 - **Priority:** P0
-- **Status:** blocked
+- **Status:** in review
 - **Complexity:** M
 - **Epic:** ../epic.md
 
