@@ -17,7 +17,9 @@ adapter, ADR 0010, ADR 0011, ADR 0012, ADR 0017, ADR 0019).
 from __future__ import annotations
 
 import json
+import math
 import os
+import random
 import subprocess
 import sys
 from array import array
@@ -177,6 +179,19 @@ def _modules_present_after_importing_adapter(names: tuple[str, ...]) -> dict[str
     return present
 
 
+def _audio(seconds: float, value: float = 0.5) -> AudioBuffer:
+    """An audible square wave, so the buffer passes the silence gate.
+
+    Pass-through tests need the engine to actually be called; an all-zero (or
+    too-short) buffer is now gated as silence before the engine sees it.
+    """
+    count = int(seconds * SAMPLE_RATE)
+    return AudioBuffer(
+        samples=[value if index % 2 == 0 else -value for index in range(count)],
+        sample_rate=SAMPLE_RATE,
+    )
+
+
 # --- interface conformance ----------------------------------------------------
 
 
@@ -215,7 +230,9 @@ def test_transcribe_hands_the_engine_raw_float32_bytes(
     transcriber: WhistleTranscriber, fake_needle: FakeNeedleModule
 ) -> None:
     transcriber.load()
-    samples = [0.0, 0.5, -0.25, 1.0, -1.0]
+    # Audible (>= 100 ms, above the RMS floor) so the gate forwards it; the
+    # values stay distinctive so the float32 conversion is pinned exactly.
+    samples = [0.0, 0.5, -0.25, 1.0, -1.0] * 400
 
     result = transcriber.transcribe(
         AudioBuffer(samples=samples, sample_rate=SAMPLE_RATE)
@@ -240,7 +257,7 @@ def test_transcribe_passes_the_configured_language_through(
     adapter = WhistleTranscriber(WhistleConfig(language="de"))
     adapter.load()
 
-    adapter.transcribe(AudioBuffer(samples=[0.0], sample_rate=SAMPLE_RATE))
+    adapter.transcribe(_audio(0.2))
 
     assert fake_needle.created[-1].calls[0][1] == "de"
 
@@ -272,7 +289,7 @@ def test_accepts_a_buffer_of_exactly_30_seconds(
     transcriber: WhistleTranscriber, fake_needle: FakeNeedleModule
 ) -> None:
     transcriber.load()
-    exactly_30 = [0.0] * (SAMPLE_RATE * 30)
+    exactly_30 = [0.5, -0.5] * (SAMPLE_RATE * 15)
 
     result = transcriber.transcribe(
         AudioBuffer(samples=exactly_30, sample_rate=SAMPLE_RATE)
@@ -293,7 +310,7 @@ def test_result_is_passed_through_unchanged(
     }
     transcriber.load()
 
-    result = transcriber.transcribe(AudioBuffer(samples=[0.0], sample_rate=SAMPLE_RATE))
+    result = transcriber.transcribe(_audio(0.2))
 
     assert result == TranscriptionResult(
         text="  Hallo WELT ",
@@ -314,7 +331,7 @@ def test_silence_is_returned_as_an_empty_string(
     }
     transcriber.load()
 
-    result = transcriber.transcribe(AudioBuffer(samples=[0.0], sample_rate=SAMPLE_RATE))
+    result = transcriber.transcribe(_audio(0.2))
 
     assert result.text == ""
     assert result.language is None
@@ -326,11 +343,114 @@ def test_missing_timings_become_none(
     fake_needle.result = {"text": "x"}
     transcriber.load()
 
-    result = transcriber.transcribe(AudioBuffer(samples=[0.0], sample_rate=SAMPLE_RATE))
+    result = transcriber.transcribe(_audio(0.2))
 
     assert result == TranscriptionResult(
         text="x", language=None, ttft_ms=None, decode_tps=None
     )
+
+
+# --- the silence gate ---------------------------------------------------------
+
+
+def test_silence_returns_empty_without_calling_the_engine(
+    transcriber: WhistleTranscriber, fake_needle: FakeNeedleModule
+) -> None:
+    transcriber.load()
+
+    result = transcriber.transcribe(
+        AudioBuffer(samples=[0.0] * (SAMPLE_RATE * 2), sample_rate=SAMPLE_RATE)
+    )
+
+    assert result == TranscriptionResult(
+        text="", language=None, ttft_ms=None, decode_tps=None
+    )
+    assert fake_needle.created[-1].calls == []
+
+
+def test_low_level_noise_returns_empty_without_calling_the_engine(
+    transcriber: WhistleTranscriber, fake_needle: FakeNeedleModule
+) -> None:
+    rng = random.Random(29)
+    samples = [rng.uniform(-1e-4, 1e-4) for _ in range(SAMPLE_RATE * 2)]
+    transcriber.load()
+
+    result = transcriber.transcribe(
+        AudioBuffer(samples=samples, sample_rate=SAMPLE_RATE)
+    )
+
+    assert result.text == ""
+    assert fake_needle.created[-1].calls == []
+
+
+def test_a_constant_dc_offset_is_treated_as_silence(
+    transcriber: WhistleTranscriber, fake_needle: FakeNeedleModule
+) -> None:
+    # The engine hallucinates "Thank you." on a flat DC buffer at every level
+    # tested, while raw RMS would call this buffer loud. Removing the mean is
+    # what makes the decision correct.
+    transcriber.load()
+
+    result = transcriber.transcribe(
+        AudioBuffer(samples=[0.05] * (SAMPLE_RATE * 2), sample_rate=SAMPLE_RATE)
+    )
+
+    assert result.text == ""
+    assert fake_needle.created[-1].calls == []
+
+
+def test_speech_at_the_measured_clip_level_still_transcribes(
+    transcriber: WhistleTranscriber, fake_needle: FakeNeedleModule
+) -> None:
+    # The shipped clips measure 0.0536 (clip5) and 0.0562 (clip30) AC RMS; a
+    # voiced 0.05 tone stands in for them, with no engine and no audio file.
+    samples = [
+        0.05 * math.sin(2.0 * math.pi * 200.0 * index / SAMPLE_RATE)
+        for index in range(SAMPLE_RATE // 2)
+    ]
+    transcriber.load()
+
+    result = transcriber.transcribe(
+        AudioBuffer(samples=samples, sample_rate=SAMPLE_RATE)
+    )
+
+    assert len(fake_needle.created[-1].calls) == 1
+    assert result.text == "hallo welt"
+
+
+def test_a_buffer_just_above_the_rms_threshold_is_not_dropped(
+    transcriber: WhistleTranscriber, fake_needle: FakeNeedleModule
+) -> None:
+    # A square wave's AC RMS equals its amplitude, so this sits just above the
+    # floor while still being well below real speech.
+    amplitude = whistle.SILENCE_RMS_THRESHOLD * 1.5
+    transcriber.load()
+
+    transcriber.transcribe(_audio(0.2, value=amplitude))
+
+    assert len(fake_needle.created[-1].calls) == 1
+
+
+def test_a_99ms_full_scale_burst_is_dropped_by_the_duration_gate(
+    transcriber: WhistleTranscriber, fake_needle: FakeNeedleModule
+) -> None:
+    # Full scale, so only the duration decides: the RMS gate would pass it.
+    transcriber.load()
+
+    result = transcriber.transcribe(_audio(0.099, value=1.0))
+
+    assert result.text == ""
+    assert fake_needle.created[-1].calls == []
+
+
+def test_a_101ms_full_scale_burst_is_not_dropped(
+    transcriber: WhistleTranscriber, fake_needle: FakeNeedleModule
+) -> None:
+    transcriber.load()
+
+    transcriber.transcribe(_audio(0.101, value=1.0))
+
+    assert len(fake_needle.created[-1].calls) == 1
 
 
 # --- loading ------------------------------------------------------------------

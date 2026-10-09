@@ -44,6 +44,7 @@ substitute a fake with no engine installed (ADR 0014).
 
 from __future__ import annotations
 
+import math
 import os
 import time
 from array import array
@@ -64,7 +65,9 @@ from ges2t.transcribers.whistle_config import WhistleConfig
 
 __all__ = [
     "MAX_SECONDS",
+    "MIN_UTTERANCE_SECONDS",
     "SAMPLE_RATE",
+    "SILENCE_RMS_THRESHOLD",
     "WhistleInputError",
     "WhistleLoadError",
     "WhistleNotLoadedError",
@@ -83,6 +86,25 @@ MAX_SECONDS: float = 30.0
 #: replaceable by tests. ``Any`` is deliberate: ``needle`` ships no type
 #: information, so this is a genuine third-party boundary (ADR 0019).
 _needle: Any = None
+
+#: A recording shorter than this is treated as "no speech": an accidental
+#: hotkey double-tap captures a click, not an utterance. User-specified at
+#: 100 ms; real utterances are orders of magnitude longer, so this cannot drop
+#: one. Not configurable -- a constant is the right size for one number.
+MIN_UTTERANCE_SECONDS: float = 0.1
+
+#: The AC-RMS floor below which a buffer is treated as "no speech". Chosen to
+#: sit **below the engine's own quiet-speech floor**: the shipped clip at 0.05
+#: gain measured correctly at 0.0027 AC RMS (-51 dBFS) and returned nothing at
+#: 0.0011 (-59 dBFS), so 0.0005 (-66 dBFS) cannot gate anything Whistle could
+#: transcribe in the measured data (the quietest real clip is 0.0277, a ~55x
+#: margin). Biased deliberately low because the expensive error is dropping a
+#: real utterance; the user confirmed live that quiet/mumbled speech transcribes
+#: today. "AC" means the mean is removed first, which is what makes a constant
+#: DC offset (the engine hallucinates "Thank you." on it at every level tested)
+#: measure as the silence it is. The honest limitation: a quiet speaker below
+#: this level *is* gated, and a loud-enough transient or mains hum is not caught.
+SILENCE_RMS_THRESHOLD: float = 0.0005
 
 
 class WhistleTranscriberError(Exception):
@@ -165,6 +187,58 @@ def _validate_buffer(buffer: AudioBuffer) -> None:
             "streaming path for longer audio, never silent truncation "
             "(ADR 0005, ADR 0011)"
         )
+
+
+def _ac_rms(samples: Sequence[float]) -> float:
+    """Return the RMS of ``samples`` **after removing the DC component**.
+
+    A constant offset is a capture artefact, not sound: the engine hallucinated
+    "Thank you." on a flat DC buffer at every level tested, from 0.0005 to 0.1,
+    while AC noise at the same or higher level produced nothing. Subtracting the
+    mean first makes that case measurable as the silence it is, at the cost of
+    one extra pass over the samples. ``math.fsum`` keeps the sum accurate for
+    the long buffers (up to 30 s) this runs on.
+    """
+    count = len(samples)
+    if count == 0:
+        return 0.0
+    mean = math.fsum(samples) / count
+    return math.sqrt(math.fsum((value - mean) ** 2 for value in samples) / count)
+
+
+def _has_speech(buffer: AudioBuffer) -> bool:
+    """Decide whether ``buffer`` contains anything worth transcribing.
+
+    Two independent gates, both of which must pass:
+
+    1. **Duration** -- a buffer shorter than :data:`MIN_UTTERANCE_SECONDS` is an
+       accidental double-tap, not an utterance. Checked first because it is
+       O(1) and an all-zero RMS scan on a discarded buffer is pure waste.
+    2. **Energy** -- :func:`_ac_rms` must reach
+       :data:`SILENCE_RMS_THRESHOLD`.
+
+    The gates are combined with ``and``, so the evaluation order cannot change
+    the outcome; it only decides whether the O(n) scan runs.
+    """
+    if len(buffer.samples) < MIN_UTTERANCE_SECONDS * buffer.sample_rate:
+        return False
+    return _ac_rms(buffer.samples) >= SILENCE_RMS_THRESHOLD
+
+
+def _speech_only(chunks: Iterable[AudioBuffer]) -> Iterator[AudioBuffer]:
+    """Yield only the chunks whose audio passes :func:`_has_speech`.
+
+    This is the streaming half of the gate. The engine contract is validated
+    before the gate so that an invalid buffer still raises
+    :class:`WhistleInputError` instead of being quietly filtered as silence;
+    :meth:`_WhistleStreamingDecoder.process` validates again, which is
+    idempotent. Dropping a chunk never ends the stream, so a pause between two
+    spoken phrases is skipped without truncating the utterance.
+    """
+    for buffer in chunks:
+        _validate_buffer(buffer)
+        if _has_speech(buffer):
+            yield buffer
 
 
 def _transcription_from_engine(raw: Mapping[str, Any]) -> TranscriptionResult:
@@ -458,12 +532,18 @@ class WhistleTranscriber:
 
         Validates the engine's hard audio contract first: 16 kHz and at most
         30 s per call. A violation raises :class:`WhistleInputError` naming the
-        limit; it never truncates silently (ADR 0005). The samples are handed to
-        the engine as raw float32 bytes, and its ``text``/``language``/
-        ``ttft_ms``/``decode_tps`` are returned unchanged (ADR 0007, ADR 0012).
+        limit; it never truncates silently (ADR 0005). A recording the gate
+        judges to contain no speech (:func:`_has_speech`) returns an empty
+        result **without calling the engine at all** -- inference on silence is
+        both meaningless and billed, and the engine hallucinates phrases like
+        "Thank you." on it. Samples that pass the gate are handed to the engine
+        as raw float32 bytes, and its ``text``/``language``/``ttft_ms``/
+        ``decode_tps`` are returned unchanged (ADR 0007, ADR 0012).
         """
         engine = self._require_loaded()
         _validate_buffer(buffer)
+        if not _has_speech(buffer):
+            return TranscriptionResult(text="", language=None, ttft_ms=None, decode_tps=None)
         raw_result = engine.transcribe(
             _float32_bytes(buffer.samples),
             language=self.config.language,
@@ -492,6 +572,20 @@ class WhistleTranscriber:
         (``window_seconds``/``chunk_seconds``) and are validated there, not
         re-implemented here.
 
+        The silence gate is applied **per incoming chunk** by
+        :func:`_speech_only`: a chunk that is not speech is never forwarded to
+        ``drive`` and therefore never reaches the engine. This is correct for
+        streaming because silence carries no words -- skipping a pause
+        *mid-sentence* loses nothing and, crucially, does **not** end the
+        utterance; the speech chunks on either side of it are still fed into the
+        same stream and committed normally. A fully silent utterance forwards no
+        chunk at all, so the engine performs no per-chunk pass. The
+        minimum-duration rule is worth applying per chunk here too: the default
+        1 s chunking makes a sub-100 ms buffer either a whole double-tap or a
+        negligible tail. The alternative -- deciding the gate on the whole
+        utterance -- would require buffering all audio and defeat the memory
+        bound streaming exists for (ADR 0011).
+
         The call fails eagerly with :class:`WhistleNotLoadedError` when
         :meth:`load` has not run, rather than at first iteration, so a caller
         does not start capturing audio for a stream that cannot run.
@@ -500,7 +594,7 @@ class WhistleTranscriber:
         decoder = _WhistleStreamingDecoder(engine, self.config.language)
         return streaming.drive(
             decoder,
-            chunks,
+            _speech_only(chunks),
             window_seconds=self.config.window_seconds,
             chunk_seconds=self.config.chunk_seconds,
         )

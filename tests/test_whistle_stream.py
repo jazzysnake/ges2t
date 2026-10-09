@@ -213,9 +213,17 @@ def _loaded_transcriber(
     return adapter
 
 
-def _chunk(seconds: float = 1.0, value: float = 0.0) -> AudioBuffer:
+def _chunk(seconds: float = 1.0, value: float = 0.5) -> AudioBuffer:
+    """An audible square wave, so a chunk passes the silence gate.
+
+    ``value=0.0`` (the old default) is now *silence*: the adapter filters it
+    before the decoder sees it, so tests that need the engine called must feed
+    audio above :data:`whistle.SILENCE_RMS_THRESHOLD`.
+    """
+    count = int(seconds * SAMPLE_RATE)
     return AudioBuffer(
-        samples=[value] * int(seconds * SAMPLE_RATE), sample_rate=SAMPLE_RATE
+        samples=[value if index % 2 == 0 else -value for index in range(count)],
+        sample_rate=SAMPLE_RATE,
     )
 
 
@@ -241,7 +249,9 @@ def test_stream_before_load_fails_eagerly() -> None:
 
 def test_process_passes_raw_float32_bytes(fake_needle: FakeStreamingNeedle) -> None:
     adapter = _loaded_transcriber(fake_needle)
-    samples: Sequence[float] = [0.0, 0.5, -0.25, 1.0, -1.0]
+    # Audible (above the RMS floor and >= 100 ms) so the gate forwards it; the
+    # values stay distinctive so the float32 round trip is pinned exactly.
+    samples: Sequence[float] = [0.5, -0.5, 0.25, -0.25, 1.0, -1.0] * 400
     buffer = AudioBuffer(samples=samples, sample_rate=SAMPLE_RATE)
 
     list(adapter.stream([buffer]))
@@ -498,3 +508,62 @@ def test_stream_uses_the_already_loaded_engine(
     # Exactly one Whistle was constructed by load(); streaming reused it rather
     # than creating a second process-global engine (ADR 0005).
     assert len(fake_needle.created) == 1
+
+
+# --- the silence gate (streaming) --------------------------------------------
+
+
+def test_silent_utterance_yields_nothing_and_makes_no_engine_pass(
+    fake_needle: FakeStreamingNeedle,
+) -> None:
+    fake_needle.script = FakeScript(chunks=(), tails=("",))
+    adapter = _loaded_transcriber(fake_needle)
+    silent = [_chunk(value=0.0) for _ in range(5)]
+
+    segments = list(adapter.stream(silent))
+
+    assert len(segments) == 1
+    assert segments[-1].is_final is True
+    assert segments[-1].text == ""
+    # The gate filtered every chunk, so the engine never ran a per-chunk pass.
+    assert fake_needle.created[-1].chunk_calls == 0
+
+
+def test_a_silent_chunk_between_phrases_does_not_truncate(
+    fake_needle: FakeStreamingNeedle,
+) -> None:
+    fake_needle.script = FakeScript(chunks=("hello", "world"), tails=("",))
+    adapter = _loaded_transcriber(fake_needle)
+
+    # The middle chunk is a pause; it must contribute nothing without ending the
+    # utterance, so both spoken chunks are still committed.
+    segments = list(
+        adapter.stream([_chunk(), _chunk(value=0.0), _chunk()])
+    )
+
+    assert segments[-1].text == "hello world"
+    assert fake_needle.created[-1].chunk_calls == 2
+
+
+def test_a_99ms_stream_buffer_is_dropped_by_the_duration_gate(
+    fake_needle: FakeStreamingNeedle,
+) -> None:
+    fake_needle.script = FakeScript(chunks=(), tails=("",))
+    adapter = _loaded_transcriber(fake_needle)
+
+    segments = list(adapter.stream([_chunk(seconds=0.099, value=1.0)]))
+
+    assert segments[-1].text == ""
+    assert fake_needle.created[-1].chunk_calls == 0
+
+
+def test_a_101ms_stream_buffer_is_not_dropped(
+    fake_needle: FakeStreamingNeedle,
+) -> None:
+    fake_needle.script = FakeScript(chunks=("kept",), tails=("",))
+    adapter = _loaded_transcriber(fake_needle)
+
+    segments = list(adapter.stream([_chunk(seconds=0.101, value=1.0)]))
+
+    assert segments[-1].text == "kept"
+    assert fake_needle.created[-1].chunk_calls == 1
