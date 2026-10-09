@@ -73,7 +73,7 @@ Original orchestrator brief: `.pi/prompts/orchestrate-project.md`.
 |---|---|---|
 | **19** | user-documentation-and-setup-guide | **not started** — the last core ticket; deliberately last because it documents final behaviour |
 | **25** | clipboard-paste-injector | **REVIEW PASS** (`1c93a35`), **NOT MERGED** — D1/D2/D3 fixed and independently verified (the new tests were run against the *actual* rejected revision `2b5fb26`: **25 failures** = exactly 2 D1 + 1 D3 + 21 letters + 1 chord). 4 non-blocking residuals: **R1** a >64 KiB restore truncates to exactly 65536 B if the process exits inside the delay window; **R2 an uncaught `Thread.start()` `RuntimeError`**; R3 a blocked daemon thread if the restore child never reads; R4 (pre-existing) a non-`FileNotFoundError` `OSError` on the read path still escapes raw. The **user's manual test is the last gate**. |
-| **32** | commit-cadence-diagnostic | **MEASURED — the gate is POSITIVE, awaiting review.** Real-device recording (25 s) + clips (32 s): **0 restatements**, 0 committed-word repeats, median **17 chars/commit**, median gap **1.00 s** of source audio (p90 2.50 s, max 4.00 s). The `Thank you.` hallucination appeared in `pending` **twice** and was **never committed** — the two-pass rule filters exactly the failure the silence saga chased. Harness `8ccf017`/`e9f47ed`; review in flight. Then fold the fresh numbers into `001-comment.md` (its own CAVEAT 2) and close the gate |
+| **32** | commit-cadence-diagnostic | **DONE — gate CLOSED, PASS** (`004-review.md` `efbc3e7`). **Tickets 33 and 34 are unblocked.** Real-device recording (25 s, user-run) + clips (32 s): **0 restatements**, median **17 chars/commit**, median gap **1.00 s** of source audio (p90 2.50 s, max 4.00 s). The `Thank you.` hallucination sat in `pending` twice and was **never committed**. The re-review reproduced the non-adjacent-repeat mutation on real `clip30` itself (detector 1 missed, detector 2 caught, summary said STOP) and confirmed the user's recording stays quiet. Not merged yet. |
 | **33** | committed-delta-interface | **to do** — carry the committed text separately from `pending` on the segment (the boundary is destroyed by `text = transcript + pending` and cannot be recovered downstream) |
 | **34** | incremental-typing | **to do** — type committed words as they are committed; **amends ADR 0011** (surface the amendment explicitly, with 32's numbers). User's design decisions are recorded in the ticket and must not be re-opened |
 | **30** | tray-failure-diagnostics | filed follow-up; needs a read-only socket verb (**requires an ADR 0016 amendment**) |
@@ -195,6 +195,16 @@ per-criterion findings / **evidence (commands + real output)** / risks / an expl
   `*.f32` left in `/tmp/probe31`, no audio tracked in git) — but an agent asked to *"measure the real
   device"* reads that as licence to record. Put the prohibition in the **first** brief, and say
   plainly that the audio is the user's private data.
+- **⚠️ A non-interactive git command must never be able to open an editor.** A subagent's
+  `git rebase --continue` invoked `git commit … -e`, which launched `/usr/bin/vim` on
+  `COMMIT_EDITMSG` with **no TTY** and blocked for **31 minutes**. The wrapper was also
+  `… | tail -30`, which would have hidden the real exit status even had it returned. Tell every
+  implementer to prefix editor-capable git commands with **`GIT_EDITOR=true`** (or
+  `git -c core.editor=true …`), to avoid `commit -e`, and never to pipe the interesting command
+  through `tail`. Two traps when clearing it: the editor is a **child** of `git commit`, so a
+  `grep` for `git|python|pytest` **misses `/usr/bin/vim`** — walk the process tree instead; and
+  check ownership before killing, because the `nvim` processes on this machine are the **user's**,
+  not an agent's.
 - **Long agent runs die on connection errors, and context dies with them.** Many runs were lost
   (600–1760 s). Mitigations: (a) tell long-running agents to **write their artifact to disk
   incrementally**, appending after each check, so a death costs at most one check; (b) `resume`
@@ -346,9 +356,13 @@ built speculatively.**
 ## 10a. NEW FINDING — the streaming default may be materially worse than batch
 
 Ticket 32's harness compares the **streaming** transcript (the shipped default since ticket 16) against
-the **batch** transcript for the same audio through the same adapter. They diverge by **17 substitutions
-+ 4 insertions, WER 0.339** on the user's own 25 s recording; **0.261** on `clip30.wav`; **0.000** on
-`clip5.wav`. Eyeballing the user's recording against the passage they read confirms batch is closer:
+the **batch** transcript through the same adapter. **This is only apples-to-apples thanks to R2**: the
+batch reference is now transcribed from the **gate-passed concatenation** streaming actually saw, not
+the whole file. Before that fix, `clip30`'s number conflated *silence removal* with *windowing*.
+Corrected figures: **WER 0.339** on the user's own 25 s recording (only 0.04 s was gated, so
+effectively fair), **0.221** on `clip30.wav` (reported as `0.261` when measured against the whole
+30 s), **0.000** on `clip5.wav`. Eyeballing the user's recording against the passage they read
+confirms batch is closer:
 
 | passage | streaming (the default) | batch |
 |---|---|---|
@@ -363,6 +377,15 @@ the **batch** transcript for the same audio through the same adapter. They diver
 - `clip5` agreeing perfectly at 0.000 shows the effect **grows with utterance length**, so a fair
   measurement must vary length.
 - It needs its own measurement against a **ground-truth reference** before it means anything.
+- **The capture itself may be degrading everything.** The saved WAV is int16 with ~1262 clipped
+  samples, and re-reading it shifts the transcript. So (a) the *live* numbers are authoritative and
+  the saved file is not a faithful replay, and (b) **input clipping is a plausible accuracy lever
+  entirely independent of the model** — lower input gain. Unmeasured; do not assume.
+
+**Detector limitation to carry into 33/34:** the narrowed restatement signal (a 2+ word phrase the
+streaming path repeats that the batch reference does not) can also trip on **ordinary natural
+repetition** — `'i think'`, `'it was'`, `'of the'`. So a harness STOP means **a human reviews**, never
+auto-cancel.
 
 **If it holds, the shipped *default* path is the worse one** — a user-facing quality issue entirely
 independent of the silence saga, and worth its own ticket.
