@@ -1,7 +1,7 @@
 # Whistle transcriber adapter (batch)
 
 - **Priority:** P0
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** M
 - **Epic:** ../epic.md
 
@@ -31,7 +31,7 @@ Measured facts to design against (ADR 0005, ADR 0007, ADR 0011 — read all thre
 
 ## Definition of done
 
-- [ ] `src/ges2t/transcribers/whistle.py` defines `class WhistleTranscriber` satisfying the
+- [x] `src/ges2t/transcribers/whistle.py` defines `class WhistleTranscriber` satisfying the
       `Transcriber` Protocol (assert it with `isinstance` in a test):
       - `name = "whistle"`, `supports_streaming = True`;
       - `__init__(self, config: WhistleConfig, model_path_override: Path | None = None)`;
@@ -48,24 +48,24 @@ Measured facts to design against (ADR 0005, ADR 0007, ADR 0011 — read all thre
         `TranscriptionResult` carrying `text`, `language`, `ttft_ms`, `decode_tps`;
       - `close() -> None` releases the model;
       - calling `transcribe()` before `load()` raises a clear error, not an `AttributeError`.
-- [ ] Input validation: a buffer longer than 30 s raises a clear error naming the limit; a
+- [x] Input validation: a buffer longer than 30 s raises a clear error naming the limit; a
       buffer whose `sample_rate` is not 16000 raises a clear error. Neither silently truncates.
-- [ ] Silence produces an **empty string**, not an exception and not garbage — this is a
+- [x] Silence produces an **empty string**, not an exception and not garbage — this is a
       normal outcome (ADR 0005) and must not be laundered into a fake word.
-- [ ] `text` is returned **exactly as the engine produced it** — no stripping, no
+- [x] `text` is returned **exactly as the engine produced it** — no stripping, no
       capitalisation, no trailing space (ADR 0012; the space is added by the injector).
-- [ ] `tests/test_whistle_batch.py` runs **without the engine installed**: it monkeypatches
+- [x] `tests/test_whistle_batch.py` runs **without the engine installed**: it monkeypatches
       the module-level `needle` reference with a fake object exposing `Whistle`, and
       asserts the conversion path (a 16 kHz float32 buffer arrives at the fake as raw
       float32 bytes of the expected length), the 30 s and sample-rate validation, the
       before-`load()` error, and pass-through of `text`/`language`/timings unchanged.
-- [ ] `uv run pytest tests/test_whistle_batch.py` passes and `uv run pytest` stays green.
-- [ ] **Manual, once, on the reference machine**, reported in `001-comment.md`: after
+- [x] `uv run pytest tests/test_whistle_batch.py` passes and `uv run pytest` stays green.
+- [x] **Manual, once, on the reference machine**, reported in `001-comment.md`: after
       `ges2t setup`, transcribe a real 5-second speech clip through this adapter and report
       wall time, the returned text, and `ttft_ms`/`decode_tps`. This is the first proof the
       engine actually runs under our plumbing.
 
-- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
+- [x] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
       signature interface-typed — ADR 0019.
 
 ## Notes
