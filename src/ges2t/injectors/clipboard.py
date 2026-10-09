@@ -87,6 +87,8 @@ __all__ = [
     "ClipboardRestoreWarning",
     "ClipboardRunner",
     "ClipboardRunnerCall",
+    "ClipboardSpawnError",
+    "ClipboardTimeoutError",
     "KeyChord",
     "WL_COPY_BINARY",
     "WL_PASTE_BINARY",
@@ -155,7 +157,8 @@ _KEY_NAME_PATTERN = re.compile(r"[A-Za-z0-9_]+")
 #: which modifier is being asked for.
 _KNOWN_NAMES_HINT: str = (
     "recognised names: ctrl, shift, alt, super (also meta), insert, and a "
-    "single letter or digit"
+    "single letter or digit. Note that most terminals need 'ctrl+shift+v' "
+    "rather than 'ctrl+v'."
 )
 
 
@@ -193,6 +196,36 @@ class ClipboardInjectionError(ClipboardError):
             "the text on the clipboard (or read the previous selection); the "
             "paste may be incomplete. "
             f"stderr: {stderr or '<empty>'}"
+        )
+
+
+class ClipboardTimeoutError(ClipboardError):
+    """``wl-copy``/``wl-paste`` did not finish within the bounded command timeout.
+
+    A separate type rather than a ``returncode`` sentinel, because a timeout has
+    no exit status to report (ADR 0019: distinguish failure with exceptions or a
+    typed result, never with a sentinel the caller must special-case).
+    """
+
+    def __init__(self, binary: str, seconds: float) -> None:
+        self.binary = binary
+        self.seconds = seconds
+        super().__init__(
+            f"{binary} did not finish within {seconds:g}s, so ges2t gave up on "
+            "the clipboard injection. A wedged Wayland compositor is the usual "
+            "cause; check that the session is responsive."
+        )
+
+
+class ClipboardSpawnError(ClipboardError):
+    """The clipboard command could not be started (permission, no session, ...)."""
+
+    def __init__(self, binary: str, detail: str) -> None:
+        self.binary = binary
+        self.detail = detail
+        super().__init__(
+            f"{binary} could not be started, so ges2t cannot use the clipboard "
+            f"injection backend: {detail or '<empty>'}"
         )
 
 
@@ -500,9 +533,7 @@ class ClipboardPasteInjector:
         """Emit every configured paste chord as raw keycodes via ``ydotool key``."""
         for chord in self._chords:
             argv = self._build_key_argv(chord)
-            completed = self._run(
-                YDOTOOL_BINARY, argv, b"", environment, injectable=True
-            )
+            completed = self._run(YDOTOOL_BINARY, argv, b"", environment)
             if completed.returncode != 0:
                 stderr = _decode_stderr(completed.stderr)
                 raise ClipboardInjectionError(
@@ -566,25 +597,23 @@ class ClipboardPasteInjector:
         argv: Sequence[str],
         stdin_bytes: bytes,
         environment: Mapping[str, str],
-        *,
-        injectable: bool = False,
     ) -> subprocess.CompletedProcess[bytes]:
-        """Call the runner once, translating a missing binary into a typed error.
+        """Call the runner once, translating a spawn failure into a typed error.
 
-        ``injectable`` marks the chord delivery, where a missing ``ydotool`` is
-        fatal; a missing ``wl-paste`` is handled by the caller and a missing
-        ``wl-copy`` during a *restore* is best effort.
+        A missing ``wl-paste`` is tolerated by :meth:`_read_clipboard`, and a
+        missing ``wl-copy`` during a *restore* is best effort; only the payload
+        write and the chord delivery reach this method's fatal branches.
         """
         try:
             return self._runner(argv, stdin_bytes, environment)
         except FileNotFoundError as exc:
             raise ClipboardNotFoundError(binary) from exc
         except subprocess.TimeoutExpired as exc:
-            raise ClipboardInjectionError(
-                binary, -1, f"timed out after {CLIPBOARD_COMMAND_TIMEOUT_SECONDS:g}s"
+            raise ClipboardTimeoutError(
+                binary, CLIPBOARD_COMMAND_TIMEOUT_SECONDS
             ) from exc
         except OSError as exc:
-            raise ClipboardInjectionError(binary, -1, str(exc)) from exc
+            raise ClipboardSpawnError(binary, str(exc)) from exc
 
 
 def _restore_warning(detail: str) -> str:
