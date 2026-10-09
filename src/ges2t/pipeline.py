@@ -18,7 +18,10 @@ What it builds
 * :func:`build_audio_source` — a :class:`~ges2t.audio.pw_record.PwRecordAudioSource`
   for the configured device.
 * :func:`build_injector` — a :class:`~ges2t.injectors.ydotool.YdotoolInjector`
-  carrying ``ui.trailing_space`` (ADR 0012).
+  carrying ``ui.trailing_space`` (ADR 0012) and the ``[injection.ydotool]``
+  layout/key-delay settings (ADR 0009, ADR 0020); it emits one batched
+  ``ydotool key`` invocation and never calls ``ydotool type`` (ADR 0003's
+  amendment).
 * :class:`BatchDictationSession` — the batch ``DictationSession``: record the
   whole utterance, transcribe once, return the text. Streaming is a separate
   session implementation and is deliberately absent here (ticket 16).
@@ -42,7 +45,8 @@ from pathlib import Path
 from ges2t import model_store
 from ges2t.audio.pw_record import PwRecordAudioSource
 from ges2t.config import Config
-from ges2t.injectors.ydotool import YdotoolInjector
+from ges2t.injectors.layout import YdotoolConfig
+from ges2t.injectors.ydotool import XkbKeySequenceSource, YdotoolInjector
 from ges2t.interfaces import AudioSource, Injector, StatusUI, Transcriber
 from ges2t.service import DictationSession, Service
 from ges2t.socket_proto import ServiceAlreadyRunningError, default_socket_path
@@ -202,12 +206,22 @@ def build_audio_source(config: Config) -> AudioSource:
 
 
 def build_injector(config: Config) -> Injector:
-    """Construct the ``ydotool`` injector carrying ``ui.trailing_space`` (ADR 0003, ADR 0012).
+    """Construct the batched ``ydotool`` injector (ADR 0003, ADR 0012, ADR 0020).
 
-    v1 has exactly one injector backend; ``injection.backend`` is preserved in
-    the generic config for the clipboard paste injector that a later ticket adds.
+    ``[injection.ydotool]`` supplies the layout and ``key_delay_ms``; an absent
+    block means all defaults (``.get(..., {})``, ADR 0009), and the config's
+    unknown-key warnings are left for ``ges2t doctor`` to surface. The
+    ``XkbKeySequenceSource`` holds only the layout names: it rebuilds its keymap
+    per utterance, so a layout switch is picked up (ADR 0020). v1 has exactly
+    one injector backend; ``injection.backend`` is preserved in the generic
+    config for the clipboard paste injector that a later ticket adds.
     """
-    return YdotoolInjector(config.ui.trailing_space)
+    settings = YdotoolConfig.from_mapping(config.injection_blocks.get("ydotool", {}))
+    return YdotoolInjector(
+        XkbKeySequenceSource(settings.config.layout, settings.config.variant),
+        trailing_space=config.ui.trailing_space,
+        key_delay_ms=settings.config.key_delay_ms,
+    )
 
 
 def _session_factory(

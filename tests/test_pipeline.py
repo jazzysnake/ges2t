@@ -17,7 +17,7 @@ import pytest
 from ges2t import model_store, pipeline
 from ges2t.audio.pw_record import PwRecordAudioSource
 from ges2t.config import AudioConfig, Config, TranscriberConfig, UIConfig
-from ges2t.injectors.ydotool import YdotoolInjector
+from ges2t.injectors.ydotool import XkbKeySequenceSource, YdotoolInjector
 from ges2t.interfaces import AudioBuffer, Transcriber, TranscriptionResult
 from ges2t.service import DictationSession, Service
 from ges2t.transcribers.whistle import WhistleTranscriber
@@ -124,6 +124,27 @@ def test_build_injector_carries_the_trailing_space_setting() -> None:
 
     assert isinstance(injector, YdotoolInjector)
     assert injector.trailing_space is False
+
+
+def test_build_injector_carries_the_configured_key_delay_and_layout() -> None:
+    config = Config(injection_blocks={"ydotool": {"key_delay_ms": 5, "layout": "us"}})
+
+    injector = pipeline.build_injector(config)
+
+    assert isinstance(injector, YdotoolInjector)
+    assert injector.key_delay_ms == 5
+    source = injector._source
+    assert isinstance(source, XkbKeySequenceSource)
+    assert source._layout == "us"
+
+
+def test_build_injector_defaults_when_the_ydotool_block_is_absent() -> None:
+    # The generic layer never synthesizes an injection block, so its absence is
+    # the normal case and must mean all defaults, never a KeyError (ADR 0009).
+    injector = pipeline.build_injector(Config())
+
+    assert isinstance(injector, YdotoolInjector)
+    assert injector.key_delay_ms == 12
 
 
 # --- BatchDictationSession ----------------------------------------------------

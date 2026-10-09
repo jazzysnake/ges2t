@@ -1,6 +1,6 @@
-"""Text injection through the ``ydotool`` virtual keyboard (ADR 0003).
+"""Text injection through the ``ydotool`` virtual keyboard (ADR 0003, ADR 0020).
 
-Two rules live here and nowhere else:
+Three rules live here and nowhere else:
 
 * **Text assembly** (ADR 0012) -- :func:`decide_injection` is the single
   implementation of the trailing-space table: empty or whitespace-only text is
@@ -8,31 +8,37 @@ Two rules live here and nowhere else:
   space when ``trailing_space`` is true, and is otherwise passed through
   byte-for-byte. There is no stripping, case folding, or internal whitespace
   collapsing.
-* **Delivery** -- :class:`YdotoolInjector` spawns ``ydotool`` once per call,
-  hands it the payload on **stdin**, and turns every failure mode into a typed
-  exception with an actionable message. There is no clipboard or ``wtype``
-  fallback and no retry with a different mechanism: a broken injector fails
-  loudly (ADR 0003).
+* **Layout-aware mapping** -- :class:`XkbKeySequenceSource` turns the assembled
+  text into a :class:`~ges2t.injectors.keymap.KeySequence` against the *live*
+  keyboard layout (ADR 0020). It rebuilds its keymap for **every** utterance,
+  because a compiled keymap caches its reverse map and a process-lifetime one
+  would pin a stale layout when the user switches layout.
+* **Batched emission** -- :class:`YdotoolInjector` renders the precomputed
+  sequence as **one** ``ydotool key -d <ms> KEYCODE:PRESSED ...`` invocation per
+  injection. ``ydotool type`` is deliberately **never** called: its hardcoded
+  US-position table corrupts every character whose position differs on a non-US
+  layout and it sleeps twice per character (ADR 0003's amendment). Every failure
+  mode still becomes a typed exception with an actionable message, and there is
+  no clipboard or ``wtype`` fallback (ADR 0003).
 
 Verified invocation
 -------------------
-``ydotool --help`` lists the ``type`` command along with ``click``, ``key``,
-``mousemove``, ``debug``, and ``bakers``. ``man ydotool`` (2024-07-14) documents
-the subcommand as::
+``man ydotool`` (2024-07-14) documents the subcommand as::
 
-    type [-D,--next-delay <ms>] [-d,--key-delay <ms>] [-f,--file <filepath>]
-    "text"
+    key [-d,--key-delay <ms>] [<KEYCODE:PRESSED> ...]
 
-with "The filepath may also be '-' to read from stdin." The invocation this
-module actually uses is therefore::
+with "where :1 for pressed means the key is down and then :0 means the key is
+released" and "See '/usr/include/linux/input-event-codes.h' for available key
+codes (KEY_*)". :class:`~ges2t.injectors.keymap.KeyEvent.keycode` is exactly such
+a Linux/evdev ``KEY_*`` code, so it is rendered **straight** into the argv token
+with no offset (ticket 22's ruling, confirmed by a byte-exact round trip). The
+invocation this module actually uses is therefore::
 
-    ydotool type --file -
+    ydotool key -d <key_delay_ms> <KEYCODE>:1 <KEYCODE>:0 ...
 
-and the payload is written to the child's stdin, never passed as an argv
-element, so a long transcript cannot hit ``ARG_MAX`` and does not appear in the
-process table. ``YDOTOOL_SOCKET`` is inherited from the environment when set --
-that is how ``ydotool`` itself selects a non-default daemon socket -- and the
-daemon default is used otherwise. The executable is resolved from ``PATH``.
+``YDOTOOL_SOCKET`` is inherited from the environment when set -- that is how
+``ydotool`` itself selects a non-default daemon socket -- and the daemon default
+is used otherwise. The executable is resolved from ``PATH``.
 """
 
 from __future__ import annotations
@@ -40,21 +46,40 @@ from __future__ import annotations
 import os
 import subprocess
 import time
+import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
+
+from ges2t.injectors.keymap import KeyEvent, KeySequence, XkbError, XkbKeymap
+from ges2t.injectors.layout import (
+    AUTO_LAYOUT,
+    DEFAULT_KEY_DELAY_MS,
+    LayoutCommandRunner,
+    LayoutResolutionError,
+    LayoutSource,
+    ResolvedLayout,
+    resolve_layout,
+)
 
 __all__ = [
     "CommandRunner",
     "InjectionDecision",
+    "KEY_ARGUMENTS",
+    "KEY_DELAY_FLAG",
+    "KeySequenceSource",
     "SkipInjection",
-    "TYPE_ARGUMENTS",
     "TypeText",
+    "XkbKeySequenceSource",
     "YDOTOOL_BINARY",
     "YdotoolDaemonUnreachableError",
     "YdotoolError",
     "YdotoolInjectionError",
     "YdotoolInjector",
+    "YdotoolKeymapError",
     "YdotoolNotFoundError",
+    "YdotoolTextUnreachableError",
+    "YdotoolUnreachableWarning",
     "decide_injection",
 ]
 
@@ -62,14 +87,18 @@ __all__ = [
 #: environment decides which ``ydotool`` runs.
 YDOTOOL_BINARY: str = "ydotool"
 
-#: Arguments after the executable. ``--file -`` is the stdin form verified
-#: against ``man ydotool`` (see the module docstring).
-TYPE_ARGUMENTS: tuple[str, ...] = ("type", "--file", "-")
+#: Arguments after the executable. ``key`` takes an explicit event list, so the
+#: whole utterance is one spawn (ADR 0003's amendment).
+KEY_ARGUMENTS: tuple[str, ...] = ("key",)
+
+#: The short form of ``--key-delay``; the man page documents both.
+KEY_DELAY_FLAG: str = "-d"
 
 #: The runner seam. It is deliberately tiny -- ``argv``, the bytes for the
 #: child's stdin, and the environment -- so a test double is a few lines and
-#: never touches a real daemon (ADR 0014). The default is
-#: :func:`_run_command`.
+#: never touches a real daemon (ADR 0014). ``ydotool key`` reads nothing from
+#: stdin, so the bytes are always empty; the parameter is kept because the seam
+#: is shared with the clipboard backend's shape.
 CommandRunner = Callable[
     [Sequence[str], bytes, Mapping[str, str]], subprocess.CompletedProcess[bytes]
 ]
@@ -106,9 +135,61 @@ class YdotoolInjectionError(YdotoolError):
         )
 
 
+class YdotoolKeymapError(YdotoolError):
+    """The active keyboard layout could not be resolved or compiled (ADR 0020).
+
+    Raised instead of leaking an :class:`~ges2t.injectors.keymap.XkbError` or a
+    :class:`~ges2t.injectors.layout.LayoutResolutionError`, so callers can keep
+    catching :class:`YdotoolError` for every injection failure.
+    """
+
+
+class YdotoolTextUnreachableError(YdotoolError):
+    """**Every** character was unreachable on the active layout (ADR 0020).
+
+    A partial miss is a warning (the reachable characters are still typed); a
+    total miss is an error, because silently typing nothing is exactly the
+    failure mode this whole workstream exists to remove.
+    """
+
+    def __init__(self, unreachable: Sequence[str]) -> None:
+        self.unreachable = tuple(unreachable)
+        characters = ", ".join(repr(char) for char in self.unreachable) or "<none>"
+        super().__init__(
+            "none of the characters in the transcription can be typed on the "
+            f"active keyboard layout ({characters}), so nothing was injected. "
+            'Set injection.backend = "clipboard" to paste text the layout '
+            "cannot type."
+        )
+
+
+class YdotoolUnreachableWarning(UserWarning):
+    """Some (not all) characters were skipped because the layout cannot type them.
+
+    The reachable characters are still delivered in the same batch; the skipped
+    ones are reported so the user can see why text is missing, rather than
+    getting silently corrupted output (ADR 0020).
+    """
+
+
+@runtime_checkable
+class KeySequenceSource(Protocol):
+    """Maps assembled text to the key events that type it (ADR 0020).
+
+    This is the seam between ticket 22's mapping and this emitter. An
+    implementation must reflect the **current** keyboard layout per call: a
+    compiled ``XkbKeymap`` caches its reverse map, so a source that reused one
+    across utterances would pin a stale layout after a layout switch.
+    """
+
+    def sequence_for(self, text: str) -> KeySequence:
+        """Return the events for ``text`` plus the characters the layout lacks."""
+        ...
+
+
 @dataclass(frozen=True)
 class TypeText:
-    """The exact string to hand to the daemon on stdin (ADR 0012)."""
+    """The exact string to map to key events (ADR 0012)."""
 
     payload: str
 
@@ -120,7 +201,7 @@ class SkipInjection:
     reason: str
 
 
-#: The result of text assembly: either something to type or an explicit
+#: The result of text assembly: either something to map or an explicit
 #: "type nothing" decision. A typed union rather than a ``str | None`` sentinel
 #: so callers cannot confuse "no text" with "empty payload" (ADR 0019).
 InjectionDecision = TypeText | SkipInjection
@@ -205,46 +286,146 @@ def _daemon_unreachable_message(stderr: str) -> str:
     )
 
 
-class YdotoolInjector:
-    """An :class:`~ges2t.interfaces.Injector` backed by ``ydotool`` (ADR 0003).
+def _unreachable_warning(unreachable: Sequence[str]) -> str:
+    """Build the "characters skipped" warning text (ADR 0020)."""
+    characters = ", ".join(repr(char) for char in unreachable)
+    return (
+        "ges2t: skipping characters the active keyboard layout cannot type: "
+        f"{characters}. Set injection.backend = \"clipboard\" to paste text the "
+        "layout cannot type."
+    )
 
-    ``trailing_space`` is the ADR 0012 preference (``ui.trailing_space``,
-    default true). ``runner`` is the injectable seam: production leaves it as
-    :func:`_run_command`, tests pass a fake so no daemon or ``/dev/uinput``
-    access is needed. ``last_injection_ms`` records the wall time of the most
-    recent non-skipped delivery -- the per-call cost ADR 0003 requires be
-    measurable -- and is ``None`` before any such call or after a skip.
+
+class XkbKeySequenceSource:
+    """A :class:`KeySequenceSource` backed by a fresh ``XkbKeymap`` per call (ADR 0020).
+
+    ``layout`` is the configured ``[injection.ydotool]`` value: ``"auto"`` (the
+    default) resolves the compositor's **live** keymap, and any other value is an
+    explicit layout. ``variant`` travels with an explicit layout.
+
+    The keymap is rebuilt for **every** :meth:`sequence_for` call -- including a
+    fresh layout resolution, because the active group can change between
+    utterances -- and closed immediately afterwards, so the reverse map is never
+    reused across utterances and no keymap leaks in the long-lived service.
+
+    ``runner`` is the layout-detection subprocess seam from
+    :mod:`ges2t.injectors.layout`; production leaves it as the real
+    ``subprocess`` runner, tests inject a fake so no compositor is needed.
     """
 
     def __init__(
         self,
+        layout: str = AUTO_LAYOUT,
+        variant: str = "",
+        *,
+        runner: LayoutCommandRunner | None = None,
+    ) -> None:
+        self._layout = layout
+        self._variant = variant
+        self._runner = runner
+
+    def sequence_for(self, text: str) -> KeySequence:
+        """Resolve the current layout, compile a fresh keymap, and map ``text``."""
+        resolved = self._resolve()
+        keymap = self._compile(resolved)
+        try:
+            return keymap.sequence_for(text)
+        finally:
+            keymap.close()
+
+    def _resolve(self) -> ResolvedLayout:
+        """Run the ADR 0020 resolution order, translating failure to a typed error."""
+        try:
+            return resolve_layout(
+                configured_layout=self._layout,
+                configured_variant=self._variant,
+                runner=self._runner,
+            )
+        except LayoutResolutionError as exc:
+            raise YdotoolKeymapError(
+                "could not determine the active keyboard layout, so ges2t "
+                f"cannot compute key events: {exc}"
+            ) from exc
+
+    def _compile(self, resolved: ResolvedLayout) -> XkbKeymap:
+        """Compile the resolved layout into a keymap, or raise a typed error."""
+        try:
+            if resolved.source is LayoutSource.LIVE_KEYMAP and resolved.keymap_text:
+                return XkbKeymap.from_string(resolved.keymap_text)
+            if resolved.layout is not None:
+                return XkbKeymap.from_names(resolved.layout, resolved.variant or "")
+        except XkbError as exc:
+            raise YdotoolKeymapError(
+                f"the active keyboard layout could not be compiled: {exc}"
+            ) from exc
+        raise YdotoolKeymapError(
+            "the active keyboard layout could not be resolved to a keymap "
+            f"(source {resolved.source.value!r}); set [injection.ydotool] "
+            "layout explicitly."
+        )
+
+
+class YdotoolInjector:
+    """An :class:`~ges2t.interfaces.Injector` backed by ``ydotool`` (ADR 0003).
+
+    ``key_sequence_source`` maps the assembled text to Linux ``KEY_*`` events;
+    production passes :class:`XkbKeySequenceSource`, tests pass a fake so no
+    ``libxkbcommon`` or compositor is needed. ``trailing_space`` is the ADR 0012
+    preference (``ui.trailing_space``, default true). ``key_delay_ms`` becomes
+    ``ydotool key -d`` and comes from ``[injection.ydotool]`` (ADR 0009).
+    ``runner`` is the injectable delivery seam.
+
+    ``last_injection_ms`` records the wall time of the most recent successful
+    delivery -- the per-call cost ADR 0003 requires be measurable -- and is
+    ``None`` before any such call, after a skip, and after an all-unreachable
+    failure.
+    """
+
+    def __init__(
+        self,
+        key_sequence_source: KeySequenceSource,
+        *,
         trailing_space: bool = True,
+        key_delay_ms: int = DEFAULT_KEY_DELAY_MS,
         runner: CommandRunner | None = None,
     ) -> None:
         self.trailing_space = trailing_space
+        self.key_delay_ms = key_delay_ms
+        self._source = key_sequence_source
         self._runner: CommandRunner = runner if runner is not None else _run_command
         self.last_injection_ms: float | None = None
 
     def inject(self, text: str) -> None:
         """Type ``text`` into the focused window and return once delivered.
 
-        Whitespace-only text is a no-op that spawns no process (ADR 0012);
-        every other outcome either completes or raises a :class:`YdotoolError`.
+        Whitespace-only text is a no-op that spawns no process *and maps
+        nothing* (ADR 0012); the mapping runs once per non-empty utterance
+        (ADR 0020). Every other outcome either completes or raises a
+        :class:`YdotoolError`.
         """
         decision = decide_injection(text, trailing_space=self.trailing_space)
         if isinstance(decision, SkipInjection):
             self.last_injection_ms = None
             return
-        self._deliver(decision.payload)
+        self._deliver(self._source.sequence_for(decision.payload))
 
-    def _deliver(self, payload: str) -> None:
-        """Run ``ydotool type --file -`` once with ``payload`` on stdin."""
-        argv: tuple[str, ...] = (YDOTOOL_BINARY, *TYPE_ARGUMENTS)
+    def _deliver(self, sequence: KeySequence) -> None:
+        """Emit ``sequence`` in a single ``ydotool key`` invocation."""
+        if not sequence.events:
+            # The payload was non-empty, so an empty event list means every
+            # character was unreachable: refuse loudly rather than type nothing.
+            self.last_injection_ms = None
+            raise YdotoolTextUnreachableError(sequence.unreachable)
+        if sequence.unreachable:
+            warnings.warn(
+                _unreachable_warning(sequence.unreachable),
+                YdotoolUnreachableWarning,
+                stacklevel=2,
+            )
+        argv = self._build_argv(sequence.events)
         started = time.perf_counter()
         try:
-            completed = self._runner(
-                argv, payload.encode("utf-8"), _subprocess_environment()
-            )
+            completed = self._runner(argv, b"", _subprocess_environment())
         except FileNotFoundError as exc:
             raise YdotoolNotFoundError(
                 "ydotool was not found on PATH, so ges2t cannot type. Install "
@@ -260,3 +441,21 @@ class YdotoolInjector:
                     _daemon_unreachable_message(stderr)
                 )
             raise YdotoolInjectionError(completed.returncode, stderr)
+
+    def _build_argv(self, events: Sequence[KeyEvent]) -> tuple[str, ...]:
+        """Render the event list as ``ydotool key -d <ms> KEYCODE:PRESSED ...``.
+
+        ``KeyEvent.keycode`` is already a Linux/evdev ``KEY_*`` code, so it is
+        rendered with **no** offset (ticket 22's ruling). ``pressed`` becomes
+        ``1``/``0`` exactly as the man page's ``KEYCODE:PRESSED`` token.
+        """
+        tokens = tuple(
+            f"{event.keycode}:{1 if event.pressed else 0}" for event in events
+        )
+        return (
+            YDOTOOL_BINARY,
+            *KEY_ARGUMENTS,
+            KEY_DELAY_FLAG,
+            str(self.key_delay_ms),
+            *tokens,
+        )
