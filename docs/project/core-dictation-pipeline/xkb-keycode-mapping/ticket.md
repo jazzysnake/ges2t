@@ -1,7 +1,7 @@
 # Layout-aware text→keycode mapping (libxkbcommon)
 
 - **Priority:** P1
-- **Status:** in review
+- **Status:** done
 - **Complexity:** M
 - **Epic:** ../epic.md
 
