@@ -20,6 +20,11 @@ non-trivial:
   `ges2t setup`, which the user chose as the *only* acquisition path — there is no automatic
   first-run download (ADR 0017).
 - Telemetry in the Python package is opt-out (ADR 0006), so "do nothing" is the wrong default.
+- **Measured during scaffolding (ticket 1, 2026-10-09):** `cactus-needle`'s single dependency
+  `huggingface-hub` transitively pulls a full network stack — `httpx2`, `httpcore2`, `anyio`,
+  `h11`, `fsspec`, `filelock`, `hf-xet`, `tqdm`, `truststore`, `click`, `pyyaml`. We declare
+  no HTTP client of our own, but a naive "grep the dependency tree for HTTP clients" audit
+  would hit this chain and could not distinguish our code from a third party's.
 
 ## Decision
 
@@ -40,17 +45,30 @@ Implementation rules:
 - **Offline operation is not detected, blocked, or warned about.** We do not add a network
   guard, a sandbox, a firewall check, or an offline mode flag. If the machine has no
   network, everything except `ges2t setup` simply works.
-- **The rule is auditable by reading.** Because there is exactly one network-touching
-  function, "does ges2t talk to the internet at runtime?" is answerable by reading that one
-  function and grepping for HTTP clients elsewhere. A future ticket that adds any other
-  network call must supersede this ADR.
+- **The rule is scoped to code we write and dependencies we declare.** It constrains ges2t's
+  own imports and behaviour, **not** the transitive dependency tree of a third-party backend.
+  A network library arriving inside `cactus-needle`'s dependency closure is not a violation of
+  this ADR; ges2t calling it outside acquisition would be. The obligation is therefore twofold:
+  (a) our source performs network I/O in exactly one function, and (b) we never *invoke* a
+  third-party fetch path at runtime — which is what ADR 0007's load-time assertion, the
+  `NEEDLE_WHISTLE_WEIGHTS`/`NEEDLE3_LIB_PATH` overrides and `HF_HUB_OFFLINE=1` (ADR 0017)
+  exist to guarantee.
+- **The rule is auditable by reading.** Concretely: grep our own `src/` for HTTP/network
+  clients (`urllib`, `httpx`, `requests`, `socket`) and confirm every hit is in
+  `model_store`'s acquisition path; and confirm `pyproject.toml` declares no HTTP client.
+  Do **not** attempt to audit the lockfile's transitive closure — it is third-party code we
+  do not call. A future ticket that adds any other network call of our own must supersede
+  this ADR.
 
 ## Consequences
 
 - The user's privacy posture is a code property, not a runtime policy, which is what they
   asked for — no guardrails, no false failures, no startup delay.
-- A reviewer can check compliance cheaply: grep the tree for network clients and confirm the
-  hits are in the acquisition path only. This is a legitimate review criterion.
+- A reviewer can check compliance cheaply and without ambiguity: grep our own source, and
+  read our own dependency list. Neither step requires reasoning about upstream packages.
+- The distinction matters practically: `cactus-needle`'s transitive HTTP stack is unavoidable
+  if we keep the integration path (ADR 0007), so a rule that banned it outright would
+  contradict an accepted decision. Scoping the rule to our code keeps both ADRs true.
 - Because we do not enforce offline-ness, a bug in the acquisition path could in principle
   be reached from elsewhere; the mitigation is structural (single call site, lazy imports)
   rather than defensive.

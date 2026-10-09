@@ -52,8 +52,10 @@ These are the epic's own criteria, verified by the orchestrator after the last t
       — ADR 0001.
 - [ ] A recording stopped before any audio arrived, a dead engine worker, and a failed
       injection each produce a visible error and leave the service usable — ADR 0015.
-- [ ] No code outside the acquisition path performs network I/O; grep for the project's
-      network clients returns hits only there — ADR 0018.
+- [ ] No code outside the acquisition path performs network I/O: grepping **our own `src/`**
+      for network clients returns hits only in `model_store`'s acquisition path, and
+      `pyproject.toml` declares no HTTP client. (The third-party transitive tree of
+      `cactus-needle` is explicitly out of scope for this check — ADR 0018.)
 - [ ] Every ticket's `docs/project/README.md` row is `done` and the merged diffs match the
       ADR decisions they implement.
 
