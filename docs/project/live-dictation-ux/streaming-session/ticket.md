@@ -1,7 +1,7 @@
 # Streaming session: drive capture through the windowed stream
 
 - **Priority:** P1
-- **Status:** in review
+- **Status:** done
 - **Complexity:** M
 - **Epic:** ../epic.md
 
@@ -88,8 +88,17 @@ ADR 0008 (capture as a subprocess with drain-on-stop), ADR 0014 (fakes only in t
   is `../streaming-wiring-and-e2e/ticket.md`'s job.
 - If you find yourself wanting to inject partial text, re-read ADR 0011: partials are for the
   tray/notification display only.
-- Use `threading.Thread(daemon=False)` and always join it, so a test failure cannot leave a
-  process behind.
+- ~~Use `threading.Thread(daemon=False)` and always join it~~ — **superseded; do not follow this
+  literally.** The original guidance was `daemon=False`, but the reviewer found that a lock
+  regression then made the suite report a failure and **hang** (`exit=124`): a leaked *non-daemon*
+  worker blocks `threading._shutdown`, and a bound on the *call* cannot kill a leaked thread. The
+  shipped code uses **`daemon=True`** with every main-thread `finish()`/`cancel()` bounded, so the
+  same mutation now exits non-zero in bounded time. See `003-review.md` for the trade-off and its
+  accepted cost: during service teardown, while `finish()` is still in flight past
+  `Service.shutdown()`'s 5 s bound, the process can exit and **drop an utterance** — a *lost
+  utterance*, never partial or corrupt text (ADR 0011). Whether that window should be surfaced
+  rather than dropped is recorded as a follow-up for the service layer (ticket 16 or a service
+  ticket).
 
 ## Related tickets
 
