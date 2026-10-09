@@ -1,7 +1,7 @@
 # Call StatusUI outside the state lock
 
 - **Priority:** P1
-- **Status:** in review
+- **Status:** done
 - **Complexity:** XS
 - **Epic:** ../epic.md
 
