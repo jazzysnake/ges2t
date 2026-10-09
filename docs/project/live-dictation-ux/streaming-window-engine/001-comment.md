@@ -162,3 +162,46 @@ source file` (not required by the DoD, but the test file is fully annotated too)
   design point that could require touching this module after review.
 - No `main` commit was made; the branch is `feat/streaming-window-engine` and the
   worktree is left in place for the reviewer.
+
+## Pre-review fix: language propagation (amends judgement call 3)
+
+The `language` gap noted in judgement call 3 above is now closed at the source,
+before review, so that ticket 14 does not have to edit this ticket's module.
+
+- `StreamingPass` gained `language: str | None = None`; it stays a frozen
+  dataclass and `committed`/`pending` are still required. Construction by keyword
+  is unchanged, so the shared `FakeStreamingDecoder` (and ticket 15) keep
+  working.
+- `drive()` propagates the **most recent non-`None`** language onto every yielded
+  `TranscriptionSegment`, partials and the final one alike. The rule: the engine
+  detects language per pass and an early pass may not have reported one yet, so a
+  later `None` must not erase a language already seen. The tracked value survives
+  window flushes, so the final segment carries the last non-`None` value the
+  decoder ever reported (ADR 0011: language is "whatever the engine says, taken
+  from the final committed pass").
+- `ttft_ms`/`decode_tps` are not added (ADR 0011: streaming JSON does not provide
+  them); `pass_ms` stays `None`.
+- `drive()`'s grouping, boundary-flush timing, transcript construction, and
+  single final segment are untouched; the seam/perfection assertions pass
+  unchanged.
+
+New tests in `tests/test_streaming.py` (22 total now, up from 19): the fake
+decoder accepts an optional `languages` sequence, and two tests cover the
+most-recent-non-`None` rule (including "later overrides earlier") and the
+never-reported case. The pre-existing `all(partial.language is None ...)`
+assertion in the partials test still holds because the fake defaults to no
+language.
+
+Real output after the fix:
+
+```
+$ uv run pytest tests/test_streaming.py -q
+22 passed in 0.16s
+
+$ uv run pytest
+138 passed in 0.41s
+
+$ uv run mypy src/ges2t
+Success: no issues found in 7 source files
+```
+

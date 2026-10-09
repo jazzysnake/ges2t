@@ -18,8 +18,10 @@ deterministic fake.
 
 Absolute timestamps are deliberately absent: the engine restarts its clock when
 a stream resets, so offsetting its word times by the window start would silently
-corrupt them (ADR 0011). Segments here therefore carry ``language=None`` and
-``pass_ms=None``; timing and language are the caller's concern.
+corrupt them (ADR 0011). Segments here therefore carry ``pass_ms=None``; timing
+is the caller's concern. ``language`` is the most recent non-``None`` language
+the decoder reported for the utterance (ADR 0011: language is whatever the
+engine says), or ``None`` if it never reported one.
 
 The window/chunk sizes are engine-specific configuration (ADR 0009, ADR 0011)
 and are passed in; this module only sanity-checks them so a programming error
@@ -48,12 +50,17 @@ class StreamingPass:
     live text that is never part of the final transcript unless a later pass or
     a :meth:`StreamingDecoder.flush` commits it.
 
+    ``language`` is the language the engine reported for this pass, or ``None``
+    when it reported none. It is not necessarily the utterance's language: the
+    driver keeps the most recent non-``None`` value across passes (ADR 0011).
+
     A frozen dataclass rather than a ``tuple[str, str]``: the two strings are
     easy to confuse positionally and the caller must not (ADR 0019).
     """
 
     committed: str
     pending: str
+    language: str | None = None
 
 
 @runtime_checkable
@@ -151,11 +158,19 @@ def _drive(
     """The generator behind :func:`drive`; arguments are already validated."""
     transcript = ""
     pending = ""
+    # The engine detects the language per pass and an early pass may not have
+    # reported one yet, so a later ``None`` must not erase a language already
+    # seen: track the most recent non-``None`` value and carry it forward, onto
+    # the final segment too (ADR 0011: the language is taken from the final
+    # committed pass).
+    language: str | None = None
     fed_samples = 0
     for group in _group_chunks(chunks, chunk_seconds=chunk_seconds):
         pass_ = decoder.process(group)
         transcript += pass_.committed
         pending = pass_.pending
+        if pass_.language is not None:
+            language = pass_.language
 
         # Sample-based accounting, never chunk counting: the boundary must fire
         # on the real duration even when the final group is short or long.
@@ -171,7 +186,7 @@ def _drive(
         if on_partial is not None:
             on_partial(text)
         yield TranscriptionSegment(
-            text=text, language=None, is_final=False, pass_ms=None
+            text=text, language=language, is_final=False, pass_ms=None
         )
 
     # A final flush even when the last group landed exactly on a boundary: the
@@ -179,7 +194,7 @@ def _drive(
     # the segment count stays deterministic.
     transcript += decoder.flush()
     yield TranscriptionSegment(
-        text=transcript, language=None, is_final=True, pass_ms=None
+        text=transcript, language=language, is_final=True, pass_ms=None
     )
 
 

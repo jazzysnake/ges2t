@@ -45,6 +45,10 @@ class FakeStreamingDecoder:
     engine must follow, because :func:`ges2t.streaming.drive` concatenates them
     verbatim), so ``committed + pending`` is always a clean prefix of the
     utterance.
+
+    ``languages`` optionally supplies the ``StreamingPass.language`` for each
+    ``process()`` call, in order; a shorter sequence, or ``None``, leaves the
+    later passes reporting ``None``. ``flush()`` never reports a language.
     """
 
     def __init__(
@@ -53,10 +57,14 @@ class FakeStreamingDecoder:
         *,
         total_samples: int,
         sample_rate: int = SAMPLE_RATE,
+        languages: Sequence[str | None] | None = None,
     ) -> None:
         self._words: list[str] = list(words)
         self._total_samples = total_samples
         self._sample_rate = sample_rate
+        self._languages: list[str | None] = (
+            list(languages) if languages is not None else []
+        )
         self.process_calls = 0
         self.flush_calls = 0
         #: Samples received by each process() call, in order.
@@ -101,7 +109,12 @@ class FakeStreamingDecoder:
         self._committed = commit_end
         self._available = available
         self.available_history.append(available)
-        return StreamingPass(committed=committed, pending=pending)
+        language = (
+            self._languages[self.process_calls - 1]
+            if self.process_calls - 1 < len(self._languages)
+            else None
+        )
+        return StreamingPass(committed=committed, pending=pending, language=language)
 
     def flush(self) -> str:
         self.flush_calls += 1
@@ -340,6 +353,62 @@ def test_partials_are_monotone_prefixes_of_the_final_text() -> None:
         assert final.text.startswith(segment.text)
         assert len(segment.text) >= len(previous)
         previous = segment.text
+
+
+# --------------------------------------------------------------------------- #
+# Language propagation
+# --------------------------------------------------------------------------- #
+
+
+def test_language_is_the_most_recent_non_none_reported_by_the_decoder() -> None:
+    buffers = make_varied_audio(5.0, chunk_seconds=1.0)
+    decoder = FakeStreamingDecoder(
+        ["a"] * 5,
+        total_samples=total_samples(buffers),
+        languages=["en", None, "es", None, None],
+    )
+
+    segments = run(decoder, buffers, window_seconds=5.0, chunk_seconds=1.0)
+
+    # Passes report en, None, es, None, None; a later None must not erase the
+    # language already seen, so the last non-None ("es") carries to the end.
+    assert decoder.process_calls == 5
+    assert [segment.language for segment in segments] == [
+        "en",
+        "en",
+        "es",
+        "es",
+        "es",
+        "es",
+    ]
+    assert segments[-1].is_final is True
+    assert segments[-1].language == "es"
+
+
+def test_later_language_replaces_an_earlier_one() -> None:
+    buffers = make_varied_audio(2.0, chunk_seconds=1.0)
+    decoder = FakeStreamingDecoder(
+        ["a", "b"],
+        total_samples=total_samples(buffers),
+        languages=["en", "de"],
+    )
+
+    segments = run(decoder, buffers, window_seconds=5.0, chunk_seconds=1.0)
+
+    assert [segment.language for segment in segments] == ["en", "de", "de"]
+    assert segments[-1].language == "de"
+
+
+def test_language_is_none_when_the_decoder_never_reports_one() -> None:
+    buffers = make_varied_audio(3.0, chunk_seconds=1.0)
+    decoder = FakeStreamingDecoder(
+        ["a", "b", "c"], total_samples=total_samples(buffers)
+    )
+
+    segments = run(decoder, buffers, window_seconds=5.0, chunk_seconds=1.0)
+
+    assert [segment.language for segment in segments] == [None] * 4
+    assert segments[-1].language is None
 
 
 # --------------------------------------------------------------------------- #
