@@ -52,8 +52,9 @@ speak → `ges2t toggle` types the right text into a text editor and a terminal.
 | 22 | [xkb-keycode-mapping](core-dictation-pipeline/xkb-keycode-mapping/ticket.md) — libxkbcommon reverse lookup, generic over layouts | M | done | 2 | feat/xkb-keycode-mapping (merged) |
 | 24 | [layout-detection-and-config](core-dictation-pipeline/layout-detection-and-config/ticket.md) — live keymap, KWin D-Bus, injection config blocks | S | done | 3 | feat/layout-detection-and-config (merged) |
 | 23 | [batched-key-emission](core-dictation-pipeline/batched-key-emission/ticket.md) — one `ydotool key` batch + the latency measurement | M | done | 7, 22, 24 | feat/batched-key-emission (merged) |
-| 25 | [clipboard-paste-injector](core-dictation-pipeline/clipboard-paste-injector/ticket.md) — `wl-copy` + paste chord as a configured alternative | S | done | 23, 24 | feat/clipboard-paste-injector (merged 2646212) |
+| 25 | [clipboard-paste-injector](core-dictation-pipeline/clipboard-paste-injector/ticket.md) — `wl-copy` + paste chord as a configured alternative | S | in progress | 23, 24 | feat/clipboard-paste-injector (merged 2646212; **manual gate FAILED** — `wl-copy` forks and we waited on its inherited pipes, so no paste ever happened. See 36) |
 | 28 | [injection-delay-default](core-dictation-pipeline/injection-delay-default/ticket.md) — set `key_delay_ms` from ticket 23's measurement (12 → 0) | XS | done | 23, 24 | feat/injection-delay-default (merged) |
+| 36 | [clipboard-injection-timeout](core-dictation-pipeline/clipboard-injection-timeout/ticket.md) — `wl-copy` forks by default, so the immediate path blocked on its inherited stdout/stderr pipes and reported failure after a successful write (corrective for 25; found by the user's manual run) | S | in progress | 25 | feat/clipboard-injection-timeout |
 
 ## Epic 2 — [Live dictation UX](live-dictation-ux/epic.md) · P1
 
@@ -102,6 +103,7 @@ independent and may run in parallel (they touch disjoint files).
 | 16 | 33 |
 | 17 | 34 |
 | 18 | 35 (independent: **nothing depends on it and it gates nothing**) |
+| 19 | 36 (corrective: the clipboard write timeout) |
 
 Serialization is also required wherever two tickets touch the same file: `10 → 11/12`
 (`cli.py`, `doctor.py`), `11 → 16` (`pipeline.py`), `17 → 18` (`pipeline.py`).
