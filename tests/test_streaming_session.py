@@ -93,6 +93,9 @@ def _call_with_timeout(fn: Callable[[], _T], *, timeout: float) -> _T:
 
     A session that held its lock across ``audio.stop()``/the engine call, or
     that waited for a partials consumer, would wedge here instead of hanging CI.
+    Every test that drives ``finish()``/``cancel()`` on the main thread goes
+    through this, so a wedged lifecycle fails as an assertion rather than
+    silence.
     """
     results: list[_T] = []
     errors: list[BaseException] = []
@@ -164,7 +167,7 @@ def test_start_starts_capture_and_reads_chunks_at_the_configured_size() -> None:
 
     session.start()
     _wait_for(lambda: "chunks" in audio.calls, description="the worker reading chunks")
-    text = session.finish()
+    text = _call_with_timeout(session.finish, timeout=2.0)
 
     assert text == "done"
     assert audio.calls == ["start", "chunks", "stop"]
@@ -179,21 +182,21 @@ def test_start_twice_is_rejected() -> None:
         with pytest.raises(StreamingSessionError, match="already"):
             session.start()
     finally:
-        session.cancel()
+        _call_with_timeout(session.cancel, timeout=2.0)
 
 
 def test_finish_before_start_is_defined() -> None:
     session, _, _ = _session([_final("done")])
 
     with pytest.raises(StreamingSessionError, match="before start"):
-        session.finish()
+        _call_with_timeout(session.finish, timeout=2.0)
 
 
 def test_cancel_before_start_is_defined() -> None:
     session, _, _ = _session([_final("done")])
 
     with pytest.raises(StreamingSessionError, match="before start"):
-        session.cancel()
+        _call_with_timeout(session.cancel, timeout=2.0)
 
 
 # -- final text is authoritative -------------------------------------------
@@ -205,7 +208,7 @@ def test_finish_returns_the_final_segment_text_including_the_flush_tail() -> Non
     )
 
     session.start()
-    text = session.finish()
+    text = _call_with_timeout(session.finish, timeout=2.0)
 
     assert text == "hello world again"
 
@@ -217,14 +220,14 @@ def test_finish_is_empty_when_the_stream_yields_no_final_segment() -> None:
 
     session.start()
 
-    assert session.finish() == ""
+    assert _call_with_timeout(session.finish, timeout=2.0) == ""
 
 
 def test_a_partial_that_looks_like_text_never_reaches_finish() -> None:
     session, _, _ = _session([_partial("POISON partial ONLY"), _final("clean final")])
 
     session.start()
-    text = session.finish()
+    text = _call_with_timeout(session.finish, timeout=2.0)
 
     assert text == "clean final"
     assert "POISON" not in text
@@ -234,7 +237,7 @@ def test_short_utterance_still_returns_its_final_text() -> None:
     session, _, _ = _session([_final("short but final")], buffers=[_buffer(0.2)])
 
     session.start()
-    text = session.finish()
+    text = _call_with_timeout(session.finish, timeout=2.0)
 
     assert text == "short but final"
 
@@ -243,8 +246,8 @@ def test_finish_twice_returns_the_cached_text_without_streaming_again() -> None:
     session, audio, transcriber = _session([_partial("a"), _final("a b")])
     session.start()
 
-    first = session.finish()
-    second = session.finish()
+    first = _call_with_timeout(session.finish, timeout=2.0)
+    second = _call_with_timeout(session.finish, timeout=2.0)
 
     assert first == second == "a b"
     assert transcriber.calls == ["stream"]
@@ -275,7 +278,7 @@ def test_partials_advance_and_consecutive_duplicates_are_dropped() -> None:
     session.start()
     consumer = threading.Thread(target=consume, daemon=True)
     consumer.start()
-    text = session.finish()
+    text = _call_with_timeout(session.finish, timeout=2.0)
 
     assert consumer_done.wait(timeout=2.0)
     consumer.join(timeout=2.0)
@@ -284,10 +287,47 @@ def test_partials_advance_and_consecutive_duplicates_are_dropped() -> None:
     assert "a b c d" not in collected
 
 
+def test_partials_allow_a_legitimate_non_consecutive_repeat() -> None:
+    """Dedup is consecutive-only, not global (both directions of the rule).
+
+    A value that legitimately repeats after an intervening different partial
+    must survive; only *adjacent* duplicates are dropped. This is the
+    "legitimate later repeat" direction that
+    :func:`test_partials_advance_and_consecutive_duplicates_are_dropped` does
+    not pin.
+    """
+    session, _, _ = _session(
+        [
+            _partial("a"),
+            _partial("a"),
+            _partial("a b"),
+            _partial("a b"),
+            _partial("a"),
+            _final("a b final"),
+        ]
+    )
+    collected: list[str] = []
+    consumer_done = threading.Event()
+
+    def consume() -> None:
+        collected.extend(session.partials())
+        consumer_done.set()
+
+    session.start()
+    consumer = threading.Thread(target=consume, daemon=True)
+    consumer.start()
+    text = _call_with_timeout(session.finish, timeout=2.0)
+
+    assert consumer_done.wait(timeout=2.0)
+    consumer.join(timeout=2.0)
+    assert text == "a b final"
+    assert collected == ["a", "a b", "a"]
+
+
 def test_partials_are_readable_after_finish_without_re_running_the_stream() -> None:
     session, _, transcriber = _session([_partial("a"), _partial("a b"), _final("a b c")])
     session.start()
-    session.finish()
+    _call_with_timeout(session.finish, timeout=2.0)
 
     assert list(session.partials()) == ["a", "a b"]
     assert transcriber.calls == ["stream"]
@@ -344,7 +384,7 @@ def test_cancel_stops_capture_joins_the_worker_and_types_nothing() -> None:
 
     # ``cancel()`` is annotated ``-> None``; it must not raise and must leave
     # nothing observable behind.
-    session.cancel()
+    _call_with_timeout(session.cancel, timeout=2.0)
 
     worker = session._worker
     assert worker is not None
@@ -360,8 +400,8 @@ def test_cancel_twice_is_idempotent() -> None:
     session, _, _ = _session([_final("done")])
     session.start()
 
-    session.cancel()
-    session.cancel()
+    _call_with_timeout(session.cancel, timeout=2.0)
+    _call_with_timeout(session.cancel, timeout=2.0)
 
 
 # -- error propagation ------------------------------------------------------

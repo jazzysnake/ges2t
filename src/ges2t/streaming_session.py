@@ -45,8 +45,15 @@ exactly how this design deadlocks. :meth:`finish` and :meth:`cancel` stop
 capture and join the worker outside the lock; ``partials()`` releases the lock
 while it waits.
 
-The worker is a non-daemon thread and both :meth:`finish` and :meth:`cancel`
-join it, so a failure can never leave the process behind.
+The worker is a **daemon** thread, deliberately: a worker that wedges while the
+lock is held (a lifecycle bug) must never be able to trap the process at
+interpreter shutdown, because :mod:`threading` only joins non-daemon threads.
+Both :meth:`finish` and :meth:`cancel` still join it on the normal path, so the
+transcript is complete before either returns; the daemon flag changes only the
+failure path, from "the process hangs forever" to "the process can always
+exit". The join itself is unbounded on purpose (see :meth:`_stop_capture`): a
+legitimately slow final flush is indistinguishable from a wedged one, so no
+timeout is safe there (ADR 0011).
 """
 
 from __future__ import annotations
@@ -132,8 +139,11 @@ class StreamingDictationSession:
                 raise StreamingSessionError("start() has already been called")
             self._lifecycle = _Lifecycle.RECORDING
         self._audio.start()
+        # daemon=True is the process-level guard: if a future regression wedges
+        # the worker while finish()/cancel() holds the lock, interpreter
+        # shutdown must still be able to exit instead of joining it forever.
         worker = threading.Thread(
-            target=self._run, name="ges2t-streaming-worker", daemon=False
+            target=self._run, name="ges2t-streaming-worker", daemon=True
         )
         with self._condition:
             self._worker = worker
@@ -240,6 +250,10 @@ class StreamingDictationSession:
         except BaseException as exc:
             stop_error = exc
         if worker is not None:
+            # Unbounded on purpose: the final flush's latency (model-dependent
+            # and potentially long) is not bounded, so any timeout here could
+            # truncate a valid transcript. The daemon worker is the guard if
+            # the engine wedges instead of the lock.
             worker.join()
         return stop_error
 
