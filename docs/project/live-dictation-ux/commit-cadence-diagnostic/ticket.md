@@ -32,10 +32,20 @@ it is built.
 A measurement harness that drives the **real** engine over **real recorded speech** through the
 shipped `drive()` / streaming adapter, and reports:
 
-- [ ] **The append-only property, over every intermediate segment.** For each utterance, assert that
-      every emitted value of `transcript` is a **prefix** of the final transcript, and report pass/fail
-      per utterance plus a total. **This is the load-bearing safety property.** If it fails, say so
-      plainly: the feature is unsafe and ticket 34 is cancelled.
+- [ ] **The committed words are new text (the real test).** Measure a restatement two ways that can
+      actually fail, per utterance and in total:
+      1. **committed-word overlap scan** — does any later commit begin by repeating words already
+         committed? Report every hit verbatim.
+      2. **batch-reference diff** — diff the final streaming transcript against a one-shot batch
+         transcription of the **same gate-passed audio**, so the only remaining difference is
+         windowing. Report substitutions / insertions / deletions and WER, and flag any phrase the
+         streaming path repeats that the batch reference does not.
+      A hit from either detector is a STOP: the engine's committed deltas are not append-only on real
+      speech, so ticket 34 is cancelled or redesigned.
+- [ ] **The append-only prefix invariant (structural check, not a test).** For each utterance, report
+      that every intermediate `transcript` value is a **prefix** of the final transcript. This is a
+      tautology over the `+=` fold — it cannot fail on its own — so keep it as a regression invariant,
+      not as evidence of the safety property.
 - [ ] **Commit cadence.** How often does `pass_.committed` become non-empty, and how many characters
       does each commit carry? Report a distribution (median / p90 / max) and the typical gap **in
       seconds between commits**. This number decides how bad a focus slip actually is.

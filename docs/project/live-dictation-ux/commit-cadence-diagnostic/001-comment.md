@@ -4,8 +4,10 @@
 - **Branch:** `feat/commit-cadence-diagnostic`
 - **Worktree:** `.worktrees/commit-cadence-diagnostic`
 - **Date:** 2026-10-09
-- **Status of the gate:** **open** — the clip half is measured and clean; the fresh real-device
-  recording is the user-owned step and is still missing.
+- **Status of the gate:** **measured on the clips and on the fresh real-device recording**. The
+  fresh recording below was run by the user, not by the implementer; the verdict logic has since
+  been wired to the batch-reference diff (R1) and the reference recomputed on the gate-passed audio
+  (R2). See [003-comment.md](003-comment.md) for the post-review state and the re-run numbers.
 
 ## 1. Headline
 
@@ -20,10 +22,18 @@ On the two shipped clips, **32 s of audio fed to the real engine, 24 commits**:
 | median `pending` size | **22 characters** (p90 38.6, max 51) |
 | median time a `pending` tail stayed unchanged | **1.00 s** of source audio |
 
-**Preliminary recommendation: proceed with a named caveat.** Type each non-empty commit as it
-arrives, never `pending`. This is preliminary because the clips are *read* speech: they carry
-neither this machine's microphone noise floor nor the user's voice, which is the whole lesson of
-the silence saga (§7).
+**Fresh real-device recording (user-run, §3.1), folded in:** 25.04 s recorded / 25.00 s fed, **6**
+`flush()` calls, **17** commits, median **17** characters per commit, median gap **1.00 s** of
+source audio (p90 2.50 s, max 4.00 s), median `pending` **18** characters persisting **1.00 s**,
+`restatements: 0`. It carries this device's noise floor and the user's voice, which the clips do
+not.
+
+**Recommendation: proceed with a named caveat.** Type each non-empty commit as it arrives, never
+`pending`. The clips are *read* speech; the fresh recording is the real-device control.
+
+> **Notable real-device observations (verbatim evidence in §3.1).** The `Thank you.` hallucination
+> appeared in `pending` **twice** (t=0 and t=+10 s) and was **never committed**. The mid-utterance
+> pause produced a **committed** `' Great night.'`.
 
 ## 2. What the harness is
 
@@ -63,12 +73,15 @@ engine's committed deltas are **new** text:
 
 1. **committed-word overlap scan** — does any later commit begin by repeating words already
    committed? (That is what a restatement looks like through this seam.)
-2. **one-shot batch-reference diff** — the same audio transcribed by the same adapter on the
-   batch path, compared word-for-word with the streaming transcript (normalised: case-folded,
-   punctuation dropped, `3.2` kept intact). A full-text-not-a-delta engine, a duplicated window
-   tail, or a wholesale re-commit would all show up here.
+2. **one-shot batch-reference diff** — the final streaming transcript compared word-for-word with
+   a one-shot batch transcription of the **same gate-passed audio** (the chunks streaming was fed,
+   with the gated silence removed); normalised case-folded, punctuation dropped, `3.2` kept intact.
+   This is a *divergence detector*, not an accuracy score. A divergence (substitutions, insertions,
+   deletions) is reported as a named caveat; the signal that can stop the gate is a phrase the
+   streaming path repeats that the batch reference does not, which is the non-adjacent re-commit the
+   overlap scan misses.
 
-Both are reported per input.
+Both are reported per input, and the recommendation consults both.
 
 ### 2.2 The detector is validated, not assumed: `--self-test`
 
@@ -165,6 +178,58 @@ prefix property        : 2/2 inputs PASS
 committed-word repeats : 0 hit(s), 0 with 2+ words
 ```
 
+### 3.1 Fresh real-device recording (user-run, 2026-10-09 19:58)
+
+This is the real-device input the ticket requires: the user's own voice through the real
+`pw-record` path, on this machine's noise floor with a deliberate mid-utterance pause. **The user
+ran it, not the implementer** — the agent must never record the microphone. Full report:
+`/tmp/ges2t-commit-cadence-20261009-195815-report.txt`; WAV:
+`/tmp/ges2t-commit-cadence-capture-20261009-195914.wav` (under `/tmp` only, never committed).
+
+```
+duration        : 25.04 s recorded, 25.00 s fed to the engine
+flush() calls   : 6 total, 5 window crossings inside the audio
+[1] append-only : 17 intermediate transcript snapshots checked; PASS
+[2] commit cadence: 17 commits over the utterance
+    chars per commit : median 17.0 | p90 38.4 | max 63.0 | n=17
+    gap, source secs : median 1.00s | p90 2.50s | max 4.00s | n=16
+[3] pending size : median 18.0 | p90 49.0 | max 72.0 | n=31
+    pending persistence (source secs): median 1.00s | p90 1.00s | max 1.00s | n=29
+[4] restatements: 0 committed deltas repeat already-committed words at their start (0 with 2+ words)
+    vs one-shot batch reference: substitutions=17 insertions=4 deletions=0 WER=0.339 (n=62 reference words)
+```
+
+**On the four insertions (the R1 trap).** They are ordinary decoding divergence, not duplicated
+text: the batch path renders `Last night's torrent ... powered roughly 4,000 tons` where the
+streaming path says `Last night storm ... power to roughly 4,000`, and the batch path has no
+`Great night.` at all. No 2+ word phrase is repeated in the streaming transcript, so the
+restatement detector stays quiet. This is exactly why the R1 trigger is **not** `insertions > 0`:
+a clean recording has insertions.
+
+**Verbatim final transcript for the user's eyeball check** (the harness prints it raw; there is no
+scoring):
+
+```
+Good morning. Last night storm no doubt power to roughly 4,000. and homes across the northern rally
+and cruise expects restore most of them by Friday afternoon. Officials say the reverse crested at
+3.2 meters just after Great night. Well, below the front barrier. Is that reading correct? Do low
+light. road drawing close to night and the fairy service resumes at half past six.
+```
+
+**Two observations the ticket asked to record:**
+
+* The `Thank you.` hallucination appeared in `pending` **twice** — at `t=+0.00 s` (`'Thank you.'`)
+  and `t=+10.00 s` (`' Thank you.'`) — and was **never committed**. The two-pass commit rule
+  filtered it, which is the property the design depends on.
+* The deliberate mid-utterance pause produced a **committed** `' Great night.'` at `t=+16.00 s`
+  (the `Great night.` had sat in `pending` the previous pass). That is the `flush()`/re-commit path
+  the ticket warned is most likely to restate; here it committed new text and did not restate.
+
+**Run-to-run caveat for anyone reusing the WAV.** Re-measuring the persisted WAV (int16, with 1262
+samples at the clip point) does not reproduce the live float32 run's transcript exactly, though it
+is deterministic across repeated reads and still reports 0 restatements. The live numbers above are
+the authoritative fresh-recording measurement; the re-run numbers are in 003-comment.md.
+
 ## 4. Verbatim evidence that `pending` is the part that gets revised
 
 The two-pass commit rule is visible directly in the seam record. For `clip5.wav`, the tail that
@@ -218,40 +283,46 @@ the transcript against what they read), not a typing-safety matter: nothing need
 
 ## 6. The recommendation, with the numbers behind it
 
-**Proceed with the named caveat** (as printed by the harness):
+**Proceed with the named caveat.** With the fresh recording folded in (§3.1) the measured totals
+are **3 inputs, 57.0 s of audio fed, 40 commits, 0 committed-word repeats, 0 repeated phrases the
+batch reference does not repeat**. The harness's own summary (post-R1; see 003-comment.md for the
+full wording) now consults both detectors:
 
-> On 2 inputs (32.0 s of audio) no committed delta restated already-committed text, and every
-> intermediate transcript snapshot was a prefix of the final one. The measurements support typing
-> each non-empty commit as it arrives: a median of 20 characters per commit, one commit every
-> 1.00 s of source audio (p90 2.90 s, shortest 1.00 s). Because audio arrives in real time, the
-> injector never needs to fire more often than about once every 1.00 s.
+> PROCEED WITH THE NAMED CAVEAT. … no committed delta repeated 2+ already-committed words, and no
+> phrase was repeated by the streaming path that the batch reference does not repeat.
+>
+> CAVEAT 0b: on 2 input(s) the streaming and batch transcripts diverge (substitutions / insertions
+> / deletions above). That is wording or windowing difference, not a restatement: insertions on
+> their own are not re-committed text. The batch number is a divergence detector, not an accuracy
+> score (no ground-truth reference exists here).
 >
 > CAVEAT 1: the injection unit is the commit delta, never `pending`.
-> CAVEAT 2: the shipped clips are read speech; the fresh user recording must be added before the
-> gate can be considered closed.
-> CAVEAT 3: the engine is closed-source (ADR 0006); a restatement outside this input set cannot
-> be ruled out, so the injector should stay cancel-safe.
+> CAVEAT 2: the shipped clips are read speech; a measurement without a fresh user recording does
+> not carry this device's noise floor or this user's voice.
+> CAVEAT 3: the engine is closed-source (ADR 0006); a restatement outside this input set cannot be
+> ruled out, so the injector should stay cancel-safe.
 
-If the fresh recording produces a 2+ word committed repeat, the harness says **STOP** in the
-summary and this commentary is superseded: stop and report, do not engineer around it.
+If either detector reports a repeat on a later input, the harness says **STOP** in the summary and
+this commentary is superseded: stop and report, do not engineer around it.
 
-## 7. What could not be measured without the user, and the exact command to fix that
+## 7. The user-owned capture — executed
 
 The agent **must not** record the microphone: it cannot tell the user when to start. The harness
 refuses to record when stdin is not a terminal (`--capture` under automation exits 1 with a clear
-message), which was verified.
-
-Still missing:
+message), which was verified. **The user ran the capture on 2026-10-09 at 19:58**, producing the
+recording in §3.1. Of the four items that needed the user:
 
 1. this device's **own noise floor** and the **user's own voice** through the real `pw-record`
-   path — the only input that carries them;
-2. a real **mid-utterance pause**, where a `flush()`-committed tail is most likely;
+   path — measured (§3.1);
+2. a real **mid-utterance pause**, where a `flush()`-committed tail is most likely — measured: it
+   produced a committed `' Great night.'` and no restatement (§3.1);
 3. confirmation that the **silence gate** behaves the same way on the live device as on the
-   clips (chunk drops change how often the window fills);
-4. the user's own **eyeball check of the transcript** against the passage they read (there is no
-   scoring in the harness; the raw final transcript is printed verbatim for exactly this).
+   clips — measured: 25.04 s recorded, 25.00 s fed, 6 `flush()` calls, so the gate dropped only
+   the short tail chunk;
+4. the user's own **eyeball check of the transcript** against the passage they read — the raw
+   transcript is reproduced in §3.1 for exactly this; the implementer cannot perform it.
 
-### The command the user must run
+### The command the user ran
 
 From the worktree, in their own terminal:
 
@@ -290,9 +361,9 @@ uv run python docs/project/live-dictation-ux/commit-cadence-diagnostic/measure_c
 9. `--- summary and recommendation ---` with the aggregate numbers and the proceed/stop verdict.
 10. `full report written to /tmp/ges2t-commit-cadence-<timestamp>-report.txt`.
 
-**What to hand back:** the path printed on the last line (or the whole file). The numbers in
-§1–§3 above can then be compared with the fresh input's numbers directly, because the harness
-prints them in the same shape.
+**Hand-back:** the user returned the full report (path on the last line; archived at
+`/tmp/ges2t-commit-cadence-20261009-195815-report.txt`). Its numbers are folded into §1 and §3.1
+above, and the WAV it wrote is the re-runnable artifact used by 003-comment.md.
 
 ## 8. Verification run before hand-back
 
@@ -312,10 +383,11 @@ engine-free (ADR 0014). The harness itself is mypy-clean on its own
 
 | ticket DoD item | status |
 |---|---|
-| append-only property, per utterance and total | done for the clips (24/24 snapshots, 2/2 inputs); detector validated by `--self-test` |
-| commit cadence: distribution and gap in seconds | done for the clips (§3) |
-| `pending` size and persistence | done for the clips (§3) |
-| any observed restatement, verbatim | none observed on the clips; detector proven non-vacuous; full text printed so a restatement would be visible |
-| shipped clips **plus at least one fresh real-device recording** | **not done** — the clips are measured; the fresh recording is the user-owned step in §7 |
-| capture step user-owned and self-announcing | implemented and reviewed (§7); the run itself is the user's |
-| recommendation with the numbers behind it | done, preliminary (§6), to be confirmed by the fresh recording |
+| committed words are new text: overlap scan + batch-reference diff | done; both detectors implemented and validated (`--self-test`, plus a real-clip30 non-adjacent-repeat mutation); 0 hits on clips and fresh recording |
+| append-only prefix (structural invariant, not a test) | done for all inputs (40/40 snapshots); documented as a tautology over the `+=` fold, see 003-comment.md and the corrected ticket DoD |
+| commit cadence: distribution and gap in seconds | done for the clips (§3) and the fresh recording (§3.1) |
+| `pending` size and persistence | done for the clips (§3) and the fresh recording (§3.1) |
+| any observed restatement, verbatim | none observed on clips or fresh recording; detector proven non-vacuous; full text printed so a restatement would be visible |
+| shipped clips **plus at least one fresh real-device recording** | **done** — 25.04 s user-run recording folded in (§3.1) |
+| capture step user-owned and self-announcing | implemented and reviewed; the run itself was the user's (§7) |
+| recommendation with the numbers behind it | done (§6); the verdict now consults both detectors, see 003-comment.md |
