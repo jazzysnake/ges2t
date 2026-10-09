@@ -54,6 +54,7 @@ __all__ = [
     "MODEL_SIZE",
     "MODEL_URL",
     "MODEL_VERSION",
+    "PINNED_CACTUS_NEEDLE_VERSION",
     "PLATFORM_KEY",
     "SUPPORTED_ENGINE_PLATFORMS",
     "ArtifactPin",
@@ -79,6 +80,18 @@ MODEL_VERSION: str = "2.0.0"
 
 #: Version directory for the Needle 3 engine pin.
 ENGINE_VERSION: str = "3.2.0"
+
+#: The ``cactus-needle`` *distribution* version ges2t is built and tested
+#: against. It is the same pin ``pyproject.toml`` declares as
+#: ``cactus-needle==<version>``, kept here so ``ges2t doctor`` can compare the
+#: *installed* distribution against it without reading the source tree. The
+#: streaming decoder is coupled to this package's exact generator shape (one
+#: dict per ``next()``, a terminal tail dict, and the engine's own ``stop()``),
+#: so a silent upgrade can break the real seam while the fake-based suite stays
+#: green (ticket 14's review, risk R1). Doctor WARNs on the skew; the adapter
+#: deliberately does not assert it, because a cosmetic mismatch must not fail
+#: dictation at runtime.
+PINNED_CACTUS_NEEDLE_VERSION: str = "3.1.3"
 
 #: Upstream URL for the Whistle weights. ``/resolve/`` redirects to a CDN; the
 #: stdlib opener follows that redirect (verified against the real endpoint).
