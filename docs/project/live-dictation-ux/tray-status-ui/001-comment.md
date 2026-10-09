@@ -471,3 +471,81 @@ deleted (R3), and are bounded (monkeypatched `serve`, no waits).
    `pystray.Icon.__module__ == "pystray._appindicator"` check is byte-identical.
 4. The manual desktop tray-visibility DoD remains user-owned and unticked; this
    agent opened no window, created no tray icon and ran no `ges2t run`.
+
+## 001b — Addendum: review-003 §4 fix (thread-start regression)
+
+Review 003 §4 is the only blocking item; §2/§3 stand RESOLVED and §5 is
+non-blocking, so this addendum is one targeted fix. Narrowing `build_status_ui`
+to `TrayBackendError` + `(ImportError, ModuleNotFoundError, OSError)` had also
+stopped catching the environmental `RuntimeError` CPython raises when the OS
+refuses a thread. That escaped `build_status_ui` and `run_service` and aborted
+`ges2t run` — the outcome ADR 0013 forbids.
+
+### The fix — a local catch at the failing operation
+
+`TrayStatusUI.start()` now wraps **only** the single `thread.start()` call
+(`src/ges2t/ui/tray.py`):
+
+```python
+try:
+    thread.start()
+except RuntimeError as exc:
+    raise TrayBackendError(f"the tray thread could not be started ({exc})") from exc
+```
+
+`build_status_ui`'s existing `except TrayBackendError` branch then degrades to
+`NullStatusUI` + the two warning lines; **no change to `build_status_ui`**. The
+catch is local and specific, so a programming `RuntimeError` anywhere else still
+propagates and the 002 finding is not re-opened (catching bare `RuntimeError` in
+`build_status_ui` would have re-swallowed it, and was rejected). `TrayBackendError`'s
+docstring and `start()`'s `:raises:` line were widened so a thread failure is not
+mis-described as a backend-selection failure.
+
+### Test and falsification (review 003, Angle A)
+
+New test `test_build_status_ui_falls_back_when_the_tray_thread_cannot_start`
+exercises the real `pipeline.build_status_ui` path with the backend assertion
+stubbed, `_create_icon` stubbed to a display-free icon, and
+`tray.threading` replaced by `_RefusingThread` (whose `start()` raises
+`RuntimeError("can't start new thread")`). It asserts `NullStatusUI`, the
+`the tray thread could not be started` warning, the `can't start new thread`
+detail, and `fully usable from the CLI`.
+
+**Falsified, not accepted:** removing the local catch and re-running the test
+under cleared caches made the exception propagate straight out of
+`build_status_ui`:
+
+```
+src/ges2t/ui/tray.py:286: in start
+    thread.start()
+E   RuntimeError: can't start new thread
+1 failed in 0.24s
+```
+
+Restored, cleared caches again (`rm -rf __pycache__ .mypy_cache`) and re-ran.
+
+### Verification and scope
+
+```
+$ uv run pytest -q
+550 passed in 3.48s
+
+$ rm -rf .mypy_cache __pycache__ && uv run mypy src/ges2t tests
+Success: no issues found in 39 source files
+```
+
+Before: **549** tests / 39 mypy files. After: **550** (one added; none deleted,
+skipped, xfailed or weakened; the 5-class programming-error test still raises and
+the 3-class environmental test still falls back, both untouched). Files touched:
+`src/ges2t/ui/tray.py`, `tests/test_tray_backend.py`, this file. The manual
+desktop DoD box remains user-owned and unticked; no tray icon, window or
+`ges2t run` was created.
+
+### What the re-reviewer must check
+
+1. The catch wraps only `thread.start()` in `TrayStatusUI.start()` and raises
+   `TrayBackendError`; `build_status_ui`'s clause is still
+   `TrayBackendError` + `(ImportError, ModuleNotFoundError, OSError)`.
+2. The new test fails (RuntimeError escapes) when that local catch is removed.
+3. The 5 programming-error classes still raise; the 3 environmental classes and
+   the assertion-failure test still fall back.
