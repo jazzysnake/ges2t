@@ -58,7 +58,7 @@ from ges2t.audio.pw_record import PwRecordAudioSource
 from ges2t.config import Config
 from ges2t.injectors.layout import YdotoolConfig
 from ges2t.injectors.ydotool import XkbKeySequenceSource, YdotoolInjector
-from ges2t.interfaces import AudioSource, Injector, StatusUI, Transcriber
+from ges2t.interfaces import AudioSource, Injector, LiveText, StatusUI, Transcriber
 from ges2t.notify import NotifyingStatusUI
 from ges2t.service import CommandResponse, DictationSession, Service
 from ges2t.socket_proto import (
@@ -139,7 +139,7 @@ class BatchDictationSession:
         """Begin capturing audio; returns promptly and transcribes nothing."""
         self._audio_source.start()
 
-    def partials(self) -> Iterator[str]:
+    def partials(self) -> Iterator[LiveText]:
         """Yield nothing: the batch path produces no partial text (ADR 0011)."""
         return iter(())
 

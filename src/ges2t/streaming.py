@@ -35,7 +35,7 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from ges2t.interfaces import AudioBuffer, TranscriptionSegment
+from ges2t.interfaces import AudioBuffer, LiveText, TranscriptionSegment
 
 __all__ = ["StreamingDecoder", "StreamingPass", "drive"]
 
@@ -98,7 +98,7 @@ def drive(
     *,
     window_seconds: float,
     chunk_seconds: float,
-    on_partial: Callable[[str], None] | None = None,
+    on_partial: Callable[[LiveText], None] | None = None,
 ) -> Iterator[TranscriptionSegment]:
     """Drive ``decoder`` over ``chunks``, yielding partials and one final segment.
 
@@ -114,9 +114,10 @@ def drive(
        ``decoder.flush()``, append its return value, and continue on a fresh
        stream;
     4. after each group yield a non-final
-       :class:`~ges2t.interfaces.TranscriptionSegment` whose text is
-       ``committed + pending`` -- display-only live text, never injected -- and
-       pass the same string to ``on_partial`` when one is supplied;
+       :class:`~ges2t.interfaces.TranscriptionSegment` whose ``live`` is the
+       committed transcript so far plus the current stream's pending tail --
+       display-only live text, never injected -- and pass the same value to
+       ``on_partial`` when one is supplied;
     5. at end of input, ``flush()`` a final time and yield exactly one final
        segment (``is_final=True``) holding the whole accumulated transcript.
 
@@ -153,7 +154,7 @@ def _drive(
     *,
     window_seconds: float,
     chunk_seconds: float,
-    on_partial: Callable[[str], None] | None,
+    on_partial: Callable[[LiveText], None] | None,
 ) -> Iterator[TranscriptionSegment]:
     """The generator behind :func:`drive`; arguments are already validated."""
     transcript = ""
@@ -182,19 +183,28 @@ def _drive(
             pending = ""
             fed_samples = 0
 
-        text = transcript + pending
+        # ``transcript`` is the cumulative committed prefix (append-only) and
+        # ``pending`` is the current stream's replaced unconfirmed tail. They
+        # are carried to the consumer separately: merging them here would
+        # destroy the boundary and make the committed prefix unrecoverable
+        # (ticket ``committed-delta-interface``).
+        live = LiveText(committed=transcript, pending=pending)
         if on_partial is not None:
-            on_partial(text)
+            on_partial(live)
         yield TranscriptionSegment(
-            text=text, language=language, is_final=False, pass_ms=None
+            live=live, language=language, is_final=False, pass_ms=None
         )
 
     # A final flush even when the last group landed exactly on a boundary: the
     # new stream has nothing pending, so it contributes the empty string, and
-    # the segment count stays deterministic.
+    # the segment count stays deterministic. The final segment is cumulative:
+    # ``committed`` is the whole transcript and there is no pending tail.
     transcript += decoder.flush()
     yield TranscriptionSegment(
-        text=transcript, language=language, is_final=True, pass_ms=None
+        live=LiveText(committed=transcript, pending=""),
+        language=language,
+        is_final=True,
+        pass_ms=None,
     )
 
 

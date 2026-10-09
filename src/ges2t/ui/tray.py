@@ -38,6 +38,7 @@ import threading
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from ges2t.interfaces import LiveText
 from ges2t.service import Command, CommandResponse
 from ges2t.ui.status import StatusState, TrayFailure
 
@@ -326,9 +327,9 @@ class TrayStatusUI:
         self._last_error = message
         self._set_state(StatusState.ERROR)
 
-    def partial(self, text: str) -> None:
+    def partial(self, live: LiveText) -> None:
         """Show display-only live text in the tooltip; it is **never** typed (ADR 0011)."""
-        self._partial = text
+        self._partial = live.display
         self._apply_display()
 
     # -- internals --------------------------------------------------------

@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
+from ges2t.interfaces import LiveText
+
 __all__ = [
     "DiagnosticStatusUI",
     "NullStatusUI",
@@ -85,7 +87,7 @@ class NullStatusUI:
         """Report a failure on stderr until a real status UI exists."""
         print(f"ges2t: {message}", file=sys.stderr)
 
-    def partial(self, text: str) -> None:
+    def partial(self, live: LiveText) -> None:
         """Show display-only live text (no-op; never typed, ADR 0011)."""
 
 

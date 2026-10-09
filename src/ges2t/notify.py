@@ -46,7 +46,7 @@ import time
 from collections.abc import Callable, Sequence
 from typing import Protocol
 
-from ges2t.interfaces import StatusUI
+from ges2t.interfaces import LiveText, StatusUI
 from ges2t.ui.status import DiagnosticStatusUI, StoppableStatusUI, TrayFailure
 
 __all__ = [
@@ -185,9 +185,9 @@ class NotifyingStatusUI:
         """Forward the transcribing state; never notifies."""
         self._wrapped.transcribing()
 
-    def partial(self, text: str) -> None:
+    def partial(self, live: LiveText) -> None:
         """Forward display-only live text; never notifies (ADR 0011)."""
-        self._wrapped.partial(text)
+        self._wrapped.partial(live)
 
     def error(self, message: str) -> None:
         """Notify once (best-effort), then forward the message unchanged.

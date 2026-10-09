@@ -34,6 +34,7 @@ __all__ = [
     "AudioBuffer",
     "AudioSource",
     "Injector",
+    "LiveText",
     "ProgressCallback",
     "StatusUI",
     "Transcriber",
@@ -64,18 +65,64 @@ class AudioBuffer:
 
 
 @dataclass(frozen=True)
+class LiveText:
+    """One pass of live streaming text, with its two lifetimes kept apart.
+
+    The two parts have different lifetimes and must not be merged before a
+    consumer can see the boundary (ticket ``committed-delta-interface``):
+
+    * ``committed`` is the text the engine has **confirmed**. It is
+      **cumulative**: the running transcript, including every window flush so
+      far. It is **append-only** -- each successive value is a prefix of the
+      next, and the final segment's ``committed`` is the whole transcript. It is
+      *not* the per-pass delta: ``StreamingPass.committed`` is that delta, and
+      ``drive()`` folds it into this cumulative value.
+    * ``pending`` is the current pass's **unconfirmed** tail. It is *replaced*
+      on every pass and is display-only: it never becomes part of the final
+      transcript unless a later pass or a flush commits it (ADR 0011).
+
+    ``display`` is ``committed + pending`` -- the byte-for-byte string the tray
+    rendered before the split, and the only form a display surface should show.
+    A consumer that types text must use ``committed`` alone, never ``display``
+    (ticket ``incremental-typing``); the class exists so the two strings cannot
+    be confused positionally (ADR 0019).
+    """
+
+    committed: str
+    pending: str
+
+    @property
+    def display(self) -> str:
+        """``committed + pending``: the display-only live string (ADR 0011)."""
+        return self.committed + self.pending
+
+
+@dataclass(frozen=True)
 class TranscriptionSegment:
     """One streaming result: a non-final partial or the final segment.
+
+    ``live`` carries the committed prefix and the pending tail **separately**;
+    ``text`` is their concatenation (``live.display``) and is display-only,
+    never injected (ADR 0011). On the final segment ``pending`` is empty, so
+    ``text`` and ``live.committed`` are both the whole accumulated transcript.
+    Keeping the boundary intact here is what lets a later consumer type the
+    committed part without inferring it from two partials (which is impossible
+    to do safely).
 
     ``pass_ms`` is the engine's own per-pass timing where it reports one
     (streaming exposes ``pass_ms``; it has no ``ttft_ms``/``decode_tps``), and
     is ``None`` when the engine does not report it (ADR 0011).
     """
 
-    text: str
+    live: LiveText
     language: str | None
     is_final: bool
     pass_ms: float | None
+
+    @property
+    def text(self) -> str:
+        """The display text, ``committed + pending`` (ADR 0011)."""
+        return self.live.display
 
 
 @dataclass(frozen=True)
@@ -195,6 +242,12 @@ class StatusUI(Protocol):
         """Show an actionable error message."""
         ...
 
-    def partial(self, text: str) -> None:
-        """Show display-only live transcription text."""
+    def partial(self, live: LiveText) -> None:
+        """Show display-only live text; render ``live.display``, never inject it.
+
+        ``live`` carries the committed prefix and the pending tail separately so
+        that a consumer can act on the committed part alone (ticket
+        ``incremental-typing``); this display surface still shows the whole
+        ``committed + pending`` string and must never be injected (ADR 0011).
+        """
         ...
