@@ -69,7 +69,7 @@ documentation that takes a fresh machine to a working dictation.
 | 17 | [tray-status-ui](live-dictation-ux/tray-status-ui/ticket.md) — pystray AppIndicator + backend assertion | M | done | 10, 11, 21 | feat/tray-status-ui (merged) |
 | 18 | [notifications-and-cancel](live-dictation-ux/notifications-and-cancel/ticket.md) — `notify-send` on failure | S | done | 16, 17 | feat/notifications-and-cancel (merged) |
 | 19 | [user-documentation-and-setup-guide](live-dictation-ux/user-documentation-and-setup-guide/ticket.md) — README + setup guide + unit file | M | to do | 10, 11, 12, 16, 17, 18 | — |
-| 32 | [commit-cadence-diagnostic](live-dictation-ux/commit-cadence-diagnostic/ticket.md) — measure commit cadence and prove the committed deltas are new text (the gate for 34) | S | in review | 13, 14, 15, 16 | feat/commit-cadence-diagnostic (gate closed, review PASS) |
+| 32 | [commit-cadence-diagnostic](live-dictation-ux/commit-cadence-diagnostic/ticket.md) — measure commit cadence and prove the committed deltas are new text (the gate for 34) | S | done | 13, 14, 15, 16 | feat/commit-cadence-diagnostic (merged 1356f88) |
 | 33 | [committed-delta-interface](live-dictation-ux/committed-delta-interface/ticket.md) — carry committed text separately from the pending tail | S | in progress | 32 | feat/committed-delta-interface |
 | 34 | [incremental-typing](live-dictation-ux/incremental-typing/ticket.md) — type committed words as they are committed (amends ADR 0011) | M | to do | 32, 33 | — |
 | 35 | [streaming-vs-batch-quality](live-dictation-ux/streaming-vs-batch-quality/ticket.md) — measure streaming vs batch **accuracy against ground truth** (gates nothing, blocks nothing) | M | to do | — | — |
