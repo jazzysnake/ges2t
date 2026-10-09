@@ -1,7 +1,7 @@
 # Tray status UI
 
 - **Priority:** P1
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** M
 - **Epic:** ../epic.md
 
@@ -29,9 +29,9 @@ display-only).
 
 ## Definition of done
 
-- [ ] `src/ges2t/ui/__init__.py` exists; `src/ges2t/ui/status.py` defines `NullStatusUI`
+- [x] `src/ges2t/ui/__init__.py` exists; `src/ges2t/ui/status.py` defines `NullStatusUI`
       (moved out of `pipeline.py`, which currently defines it) plus any shared state enum.
-- [ ] `src/ges2t/ui/tray.py` defines `class TrayStatusUI` implementing `StatusUI`:
+- [x] `src/ges2t/ui/tray.py` defines `class TrayStatusUI` implementing `StatusUI`:
       - `idle()`, `recording()`, `transcribing()`, `error(message)`, `partial(text)` map onto
         a visible icon/tooltip state; `partial(text)` updates the tooltip or a menu label and
         **never** types anything;
@@ -39,13 +39,13 @@ display-only).
         socket client** (ADR 0016) rather than reimplementing service logic;
       - `pystray` runs on its own thread; the state machine never blocks on it;
       - `stop()` shuts the icon down cleanly so the service can exit.
-- [ ] **The backend assertion is mandatory and is the point of this ticket.** Before creating
+- [x] **The backend assertion is mandatory and is the point of this ticket.** Before creating
       the icon, assert the selected `pystray` backend is the AppIndicator one (by importing
       `pystray._appindicator` with `gi.require_version("AppIndicator3", "0.1")`, or by
       inspecting the class that `pystray.Icon` would use). If it is not, raise a clear error
       naming the three Arch packages and the `--system-site-packages` requirement, and **do
       not** start a tray that would be invisible (ADR 0013).
-- [ ] **A tray failure must not vanish silently — this is required, not optional.** `service.py`
+- [x] **A tray failure must not vanish silently — this is required, not optional.** `service.py`
       deliberately treats every `StatusUI` callback as **best-effort**: a callback that raises is
       contained (added by ticket `../../core-dictation-pipeline/status-ui-outside-lock/ticket.md`,
       review `003-review.md`) so that broken display can never wedge the service in
@@ -60,16 +60,16 @@ display-only).
       service's guard stays as the outer safety net; the tray is responsible for not being
       invisible when it breaks. Test this with an injected failure and assert it is recorded and
       retrievable (no real icon, no display).
-- [ ] `run_service` in `src/ges2t/pipeline.py` injects `TrayStatusUI` when `config.ui.tray` is
+- [x] `run_service` in `src/ges2t/pipeline.py` injects `TrayStatusUI` when `config.ui.tray` is
       true and `NullStatusUI` otherwise, and falls back to `NullStatusUI` with a printed
       warning when the backend assertion fails — a missing tray must never make ges2t
       unusable, and nothing may be reachable **only** through the tray (ADR 0013).
-- [ ] `tests/test_status_ui.py` covers `NullStatusUI` trivially, and
+- [x] `tests/test_status_ui.py` covers `NullStatusUI` trivially, and
       `tests/test_tray_backend.py` covers the assertion logic with **fake modules injected into
       `sys.modules`**: a fake `gi`+`AppIndicator3` → assertion passes; a fake `pystray` whose
       backend resolves to `_xorg`, and a missing-`gi` case, → assertion fails with the
       actionable message. No test may create a real tray icon or require a display.
-- [ ] `uv run pytest tests/test_status_ui.py tests/test_tray_backend.py` passes and
+- [x] `uv run pytest tests/test_status_ui.py tests/test_tray_backend.py` passes and
       `uv run pytest` stays green.
 - [ ] **Manual, on the reference machine, reported in `001-comment.md`:** start `ges2t run` and
       observe a tray icon that is actually **visible in the Plasma 6.7.5 system tray**, stepping
@@ -78,7 +78,7 @@ display-only).
       warning and fall back to `NullStatusUI` instead of showing nothing. Include a screenshot
       or a precise description of what the icon looked like.
 
-- [ ] `uv run mypy src/ges2t tests` exits 0 (per ADR 0019's amendment the enforcement command
+- [x] `uv run mypy src/ges2t tests` exits 0 (per ADR 0019's amendment the enforcement command
       covers `tests/` too): every definition fully annotated and every
       signature interface-typed — ADR 0019.
 

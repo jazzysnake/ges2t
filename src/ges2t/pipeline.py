@@ -22,6 +22,9 @@ What it builds
 * :class:`BatchDictationSession` — the batch ``DictationSession``: record the
   whole utterance, transcribe once, return the text. Streaming is a separate
   session implementation and is deliberately absent here (ticket 16).
+* :func:`build_status_ui` — the tray when ``ui.tray = true`` and the
+  AppIndicator backend is present, the documented no-op otherwise; a failed tray
+  degrades to the no-op with a printed warning (ADR 0013).
 * :func:`run_service` — the ``ges2t run`` entry point: verify the artifacts are
   already present **without downloading** (ADR 0017, ADR 0018), warm the model
   once, build the service, and serve the socket until ``SIGINT``/``SIGTERM``.
@@ -44,17 +47,27 @@ from ges2t.audio.pw_record import PwRecordAudioSource
 from ges2t.config import Config
 from ges2t.injectors.ydotool import YdotoolInjector
 from ges2t.interfaces import AudioSource, Injector, StatusUI, Transcriber
-from ges2t.service import DictationSession, Service
-from ges2t.socket_proto import ServiceAlreadyRunningError, default_socket_path
+from ges2t.service import CommandResponse, DictationSession, Service
+from ges2t.socket_proto import (
+    ServiceAlreadyRunningError,
+    default_socket_path,
+    send_command,
+)
 from ges2t.transcribers.whistle import WhistleTranscriber
 from ges2t.transcribers.whistle_config import WhistleConfig
+from ges2t.ui.status import (
+    DiagnosticStatusUI,
+    NullStatusUI,
+    StoppableStatusUI,
+)
+from ges2t.ui.tray import TrayBackendError, build_tray_status_ui
 
 __all__ = [
     "BatchDictationSession",
-    "NullStatusUI",
     "PipelineError",
     "build_audio_source",
     "build_injector",
+    "build_status_ui",
     "build_transcriber",
     "run_service",
 ]
@@ -76,34 +89,6 @@ class PipelineError(Exception):
     def __init__(self, message: str, *, hint: str | None = None) -> None:
         super().__init__(message)
         self.hint = hint
-
-
-class NullStatusUI:
-    """The documented no-op :class:`~ges2t.interfaces.StatusUI` (epic 2 adds the tray).
-
-    ``idle``/``recording``/``transcribing``/``partial`` do nothing: there is no
-    display surface yet. ``error`` is the deliberate exception — it writes the
-    message to stderr, because otherwise a runtime failure (for example the
-    adapter rejecting a window longer than the engine's 30 s ceiling, ADR 0005)
-    would be invisible until the tray/notifications land. When epic 2 injects the
-    real tray in the same place, this class is simply not constructed.
-    """
-
-    def idle(self) -> None:
-        """Show the idle state (no-op)."""
-
-    def recording(self) -> None:
-        """Show the recording state (no-op)."""
-
-    def transcribing(self) -> None:
-        """Show the transcribing state (no-op)."""
-
-    def error(self, message: str) -> None:
-        """Report a failure on stderr until a real status UI exists."""
-        print(f"ges2t: {message}", file=sys.stderr)
-
-    def partial(self, text: str) -> None:
-        """Show display-only live text (no-op; batch has no partials, ADR 0011)."""
 
 
 class BatchDictationSession:
@@ -208,6 +193,61 @@ def build_injector(config: Config) -> Injector:
     the generic config for the clipboard paste injector that a later ticket adds.
     """
     return YdotoolInjector(config.ui.trailing_space)
+
+
+def _send_command_to_service(command: str) -> CommandResponse:
+    """Send one verb to this session's service socket (ADR 0015, ADR 0016).
+
+    The tray's menu actions go through the same client the CLI uses rather than
+    reimplementing service logic; this binds the default socket path once.
+    """
+    return send_command(default_socket_path(), command)
+
+
+def build_status_ui(config: Config) -> StatusUI:
+    """Choose the status display: the tray, or the documented no-op (ADR 0013).
+
+    With ``ui.tray = false`` this is :class:`NullStatusUI`. Otherwise it asserts
+    the AppIndicator backend and starts the tray. Any failure to build a visible
+    tray — the backend assertion, or ``pystray``/GTK refusing to construct the
+    icon — prints an actionable warning and degrades to :class:`NullStatusUI`,
+    because a missing tray must never make ges2t unusable and nothing may be
+    reachable only through the tray (ADR 0013).
+    """
+    if not config.ui.tray:
+        return NullStatusUI()
+    try:
+        return build_tray_status_ui(_send_command_to_service)
+    except TrayBackendError as exc:
+        _print_tray_warning(str(exc))
+        return NullStatusUI()
+    except Exception as exc:  # no visible tray is better than no ges2t at all
+        _print_tray_warning(f"the tray could not be created ({exc})")
+        return NullStatusUI()
+
+
+def _print_tray_warning(reason: str) -> None:
+    """Print the tray fallback and why, without stopping the service (ADR 0013)."""
+    print(f"ges2t: {reason}", file=sys.stderr)
+    print(
+        "  the tray is disabled; ges2t remains fully usable from the CLI",
+        file=sys.stderr,
+    )
+
+
+def _shutdown_status_ui(ui: StatusUI) -> None:
+    """Stop a status UI that owns a background resource and report its failures.
+
+    Only the tray implements either Protocol; the no-op and test UIs are left
+    alone. The failure report is the in-process half of the observability
+    requirement — the tray also prints each distinct failure once as it happens.
+    """
+    if isinstance(ui, StoppableStatusUI):
+        ui.stop()
+    if isinstance(ui, DiagnosticStatusUI):
+        report = ui.failure_report()
+        if report is not None:
+            print(f"ges2t: {report.summary()}", file=sys.stderr)
 
 
 def _session_factory(
@@ -343,18 +383,22 @@ def _startup(config: Config, status_ui: StatusUI) -> Service:
 def run_service(config: Config, status_ui: StatusUI | None = None) -> int:
     """Run the long-lived service and return the process exit code (ADR 0015).
 
-    ``status_ui`` defaults to the documented no-op; epic 2 injects the real tray
-    here without changing this signature. The model is loaded exactly once at
-    startup, the missing-artifact check never downloads, and the service runs
-    until ``SIGINT``/``SIGTERM`` before returning ``0``.
+    ``status_ui`` defaults to the configured display: the tray when
+    ``ui.tray = true`` and the AppIndicator backend is present, the documented
+    no-op otherwise (ADR 0013). An explicitly injected UI wins, which is the
+    seam the headless tests use. The model is loaded exactly once at startup,
+    the missing-artifact check never downloads, and the service runs until
+    ``SIGINT``/``SIGTERM`` before returning ``0``.
     """
-    ui = status_ui if status_ui is not None else NullStatusUI()
+    ui = status_ui if status_ui is not None else build_status_ui(config)
     try:
         service = _startup(config, ui)
     except PipelineError as exc:
+        _shutdown_status_ui(ui)
         _print_failure(exc)
         return _EXIT_FAILURE
     except Exception as exc:  # startup failure: report, never traceback at the top level
+        _shutdown_status_ui(ui)
         print(f"ges2t: could not start the service: {exc}", file=sys.stderr)
         print(
             "  hint: run 'ges2t setup' to (re)install the pinned model and "
@@ -371,6 +415,8 @@ def run_service(config: Config, status_ui: StatusUI | None = None) -> int:
     except OSError as exc:
         print(f"ges2t: could not serve on {service.socket_path}: {exc}", file=sys.stderr)
         return _EXIT_FAILURE
+    finally:
+        _shutdown_status_ui(ui)
     return _EXIT_SUCCESS
 
 

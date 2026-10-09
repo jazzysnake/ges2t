@@ -1,0 +1,160 @@
+"""The mandatory AppIndicator backend assertion (ticket 17, ADR 0013).
+
+Every test injects fake modules into ``sys.modules`` so the assertion's decision
+is exercised without importing the real ``gi`` or ``pystray`` and without a
+display or a real tray icon. This is the behaviour the whole ticket exists for:
+``pystray`` must never be allowed to silently select the XEmbed backend that
+Plasma 6.7.5 cannot display.
+"""
+
+from __future__ import annotations
+
+import sys
+import types
+
+import pytest
+
+from ges2t import pipeline
+from ges2t.config import Config, UIConfig
+from ges2t.ui import tray
+from ges2t.ui.status import NullStatusUI
+
+
+class _FakeGi(types.ModuleType):
+    """A stand-in for ``gi`` that records ``require_version`` and can fail."""
+
+    def __init__(self, *, exc: Exception | None = None) -> None:
+        super().__init__("gi")
+        self.require_calls: list[tuple[str, str]] = []
+        self._exc = exc
+
+    def require_version(self, namespace: str, version: str) -> None:
+        self.require_calls.append((namespace, version))
+        if self._exc is not None:
+            raise self._exc
+
+
+def _fake_pystray(icon_module: str) -> types.ModuleType:
+    """Build a fake ``pystray`` whose ``Icon`` claims to come from ``icon_module``."""
+    module = types.ModuleType("pystray")
+    icon_class = type("Icon", (), {"__module__": icon_module})
+    setattr(module, "Icon", icon_class)
+    return module
+
+
+# --- assert_appindicator_backend --------------------------------------------
+
+
+def test_assertion_passes_with_fake_gi_and_appindicator_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_gi = _FakeGi()
+    monkeypatch.setitem(sys.modules, "gi", fake_gi)
+    monkeypatch.setitem(
+        sys.modules, "pystray", _fake_pystray("pystray._appindicator")
+    )
+
+    tray.assert_appindicator_backend()
+
+    assert fake_gi.require_calls == [("AppIndicator3", "0.1")]
+
+
+def test_assertion_rejects_the_xorg_backend_with_an_actionable_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(sys.modules, "gi", _FakeGi())
+    monkeypatch.setitem(sys.modules, "pystray", _fake_pystray("pystray._xorg"))
+
+    with pytest.raises(tray.TrayBackendError) as excinfo:
+        tray.assert_appindicator_backend()
+
+    message = str(excinfo.value)
+    assert "_xorg" in message
+    assert "python-gobject" in message
+    assert "gtk3" in message
+    assert "libappindicator" in message
+    assert "--system-site-packages" in message
+
+
+def test_assertion_rejects_a_missing_gi_with_an_actionable_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # ``None`` in sys.modules makes ``import gi`` raise ImportError, exactly as a
+    # venv created without --system-site-packages does.
+    monkeypatch.setitem(sys.modules, "gi", None)
+
+    with pytest.raises(tray.TrayBackendError) as excinfo:
+        tray.assert_appindicator_backend()
+
+    message = str(excinfo.value)
+    assert "python-gobject" in message
+    assert "gtk3" in message
+    assert "libappindicator" in message
+    assert "--system-site-packages" in message
+
+
+def test_assertion_rejects_a_missing_appindicator_typelib(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_gi = _FakeGi(exc=ValueError("Namespace AppIndicator3 not available"))
+    monkeypatch.setitem(sys.modules, "gi", fake_gi)
+
+    with pytest.raises(tray.TrayBackendError) as excinfo:
+        tray.assert_appindicator_backend()
+
+    assert "AppIndicator3" in str(excinfo.value)
+
+
+# --- the composition root's fallback ----------------------------------------
+
+
+def test_build_status_ui_is_null_when_the_tray_is_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called: list[int] = []
+
+    def forbidden(send_command: object) -> object:
+        called.append(1)
+        raise AssertionError("must not build a tray when ui.tray = false")
+
+    monkeypatch.setattr(pipeline, "build_tray_status_ui", forbidden)
+
+    ui = pipeline.build_status_ui(Config(ui=UIConfig(tray=False)))
+
+    assert isinstance(ui, NullStatusUI)
+    assert called == []
+
+
+def test_build_status_ui_falls_back_with_a_warning_when_the_assertion_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def refuse(send_command: object) -> object:
+        raise tray.TrayBackendError("pystray selected '_xorg'")
+
+    monkeypatch.setattr(pipeline, "build_tray_status_ui", refuse)
+
+    ui = pipeline.build_status_ui(Config(ui=UIConfig(tray=True)))
+
+    assert isinstance(ui, NullStatusUI)
+    stderr = capsys.readouterr().err
+    assert "pystray selected '_xorg'" in stderr
+    assert "fully usable from the CLI" in stderr
+
+
+def test_run_service_builds_the_status_ui_when_none_is_injected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = NullStatusUI()
+    seen: list[object] = []
+    monkeypatch.setattr(pipeline, "build_status_ui", lambda config: sentinel)
+
+    def stop_startup(config: Config, status_ui: object) -> object:
+        seen.append(status_ui)
+        raise pipeline.PipelineError("stop before serving")
+
+    monkeypatch.setattr(pipeline, "_startup", stop_startup)
+
+    result = pipeline.run_service(Config())
+
+    assert result != 0
+    assert seen == [sentinel]

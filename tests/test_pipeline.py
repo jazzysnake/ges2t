@@ -26,6 +26,7 @@ from ges2t.transcribers.whistle_config import (
     DEFAULT_LANGUAGE,
     DEFAULT_WINDOW_SECONDS,
 )
+from ges2t.ui.status import NullStatusUI
 from tests.fakes import FakeAudioSource, FakeStatusUI, FakeTranscriber
 
 # --- build_transcriber --------------------------------------------------------
@@ -223,6 +224,8 @@ def test_run_service_never_downloads_and_loads_once_before_serving(
     fake.raise_on_ensure_model = AssertionError("the transcriber must not ensure")
     monkeypatch.setattr(pipeline, "build_transcriber", lambda config: fake)
     monkeypatch.setattr(pipeline, "_missing_artifacts", lambda config: [])
+    # The tray needs a display; this test injects the no-op instead.
+    monkeypatch.setattr(pipeline, "build_status_ui", lambda config: NullStatusUI())
     monkeypatch.setattr(FakeTranscriber, "load", lambda self: events.append("load"))
     monkeypatch.setattr(Service, "serve", lambda self: events.append("serve"))
     _forbid_downloads(monkeypatch)
@@ -260,6 +263,8 @@ def test_run_service_reports_missing_artifacts_and_returns_nonzero(
     monkeypatch.setattr(
         model_store, "engine_path", lambda version=model_store.ENGINE_VERSION: missing_engine
     )
+    # Startup fails before serving; the no-op avoids needing a display for the tray.
+    monkeypatch.setattr(pipeline, "build_status_ui", lambda config: NullStatusUI())
     loaded: list[str] = []
     served: list[str] = []
     monkeypatch.setattr(WhistleTranscriber, "load", lambda self: loaded.append("load"))
@@ -344,6 +349,6 @@ def test_missing_artifacts_reports_an_unsupported_platform(
 def test_null_status_ui_error_writes_to_stderr(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    pipeline.NullStatusUI().error("the engine rejected the audio")
+    NullStatusUI().error("the engine rejected the audio")
 
     assert "the engine rejected the audio" in capsys.readouterr().err
