@@ -36,7 +36,7 @@ speak → `ges2t toggle` types the right text into a text editor and a terminal.
 | 11 | [dictation-pipeline-batch](core-dictation-pipeline/dictation-pipeline-batch/ticket.md) — composition root + E2E | M | to do | 6, 7, 8, 9, 10 | — |
 | 12 | [doctor-command](core-dictation-pipeline/doctor-command/ticket.md) — diagnose every prerequisite | M | to do | 3, 5, 6, 7, 9, 10 | — |
 | 20 | [type-check-whole-tree](core-dictation-pipeline/type-check-whole-tree/ticket.md) — fix the tests-not-type-checked gap | XS | done | 4 | feat/type-check-whole-tree (merged) |
-| 21 | [status-ui-outside-lock](core-dictation-pipeline/status-ui-outside-lock/ticket.md) — fix the reproduced status_ui-under-lock deadlock | XS | to do | 9 | — |
+| 21 | [status-ui-outside-lock](core-dictation-pipeline/status-ui-outside-lock/ticket.md) — fix the reproduced status_ui-under-lock deadlock | XS | in review | 9 | feat/status-ui-outside-lock |
 
 ## Epic 2 — [Live dictation UX](live-dictation-ux/epic.md) · P1
 

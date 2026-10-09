@@ -1,7 +1,7 @@
 # Call StatusUI outside the state lock
 
 - **Priority:** P1
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** XS
 - **Epic:** ../epic.md
 
@@ -31,24 +31,24 @@ outlives failures), ADR 0013 (the tray is the status surface), ADR 0014 (quality
 
 ## Definition of done
 
-- [ ] `Service._set_state` (or whatever assigns the state) **collects the display action** while
+- [x] `Service._set_state` (or whatever assigns the state) **collects the display action** while
       the lock is held but **invokes `status_ui` after the lock is released**, so no
       collaborator is ever called under the lock.
-- [ ] The same rule applies to every other collaborator call on the command path: audit
+- [x] The same rule applies to every other collaborator call on the command path: audit
       `service.py` for **any** call into `status_ui`, `injector`, or a session made while
       `self._lock` is held, and move each one outside. Report what you found, even if the answer
       is "only `_set_state`".
-- [ ] A **regression test** proves the deadlock is gone: construct a `Service` with a
+- [x] A **regression test** proves the deadlock is gone: construct a `Service` with a
       `StatusUI` whose `recording()` (and each other transition) reads `service.state` back, and
       assert the command **returns promptly** — use a real bounded wait (e.g. run the command on
       a thread with a join timeout, or wrap it in a short timeout) so the test **fails loudly**
       rather than hanging the suite if the bug returns. Do not write a test that would hang.
-- [ ] The existing 73 state-machine/socket tests still pass unchanged, and the full transition
+- [x] The existing 73 state-machine/socket tests still pass unchanged, and the full transition
       table behaviour is identical — this is a locking fix, **not** a behaviour change. Report
       before/after test counts.
-- [ ] `uv run pytest` passes and **`uv run mypy src/ges2t tests`** exits 0 (ADR 0019 amended
+- [x] `uv run pytest` passes and **`uv run mypy src/ges2t tests`** exits 0 (ADR 0019 amended
       2026-10-09 to cover tests).
-- [ ] `001-comment.md` records: the exact before/after locking discipline, what calls were moved
+- [x] `001-comment.md` records: the exact before/after locking discipline, what calls were moved
       out of the lock, and the regression test that proves it.
 
 ## Notes
