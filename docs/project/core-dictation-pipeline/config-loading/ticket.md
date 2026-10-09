@@ -1,7 +1,7 @@
 # Config loading: generic layer, engine selector, engine-specific blocks
 
 - **Priority:** P0
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** S
 - **Epic:** ../epic.md
 
