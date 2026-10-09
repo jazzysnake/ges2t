@@ -1,7 +1,7 @@
 # Clipboard-paste injector (configured alternative)
 
 - **Priority:** P1
-- **Status:** in progress
+- **Status:** done
 - **Complexity:** S
 - **Epic:** ../epic.md
 
@@ -52,7 +52,7 @@ Create `src/ges2t/injectors/clipboard.py` and `tests/test_clipboard_injector.py`
       the keychord is raw keycodes and **not** in argv as text; a failing restore does not fail
       injection; and every error branch, including that stderr reaches the message.
 - [ ] `uv run pytest`, `uv run mypy src/ges2t tests` (ADR 0019 covers tests) both green.
-- [ ] **Manual, once, reported in `001-comment.md`:** with the daemon running, paste a short phrase
+- [x] **Manual, once, reported in `001-comment.md`:** — **PASS**, run by the user with `paste_keys = ["ctrl+shift+v"]`; the phrase pasted and the pre-existing clipboard was restored. See `008-comment.md`. with the daemon running, paste a short phrase
       into a focused **text editor** and into a focused **terminal** (using `ctrl+shift+v` there),
       and report the wall time for each. State explicitly whether the pre-existing clipboard was
       restored. **Ask the user before pasting** — this writes to their clipboard and types into the
