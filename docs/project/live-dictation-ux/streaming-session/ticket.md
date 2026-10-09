@@ -1,7 +1,7 @@
 # Streaming session: drive capture through the windowed stream
 
 - **Priority:** P1
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** M
 - **Epic:** ../epic.md
 
@@ -24,7 +24,7 @@ ADR 0008 (capture as a subprocess with drain-on-stop), ADR 0014 (fakes only in t
 
 ## Definition of done
 
-- [ ] `src/ges2t/streaming_session.py` defines `class StreamingDictationSession`
+- [x] `src/ges2t/streaming_session.py` defines `class StreamingDictationSession`
       implementing `DictationSession`:
       - `__init__(self, audio: AudioSource, transcriber: Transcriber, *, chunk_seconds:
         float)`. **Note there is no `window_seconds` parameter**: the commit window is an
@@ -51,18 +51,18 @@ ADR 0008 (capture as a subprocess with drain-on-stop), ADR 0014 (fakes only in t
       - `cancel() -> None` stops capture, abandons the accumulated text, and joins the worker;
       - calling `finish()`/`cancel()` twice, or before `start()`, is defined behaviour (a
         clear error or a no-op) rather than a hang.
-- [ ] **Thread-safety discipline, explicitly implemented:** a `threading.Lock` guards only the
+- [x] **Thread-safety discipline, explicitly implemented:** a `threading.Lock` guards only the
       shared fields (accumulated text, latest partial, stop flag). The lock is **never held
       across an engine call or across `audio.stop()`**, because that is how this design
       deadlocks.
-- [ ] **The final text is authoritative.** `finish()` returns the text of the **final**
+- [x] **The final text is authoritative.** `finish()` returns the text of the **final**
       segment yielded by `transcriber.stream()`; partial text is never used to construct it
       (ADR 0011).
-- [ ] If the worker thread raises (engine error, audio error), `finish()` **propagates** that
+- [x] If the worker thread raises (engine error, audio error), `finish()` **propagates** that
       error rather than returning a short transcript, and `finish()` does not hang. The
       service converts that into its `ERROR` state and a notification.
-- [ ] Cancelling mid-utterance types nothing and returns no text.
-- [ ] `tests/test_streaming_session.py` uses `FakeAudioSource` and a **streaming-capable
+- [x] Cancelling mid-utterance types nothing and returns no text.
+- [x] `tests/test_streaming_session.py` uses `FakeAudioSource` and a **streaming-capable
       `FakeTranscriber`** (from `tests/fakes.py`) whose `stream()` yields a **configurable
       sequence of segments** — partials followed by one final. That is the whole test surface;
       the session is typed against the `Transcriber` protocol, so no decoder double is needed
@@ -72,10 +72,10 @@ ADR 0008 (capture as a subprocess with drain-on-stop), ADR 0014 (fakes only in t
       (assert the worker joined); a raising worker surfaces through `finish()`; `finish()`
       before `start()` and `finish()` twice are defined; and a **short utterance** (fewer
       samples than one window) still produces its text (the final segment is not dropped).
-- [ ] `uv run pytest tests/test_streaming_session.py` passes and `uv run pytest` stays green,
+- [x] `uv run pytest tests/test_streaming_session.py` passes and `uv run pytest` stays green,
       with **no test taking longer than a few seconds** (assert no real sleeping/thread leak).
 
-- [ ] `uv run mypy src/ges2t tests` exits 0: every definition fully annotated and every
+- [x] `uv run mypy src/ges2t tests` exits 0: every definition fully annotated and every
       signature interface-typed — ADR 0019 (amended 2026-10-09 to cover tests too).
 
 ## Notes
