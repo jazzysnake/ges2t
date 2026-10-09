@@ -40,6 +40,7 @@ warnings), ADR 0017 (model presence), ADR 0015 (socket/single instance).
       | Config valid | TOML error or bad-typed value | the file path and the offending key |
       | Engine config valid | a `WhistleConfigError` from the selected engine's block (ticket 4 raises a **distinct** type from the generic `ConfigError`, deliberately — see its `001-comment.md`) | the block name, key and allowed range |
       | Config warnings | unknown keys anywhere (generic **and** the selected engine block — ADR 0009) | which keys were ignored |
+      | Audio device exists | `audio.device` is non-empty **and** does not appear in the session's node list (`pw-dump`/`wpctl status`) | the configured name and how to list available devices |
       | `pw-record` present | not on `PATH` | which package provides it |
       | PipeWire session | `pw-record` cannot reach a session | how to check the session |
       | `ydotoold` running | the daemon is unreachable (true today) | `systemctl --user enable --now ydotoold` |
@@ -52,6 +53,15 @@ warnings), ADR 0017 (model presence), ADR 0015 (socket/single instance).
       are listed again at the end with their fix lines, so the user does not have to scroll.
 - [ ] Exit code is `0` when there are no `FAIL`s (warnings are allowed) and non-zero when any
       check fails, consistent with ADR 0016.
+- **The audio-device check exists because a bad device cannot be detected any other way.**
+  ADR 0008's amendment (2026-10-09) records that `pw-record --target` is only a hint and that an
+  unresolved target silently falls back to the default microphone, exiting normally with empty
+  stderr. So a typo in `audio.device` would otherwise produce a *working-looking* recording from
+  the wrong microphone. `doctor` is the only place this is catchable, and this check is a
+  **WARN** when the configured device is absent (the user may still be dictating fine, from the
+  wrong mic) and a FAIL only if the device name is syntactically invalid. Use `pw-dump` or
+  `wpctl status` — both already installed — and make the probe injectable so tests touch no real
+  session.
 - [ ] `doctor` must catch **both** configuration error types: `ges2t.config.ConfigError`
       (generic layer, names a file path) and the selected engine adapter's own error type,
       beginning with `WhistleConfigError` (engine block, names a block key). They are

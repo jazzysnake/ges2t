@@ -55,9 +55,18 @@ Use **`pw-record` as a subprocess**, wrapped in a single `PwRecordAudioSource`, 
   compute levels, not to resample. That keeps a heavy DSP dependency out of the critical
   path, though `numpy` is still expected as a transitive dependency of the audio/model
   stack.
-- Failure modes to handle explicitly: no PipeWire session, unknown device target,
-  `pw-record` exiting immediately, and a recording stopped before any audio arrives
-  (zero-length buffer → do not call the engine).
+- Failure modes to handle explicitly: no PipeWire session, `pw-record` exiting immediately,
+  and a recording stopped before any audio arrives (zero-length buffer → do not call the
+  engine).
+- **Amended 2026-10-09 (measured during ticket 6):** "unknown device target" was originally on
+  that list and has been **removed**. `--target` is only a `node.target` *hint* to PipeWire: an
+  unresolved target makes `pw-record` silently fall back to the default node, exit normally,
+  and print nothing on stderr, and **no `pw-record` flag makes it fatal**. Detecting it needs
+  device enumeration (`pw-dump`/`wpctl`) and is therefore new scope that this ADR does not
+  authorise. Accepted behaviour is PipeWire's documented fallback: a full recording from the
+  default device, which still honours the intent of the rule (never a silent short or empty
+  buffer). The user-facing safety net moves to `ges2t doctor`, which validates the *configured*
+  device against the session's node list (ADR 0016).
 - We accept a hard dependency on PipeWire, which is consistent with a Wayland-only,
   KDE-on-Arch target and would need revisiting only if the project ever targets non-PipeWire
   systems (out of scope, ADR 0000).
