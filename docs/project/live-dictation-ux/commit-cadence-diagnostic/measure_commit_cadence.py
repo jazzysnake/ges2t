@@ -40,7 +40,16 @@ committed deltas are **new** text. That is measured two independent ways:
 
 * a committed-word overlap scan (does a later commit repeat words already committed?);
 * a word-level diff of the final streaming transcript against a one-shot batch
-  transcription of the same audio through the same adapter.
+  transcription of the **gate-passed** audio -- the chunks streaming was actually
+  fed, with the gated silence removed -- so the only remaining difference is
+  windowing. The diff is a *divergence detector*, not an accuracy score: a bare
+  insertion count is ordinary decoding divergence (the fresh recording has four and
+  zero restatements), so it is surfaced as a caveat. The signal that can STOP the
+  gate is a phrase the streaming path repeats that the batch path does not.
+
+The verdict consults **both** detectors. It prints PROCEED only when neither
+reports a repeat; when the batch diff diverges without a repeated phrase it says so
+as a named caveat instead of implying detector 2 was clean.
 
 The user-owned capture step
 ---------------------------
@@ -88,7 +97,7 @@ from typing import Any, Protocol, runtime_checkable
 from ges2t import streaming
 from ges2t.audio.pw_record import SAMPLE_RATE
 from ges2t.audio.pw_record import PROGRAM as PW_RECORD_PROGRAM
-from ges2t.audio.pw_record import PwRecordAudioSource, PwRecordError
+from ges2t.audio.pw_record import PwRecordAudioSource
 from ges2t.config import Config, load_config
 from ges2t.interfaces import AudioBuffer
 from ges2t.transcribers import whistle
@@ -114,6 +123,13 @@ TMP_DIR: Path = Path("/tmp")
 #: How many characters of a delta / pending string to show in the per-pass table.
 DELTA_PREVIEW_CHARS: int = 70
 PENDING_PREVIEW_CHARS: int = 50
+
+#: A batch-diff word error rate at or above this is reported as a named divergence
+#: caveat. It never triggers the STOP verdict on its own: the fresh real recording has
+#: WER 0.339 with zero restatements, so insertions/substitutions alone are decoding
+#: divergence, not duplicated text. Only a phrase the streaming path repeats that the
+#: batch path does not is a restatement signal.
+BATCH_DIVERGENCE_WER_THRESHOLD: float = 0.05
 
 
 # --------------------------------------------------------------------------------------
@@ -166,6 +182,7 @@ class UtteranceMeasurement:
     final_text: str
     final_language: str | None
     batch_reference: str | None
+    batch_reference_note: str
     timeline_from_gate: bool
 
     @property
@@ -222,6 +239,55 @@ class WordDiff:
         if self.reference_words == 0:
             return 0.0
         return self.errors / self.reference_words
+
+
+@dataclass(frozen=True)
+class DuplicatedPhrase:
+    """A phrase the streaming transcript repeats but the batch reference does not.
+
+    This is the non-adjacent re-commit the committed-word overlap scan misses: the
+    repeated words are not adjacent to the end of the transcript, so the scan's
+    leading-words-versus-tail comparison never sees them. Counting the phrase against
+    the one-shot batch transcription is what separates a streaming re-commit from
+    ordinary natural repetition -- if the batch path repeated the phrase too, it is
+    speech, not a seam artefact.
+    """
+
+    words: tuple[str, ...]
+    first_index: int
+    repeated_index: int
+
+    @property
+    def text(self) -> str:
+        """The repeated phrase as one string, for the report."""
+        return " ".join(self.words)
+
+
+@dataclass(frozen=True)
+class BatchReview:
+    """The batch-reference detector's reading of one input, ready to aggregate."""
+
+    label: str
+    diff: WordDiff | None
+    duplicated: tuple[DuplicatedPhrase, ...]
+    note: str
+
+    @property
+    def ran(self) -> bool:
+        """Whether the one-shot batch reference was computed at all."""
+        return self.diff is not None
+
+    @property
+    def restatement_signal(self) -> bool:
+        """Whether the batch diff surfaced a phrase the streaming path repeated."""
+        return bool(self.duplicated)
+
+    @property
+    def diverged(self) -> bool:
+        """Whether the streaming and batch transcripts differ by more than trivia."""
+        if self.diff is None:
+            return False
+        return self.diff.errors > 0 and self.diff.wer >= BATCH_DIVERGENCE_WER_THRESHOLD
 
 
 @dataclass(frozen=True)
@@ -414,27 +480,30 @@ class DecoderRecorder:
 
 def gated_timeline(
     buffers: Sequence[AudioBuffer],
-) -> tuple[tuple[float, ...], tuple[float, ...]]:
-    """Return the source start time and width of each chunk the shipped gate forwards.
+) -> tuple[tuple[float, ...], tuple[float, ...], tuple[AudioBuffer, ...]]:
+    """Return the timeline and the gate-passed chunks for one input.
 
     The predicate is the shipped ``whistle._has_speech`` itself, called on the same
     buffers ``stream()`` will see, so the flags cannot disagree with the run. It is used
-    only to reconstruct the audio timeline for reporting; the audio path is untouched.
-    The ``process`` calls map one-to-one onto these chunks because every input buffer is
+    only to reconstruct the audio timeline and to build the batch reference from the
+    **same** gate-passed audio for reporting; the audio path is untouched. The
+    ``process`` calls map one-to-one onto these chunks because every input buffer is
     exactly one chunk long (the last may be short), which is the only shape this script
     feeds; :func:`run_utterance` verifies that count and falls back to engine-fed seconds
     if it ever stops being true.
     """
     starts: list[float] = []
     widths: list[float] = []
+    speech: list[AudioBuffer] = []
     cursor = 0.0
     for buffer in buffers:
         width = len(buffer.samples) / buffer.sample_rate
         if whistle._has_speech(buffer):  # noqa: SLF001
             starts.append(cursor)
             widths.append(width)
+            speech.append(buffer)
         cursor += width
-    return tuple(starts), tuple(widths)
+    return tuple(starts), tuple(widths), tuple(speech)
 
 
 def run_utterance(
@@ -446,11 +515,19 @@ def run_utterance(
     config: WhistleConfig,
     with_batch_reference: bool,
 ) -> UtteranceMeasurement:
-    """Drive the shipped ``stream()`` over ``buffers`` and collect the measurement."""
+    """Drive the shipped ``stream()`` over ``buffers`` and collect the measurement.
+
+    When ``with_batch_reference`` is set the one-shot reference is transcribed from the
+    **gate-passed** concatenation, not the raw recording, so the diff isolates the
+    windowing difference (streaming resets its window, batch does not) instead of
+    conflating it with the silence the gate removed. If the gate-passed audio is above
+    the engine's per-call limit the reference is skipped with a loud note rather than
+    silently dropped.
+    """
     chunk_seconds = config.chunk_seconds
     window_seconds = config.window_seconds
     duration = sum(len(buffer.samples) / buffer.sample_rate for buffer in buffers)
-    starts, widths = gated_timeline(buffers)
+    starts, widths, speech_buffers = gated_timeline(buffers)
 
     recorder = DecoderRecorder()
     origin = time.perf_counter()
@@ -474,15 +551,33 @@ def run_utterance(
             snapshots.append(transcript)
 
     batch_reference: str | None = None
-    if with_batch_reference and duration <= whistle.MAX_SECONDS:
+    speech_seconds = sum(len(buffer.samples) for buffer in speech_buffers) / SAMPLE_RATE
+    if not with_batch_reference:
+        batch_note = "not requested"
+    elif not speech_buffers:
+        batch_note = "NOT COMPUTED: the shipped gate forwarded no audio"
+    elif speech_seconds > whistle.MAX_SECONDS:
+        batch_note = (
+            f"NOT COMPUTED: the gate forwarded {speech_seconds:.2f} s, above the "
+            f"engine's {whistle.MAX_SECONDS:g} s per-call limit; detector 2 did not "
+            "run for this input"
+        )
+    else:
         whole = AudioBuffer(
-            samples=[sample for buffer in buffers for sample in buffer.samples],
+            samples=[
+                sample for buffer in speech_buffers for sample in buffer.samples
+            ],
             sample_rate=SAMPLE_RATE,
         )
         try:
             batch_reference = transcriber.transcribe(whole).text
+            batch_note = (
+                f"computed on the {speech_seconds:.2f} s the gate forwarded "
+                "(silence removed), same adapter, one-shot windowless call"
+            )
         except whistle.WhistleInputError as exc:  # pragma: no cover - defensive
-            batch_reference = f"<batch reference unavailable: {exc}>"
+            batch_reference = None
+            batch_note = f"NOT COMPUTED: {exc}"
 
     process_calls = sum(1 for event in recorder.events if event.kind == "process")
     fed_seconds = recorder.events[-1].engine_seconds if recorder.events else 0.0
@@ -499,6 +594,7 @@ def run_utterance(
         final_text=final.text,
         final_language=final.language,
         batch_reference=batch_reference,
+        batch_reference_note=batch_note,
         timeline_from_gate=process_calls == len(starts),
     )
 
@@ -582,6 +678,79 @@ def word_diff(reference: str, hypothesis: str) -> WordDiff:
         insertions=insertions,
         deletions=deletions,
         reference_words=len(reference_words),
+    )
+
+
+def find_duplicated_phrases(
+    reference: str, hypothesis: str, *, max_words: int = 12
+) -> tuple[DuplicatedPhrase, ...]:
+    """Find phrases the streaming hypothesis repeats but the batch reference does not.
+
+    A re-commit through the streaming seam repeats a contiguous phrase; ordinary
+    natural repetition is usually present in the batch path too. Requiring the
+    hypothesis count to exceed the reference count is therefore what isolates the seam
+    artefact from ordinary speech, and it is why this check belongs with the batch diff
+    rather than being a second copy of the overlap scan. The longest phrase per repeated
+    region is reported, so ``he hoped ... he hoped`` yields one hit, not every
+    sub-phrase of it.
+    """
+    reference_words, _ = tokenise(reference)
+    hypothesis_words, _ = tokenise(hypothesis)
+    if len(hypothesis_words) < 2:
+        return ()
+    found: list[DuplicatedPhrase] = []
+    covered: set[int] = set()
+    upper = min(max_words, len(hypothesis_words))
+    for size in range(upper, 1, -1):
+        hypothesis_starts: dict[tuple[str, ...], list[int]] = {}
+        for start in range(len(hypothesis_words) - size + 1):
+            gram = tuple(hypothesis_words[start : start + size])
+            hypothesis_starts.setdefault(gram, []).append(start)
+        reference_counts: dict[tuple[str, ...], int] = {}
+        for start in range(len(reference_words) - size + 1):
+            gram = tuple(reference_words[start : start + size])
+            reference_counts[gram] = reference_counts.get(gram, 0) + 1
+        for gram, starts in hypothesis_starts.items():
+            if len(starts) < 2 or len(starts) <= reference_counts.get(gram, 0):
+                continue
+            first, repeated = starts[0], starts[1]
+            if first in covered or repeated in covered:
+                continue
+            found.append(
+                DuplicatedPhrase(
+                    words=gram, first_index=first, repeated_index=repeated
+                )
+            )
+            covered.update(range(first, first + size))
+            covered.update(range(repeated, repeated + size))
+    return tuple(found)
+
+
+def review_batch_reference(measurement: UtteranceMeasurement) -> BatchReview:
+    """Judge one input's batch-reference diff: divergence, and any repeated phrase.
+
+    The two outcomes are deliberately different. A divergence (substitutions,
+    insertions, deletions) is a caveat about how differently the windowed and one-shot
+    paths render the *same* audio; it is not by itself evidence of a restatement, as the
+    fresh recording's four insertions with zero restatements demonstrate. A repeated
+    phrase that the batch reference does not repeat is the restatement signal the gate
+    exists to catch, and it stops the verdict.
+    """
+    reference = measurement.batch_reference
+    if reference is None:
+        return BatchReview(
+            label=measurement.label,
+            diff=None,
+            duplicated=(),
+            note=measurement.batch_reference_note,
+        )
+    diff = word_diff(reference, measurement.final_text)
+    duplicated = find_duplicated_phrases(reference, measurement.final_text)
+    return BatchReview(
+        label=measurement.label,
+        diff=diff,
+        duplicated=duplicated,
+        note=measurement.batch_reference_note,
     )
 
 
@@ -775,13 +944,30 @@ def report_utterance(report: Report, measurement: UtteranceMeasurement) -> None:
         report.line(f"        already committed: {overlap.before!r}")
         report.line(f"        new delta        : {overlap.delta!r}")
 
-    if measurement.batch_reference is not None:
-        diff = word_diff(measurement.batch_reference, measurement.final_text)
+    review = review_batch_reference(measurement)
+    report.line(f"    batch reference  : {review.note}")
+    if review.diff is not None:
+        diff = review.diff
         report.line(
             f"    vs one-shot batch reference: substitutions={diff.substitutions} "
             f"insertions={diff.insertions} deletions={diff.deletions} "
             f"WER={diff.wer:.3f} (n={diff.reference_words} reference words)"
         )
+        if review.restatement_signal:
+            report.line(
+                f"    REPEATED PHRASES the batch reference does not repeat "
+                f"({len(review.duplicated)}): this is the restatement signal"
+            )
+            for phrase in review.duplicated[:10]:
+                report.line(
+                    f"        {phrase.text!r} at hypothesis words "
+                    f"{phrase.first_index} and {phrase.repeated_index}"
+                )
+        elif diff.insertions:
+            report.line(
+                "    note: the insertions above are ordinary decoding divergence, not "
+                "duplicated text; no phrase the batch reference omits is repeated."
+            )
 
     report.heading(f"pass table: {measurement.label}")
     report.line(
@@ -802,7 +988,9 @@ def report_utterance(report: Report, measurement: UtteranceMeasurement) -> None:
         report.line(f"  {line}")
     if measurement.batch_reference is not None:
         report.line()
-        report.line("one-shot batch reference (same audio, same adapter, different path):")
+        report.line(
+            "one-shot batch reference (gate-passed audio, same adapter, different path):"
+        )
         for line in wrap_text(measurement.batch_reference, width=100):
             report.line(f"  {line}")
 
@@ -883,6 +1071,14 @@ def report_summary(report: Report, measurements: Sequence[UtteranceMeasurement])
     strong_overlaps = [
         overlap for overlap in all_overlaps if overlap.overlap_words >= 2
     ]
+    reviews = [review_batch_reference(measurement) for measurement in measurements]
+    all_duplicated = [
+        (review.label, phrase)
+        for review in reviews
+        for phrase in review.duplicated
+    ]
+    batch_skipped = [review for review in reviews if not review.ran]
+    batch_diverged = [review for review in reviews if review.diverged]
     prefix_failures = sum(
         1 for measurement in measurements if not check_prefix_property(measurement).ok
     )
@@ -894,20 +1090,56 @@ def report_summary(report: Report, measurements: Sequence[UtteranceMeasurement])
     report.line(f"gap between commits    : {distribution(all_gaps, unit='s', digits=2)}")
     report.line(
         f"prefix property        : {len(measurements) - prefix_failures}/{len(measurements)} "
-        f"inputs PASS"
+        f"inputs PASS (structural invariant of the `+=` fold, not independent evidence)"
     )
     report.line(
         f"committed-word repeats : {len(all_overlaps)} hit(s), "
         f"{len(strong_overlaps)} with 2+ words"
     )
+    report.line(
+        f"batch diff (detector 2): {len(reviews) - len(batch_skipped)}/{len(measurements)} "
+        f"input(s) ran; {len(all_duplicated)} phrase(s) the batch reference does not repeat"
+    )
+    if batch_skipped:
+        report.line(
+            f"batch diff SKIPPED     : detector 2 did NOT run for "
+            f"{len(batch_skipped)} input(s): "
+            + "; ".join(f"{review.label} ({review.note})" for review in batch_skipped)
+        )
+    if batch_diverged:
+        worst = max(
+            review.diff.wer for review in batch_diverged if review.diff is not None
+        )
+        report.line(
+            f"batch diff divergence  : {len(batch_diverged)} input(s) at or above WER "
+            f"{BATCH_DIVERGENCE_WER_THRESHOLD:.2f} (worst {worst:.3f}); wording/windowing, "
+            "not counted as restatement"
+        )
     report.line()
     report.line("recommendation:")
-    if prefix_failures or strong_overlaps:
+    if prefix_failures or strong_overlaps or all_duplicated:
         report.line(
             "  STOP. The engine restated committed text. Every hit above is reported "
             "verbatim; the append-only assumption this feature depends on did not hold "
             "on these inputs, so ticket 34 must be cancelled or redesigned."
         )
+        if strong_overlaps:
+            report.line(
+                f"  trigger: {len(strong_overlaps)} committed-word overlap(s) of 2+ "
+                "words (detector 1)."
+            )
+        if all_duplicated:
+            report.line(
+                f"  trigger: {len(all_duplicated)} phrase(s) the streaming path repeated "
+                "that the batch reference does not (detector 2), including: "
+                + ", ".join(f"{phrase.text!r} in {label}" for label, phrase in all_duplicated[:5])
+                + "."
+            )
+        if prefix_failures:
+            report.line(
+                f"  trigger: {prefix_failures} prefix failure(s) (detector 0, a structural "
+                "invariant that should not be able to fail)."
+            )
         return
     median_gap = percentile(all_gaps, 0.5) if all_gaps else 0.0
     p90_gap = percentile(all_gaps, 0.9) if all_gaps else 0.0
@@ -915,9 +1147,24 @@ def report_summary(report: Report, measurements: Sequence[UtteranceMeasurement])
     median_chars = percentile(all_chars, 0.5) if all_chars else 0.0
     report.line(
         f"  PROCEED WITH THE NAMED CAVEAT. On {len(measurements)} input(s) "
-        f"({pending_fed:.1f} s of audio) no committed delta restated already-committed "
-        f"text, and every intermediate transcript snapshot was a prefix of the final one."
+        f"({pending_fed:.1f} s of audio) no committed delta repeated 2+ already-committed "
+        f"words, and no phrase was repeated by the streaming path that the batch "
+        f"reference does not repeat."
     )
+    if batch_skipped:
+        report.line(
+            f"  CAVEAT 0: detector 2 (the batch-reference diff) did NOT run for "
+            f"{len(batch_skipped)} input(s) above, so the verdict does not rest on a "
+            "batch comparison there."
+        )
+    if batch_diverged:
+        report.line(
+            f"  CAVEAT 0b: on {len(batch_diverged)} input(s) the streaming and batch "
+            "transcripts diverge (substitutions/insertions/deletions above). That is "
+            "wording or windowing difference, not a restatement: insertions on their own "
+            "are not re-committed text. The batch number is a divergence detector, not "
+            "an accuracy score (no ground-truth reference exists here)."
+        )
     if minimum_gap > 0:
         report.line(
             f"  The measurements support typing each non-empty commit as it arrives: a "
@@ -937,10 +1184,10 @@ def report_summary(report: Report, measurements: Sequence[UtteranceMeasurement])
         "`pending` is display-only and is revised before commit (see the revisions above)."
     )
     report.line(
-        "  CAVEAT 2: this is a measurement on the inputs listed above. The shipped clips "
-        "are read speech; the fresh user recording is what carries this device's noise "
-        "floor and this user's voice, and it must be added to this report before the gate "
-        "can be considered closed."
+        "  CAVEAT 2: the shipped clips are read speech. A measurement that does not "
+        "include a fresh user recording does not carry this device's noise floor or "
+        "this user's voice; per the ticket the gate must not be considered closed "
+        "without one."
     )
     report.line(
         "  CAVEAT 3: the engine is closed-source (ADR 0006); a restatement on an input "
@@ -965,13 +1212,17 @@ class ScriptedStep:
 
 
 def measurement_from_steps(
-    label: str, steps: Sequence[ScriptedStep]
+    label: str,
+    steps: Sequence[ScriptedStep],
+    *,
+    batch_reference: str | None = None,
 ) -> UtteranceMeasurement:
     """Build an :class:`UtteranceMeasurement` from scripted decoder returns.
 
     Used only by :func:`run_self_test`: a restatement cannot be produced on demand by the
-    real engine, so the detector is validated against a decoder that restates by
-    construction. No engine and no microphone are involved.
+    real engine, so the detectors are validated against a decoder that restates by
+    construction. ``batch_reference`` lets the same helper exercise detector 2. No engine
+    and no microphone are involved.
     """
     events: list[PassEvent] = []
     engine_seconds = 0.0
@@ -1006,20 +1257,31 @@ def measurement_from_steps(
         partial_texts=(),
         final_text=transcript,
         final_language=None,
-        batch_reference=None,
+        batch_reference=batch_reference,
+        batch_reference_note=(
+            "scripted self-test reference"
+            if batch_reference is not None
+            else "not requested"
+        ),
         timeline_from_gate=True,
     )
 
 
 def run_self_test(report: Report) -> int:
-    """Assert the restatement detector fires on a restating engine and stays quiet otherwise.
+    """Validate both restatement detectors against scripted, deliberately wrong engines.
 
-    This is the harness validating itself. It needs no engine, no device and no audio, so
-    it can be run anywhere (and it is what keeps the ``[4] restatements: 0`` line from
-    being vacuous).
+    Detector 1 (the committed-word overlap scan) is validated against a restating
+    decoder. Detector 2 (the batch-reference diff) is validated against scripted text
+    pairs, including the two R1 controls: a non-adjacent phrase repeat the overlap scan
+    misses must be caught, and an ordinary insertion with no repeat -- the fresh
+    recording's shape -- must stay quiet even though the diff diverges. No engine, no
+    device and no audio are involved, so this can run anywhere.
     """
-    report.heading("self-test: does the restatement detector fire?")
-    cases: tuple[tuple[str, tuple[ScriptedStep, ...], int], ...] = (
+    report.heading("self-test: do the restatement detectors fire?")
+    failures = 0
+
+    report.line("  detector 1: committed-word overlap scan")
+    overlap_cases: tuple[tuple[str, tuple[ScriptedStep, ...], int], ...] = (
         (
             "append-only engine (the shipped behaviour)",
             (
@@ -1046,8 +1308,7 @@ def run_self_test(report: Report) -> int:
             2,
         ),
     )
-    failures = 0
-    for label, steps, expected in cases:
+    for label, steps, expected in overlap_cases:
         measurement = measurement_from_steps(label, steps)
         overlaps = find_committed_overlaps(measurement)
         prefix = check_prefix_property(measurement)
@@ -1056,21 +1317,83 @@ def run_self_test(report: Report) -> int:
         ok = detected and prefix.ok
         failures += 0 if ok else 1
         report.line(
-            f"  {'PASS' if ok else 'FAIL'}  {label}: expected overlap>=({expected}) word(s), "
-            f"detected {strongest}; prefix check {'PASS' if prefix.ok else 'FAIL'}"
+            f"    {'PASS' if ok else 'FAIL'}  {label}: expected overlap>=({expected}) "
+            f"word(s), detected {strongest}; prefix check "
+            f"{'PASS' if prefix.ok else 'FAIL'}"
         )
         for overlap in overlaps:
             report.line(
                 f"        {overlap.overlap_words} word(s) repeated; already committed "
                 f"{overlap.before!r}; new delta {overlap.delta!r}"
             )
-    report.line()
-    report.line(
-        f"  {len(cases) - failures}/{len(cases)} self-test cases behaved as expected"
+
+    report.line("  detector 2: batch-reference diff (the R1 validation controls)")
+    batch_cases: tuple[tuple[str, tuple[ScriptedStep, ...], str, int], ...] = (
+        (
+            "batch reference identical: no repeated phrase",
+            (ScriptedStep("process", " hello world"),),
+            "hello world",
+            0,
+        ),
+        (
+            "non-adjacent phrase repeat: overlap scan MISSES, batch diff fires",
+            (
+                ScriptedStep("process", "he hoped"),
+                ScriptedStep("process", " there would"),
+                ScriptedStep("process", " be stew"),
+                ScriptedStep("process", " he hoped"),
+            ),
+            "he hoped there would be stew",
+            1,
+        ),
+        (
+            "ordinary insertions, no repeat (the fresh-recording shape)",
+            (
+                ScriptedStep("process", "good morning"),
+                ScriptedStep("process", " last night"),
+                ScriptedStep("process", " great night"),
+            ),
+            "good morning last night",
+            0,
+        ),
     )
+    for label, steps, reference, expected in batch_cases:
+        measurement = measurement_from_steps(label, steps, batch_reference=reference)
+        review = review_batch_reference(measurement)
+        duplicated = review.duplicated
+        ok = len(duplicated) >= expected if expected else not duplicated
+        note = ""
+        if "overlap scan MISSES" in label:
+            scan = find_committed_overlaps(measurement)
+            strongest = max((overlap.overlap_words for overlap in scan), default=0)
+            ok = ok and strongest < 2
+            note = f"; overlap scan strongest={strongest} (miss required)"
+        failures += 0 if ok else 1
+        diff = review.diff
+        diff_note = (
+            f"ins={diff.insertions} sub={diff.substitutions} del={diff.deletions} "
+            f"WER={diff.wer:.3f}"
+            if diff is not None
+            else "no diff"
+        )
+        report.line(
+            f"    {'PASS' if ok else 'FAIL'}  {label}: expected duplicated>=({expected}), "
+            f"detected {len(duplicated)}; {diff_note}{note}"
+        )
+        for phrase in duplicated:
+            report.line(
+                f"        repeated phrase {phrase.text!r} at hypothesis words "
+                f"{phrase.first_index} and {phrase.repeated_index}"
+            )
+
+    total = len(overlap_cases) + len(batch_cases)
+    report.line()
+    report.line(f"  {total - failures}/{total} self-test cases behaved as expected")
     report.line(
         "  note: the prefix check PASSES even on the restating cases, which is exactly why "
-        "the committed-word overlap scan and the batch-reference diff exist."
+        "the committed-word overlap scan and the batch-reference diff exist. The two "
+        "batch controls prove detector 2 fires on a repeat and stays quiet on ordinary "
+        "insertions."
     )
     return 0 if failures == 0 else 1
 
