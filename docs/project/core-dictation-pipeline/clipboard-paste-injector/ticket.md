@@ -1,7 +1,7 @@
 # Clipboard-paste injector (configured alternative)
 
 - **Priority:** P1
-- **Status:** in review
+- **Status:** done
 - **Complexity:** S
 - **Epic:** ../epic.md
 

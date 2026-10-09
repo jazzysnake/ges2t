@@ -52,7 +52,7 @@ speak → `ges2t toggle` types the right text into a text editor and a terminal.
 | 22 | [xkb-keycode-mapping](core-dictation-pipeline/xkb-keycode-mapping/ticket.md) — libxkbcommon reverse lookup, generic over layouts | M | done | 2 | feat/xkb-keycode-mapping (merged) |
 | 24 | [layout-detection-and-config](core-dictation-pipeline/layout-detection-and-config/ticket.md) — live keymap, KWin D-Bus, injection config blocks | S | done | 3 | feat/layout-detection-and-config (merged) |
 | 23 | [batched-key-emission](core-dictation-pipeline/batched-key-emission/ticket.md) — one `ydotool key` batch + the latency measurement | M | done | 7, 22, 24 | feat/batched-key-emission (merged) |
-| 25 | [clipboard-paste-injector](core-dictation-pipeline/clipboard-paste-injector/ticket.md) — `wl-copy` + paste chord as a configured alternative | S | in review | 23, 24 | feat/clipboard-paste-injector |
+| 25 | [clipboard-paste-injector](core-dictation-pipeline/clipboard-paste-injector/ticket.md) — `wl-copy` + paste chord as a configured alternative | S | done | 23, 24 | feat/clipboard-paste-injector (merged 2646212) |
 | 28 | [injection-delay-default](core-dictation-pipeline/injection-delay-default/ticket.md) — set `key_delay_ms` from ticket 23's measurement (12 → 0) | XS | done | 23, 24 | feat/injection-delay-default (merged) |
 
 ## Epic 2 — [Live dictation UX](live-dictation-ux/epic.md) · P1
