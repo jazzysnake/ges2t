@@ -507,6 +507,33 @@ def test_ydotoold_fail_gives_the_systemctl_fix() -> None:
     assert "ydotoold" in result.fix
 
 
+def test_ydotoold_probe_accepts_a_datagram_socket(tmp_path: Path) -> None:
+    """ydotoold listens on a SOCK_DGRAM socket; the probe must use that type."""
+    path = tmp_path / "daemon.sock"
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    try:
+        server.bind(str(path))
+        assert doctor._ydotoold_reachable(path) is True
+    finally:
+        server.close()
+
+
+def test_ydotoold_probe_rejects_a_stream_socket(tmp_path: Path) -> None:
+    """A SOCK_STREAM listener is not ydotoold; the probe must not accept it.
+
+    This is the mutation guard for the measured bug: a SOCK_STREAM probe reports
+    a running ydotoold as unreachable, and a stream listener as reachable.
+    """
+    path = tmp_path / "stream.sock"
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        server.bind(str(path))
+        server.listen(1)
+        assert doctor._ydotoold_reachable(path) is False
+    finally:
+        server.close()
+
+
 def test_uinput_ok_when_writable() -> None:
     assert check_uinput(path=Path("/dev/uinput"), probe=lambda path: True).status is CheckStatus.OK
 
@@ -757,6 +784,8 @@ def test_config_valid_fail_reports_a_config_error_with_a_fix() -> None:
 
     assert diagnosis.validity.status is CheckStatus.FAIL
     assert "audio.device" in diagnosis.validity.summary
+    assert "invalid configuration" in diagnosis.validity.summary
+    assert "crashed" not in diagnosis.validity.summary
     assert diagnosis.validity.fix is not None
 
 
@@ -786,6 +815,7 @@ def test_engine_config_fail_catches_whistle_config_error_with_block_and_key() ->
 
     assert diagnosis.validity.status is CheckStatus.FAIL
     assert "engine.whistle.chunk_seconds" in diagnosis.validity.summary
+    assert "crashed" not in diagnosis.validity.summary
     assert diagnosis.validity.fix is not None and "engine.whistle" in diagnosis.validity.fix
 
 
@@ -804,7 +834,8 @@ def test_injection_config_fail_catches_injection_config_error() -> None:
 
     assert diagnosis.validity.status is CheckStatus.FAIL
     assert "injection.ydotool.key_delay_ms" in diagnosis.validity.summary
-    assert diagnosis.validity.fix is not None
+    assert "crashed" not in diagnosis.validity.summary
+    assert diagnosis.validity.fix is not None and "injection.ydotool" in diagnosis.validity.fix
 
 
 def test_injection_config_warns_on_unknown_clipboard_key() -> None:
