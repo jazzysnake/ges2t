@@ -1,7 +1,7 @@
 # Clipboard injection times out because `wl-copy` forks
 
 - **Priority:** P1 (corrective for ticket 25, whose manual gate failed)
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** S
 - **Epic:** ../../core-dictation-pipeline/epic.md
 
