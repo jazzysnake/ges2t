@@ -38,6 +38,7 @@ warnings), ADR 0017 (model presence), ADR 0015 (socket/single instance).
       | Engine present | `libneedle.so` missing or the wrong size | `ges2t setup` |
       | `cactus-needle` importable | the package cannot be imported | `uv sync` |
       | Config valid | TOML error or bad-typed value | the file path and the offending key |
+      | Engine config valid | a `WhistleConfigError` from the selected engine's block (ticket 4 raises a **distinct** type from the generic `ConfigError`, deliberately — see its `001-comment.md`) | the block name, key and allowed range |
       | Config warnings | unknown keys anywhere (generic **and** the selected engine block — ADR 0009) | which keys were ignored |
       | `pw-record` present | not on `PATH` | which package provides it |
       | PipeWire session | `pw-record` cannot reach a session | how to check the session |
@@ -51,6 +52,13 @@ warnings), ADR 0017 (model presence), ADR 0015 (socket/single instance).
       are listed again at the end with their fix lines, so the user does not have to scroll.
 - [ ] Exit code is `0` when there are no `FAIL`s (warnings are allowed) and non-zero when any
       check fails, consistent with ADR 0016.
+- [ ] `doctor` must catch **both** configuration error types: `ges2t.config.ConfigError`
+      (generic layer, names a file path) and the selected engine adapter's own error type,
+      beginning with `WhistleConfigError` (engine block, names a block key). They are
+      deliberately distinct — the generic layer must not know what an engine-specific key
+      means (ADR 0009) — so `doctor` is where they are unified into one user-facing report.
+      Do not "fix" the duplication by making both inherit from a shared class without an ADR;
+      the two types exist for a reason.
 - [ ] `doctor` performs **no network I/O**, writes nothing to disk, and never mutates config or
       system state (ADR 0016). It must be safe to run at any time, including while the service
       is running.

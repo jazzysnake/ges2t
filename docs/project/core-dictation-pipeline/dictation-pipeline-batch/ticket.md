@@ -29,7 +29,11 @@ the service enforces it too), ADR 0001 (the latency budget being measured here).
 - [ ] `src/ges2t/pipeline.py` provides:
       - `build_transcriber(config) -> Transcriber` — maps `config.transcriber.engine` to a
         concrete transcriber (only `"whistle"` in v1, using `WhistleConfig.from_mapping` on
-        `config.engine_blocks["whistle"]`), and raises a clear error for an unhandled engine;
+        `config.engine_blocks.get(config.transcriber.engine, {})`), and raises a clear error
+        for an unhandled engine. **Use `.get(...)` with an empty-mapping default, not
+        `[...]`** — the generic config layer deliberately never synthesises an
+        `[engine.<name>]` block, so an absent block is the normal case and must mean "all
+        defaults", not a `KeyError` (see ticket 4's `001-comment.md`);
       - `build_audio_source(config) -> AudioSource` — `PwRecordAudioSource(config.audio.device)`;
       - `build_injector(config) -> Injector` — `YdotoolInjector(config.ui.trailing_space)`;
       - `class BatchDictationSession` implementing `DictationSession`: `start()` starts
