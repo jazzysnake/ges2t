@@ -38,6 +38,17 @@ speak → `ges2t toggle` types the right text into a text editor and a terminal.
 | 20 | [type-check-whole-tree](core-dictation-pipeline/type-check-whole-tree/ticket.md) — fix the tests-not-type-checked gap | XS | done | 4 | feat/type-check-whole-tree (merged) |
 | 21 | [status-ui-outside-lock](core-dictation-pipeline/status-ui-outside-lock/ticket.md) — fix the reproduced status_ui-under-lock deadlock | XS | to do | 9 | — |
 
+### Injection rework (added 2026-10-09 after the `hu` keymap discovery)
+
+`ydotool type` is US-only and ~40 ms/char; see ADR 0020 and ADR 0003's amendment.
+
+| # | Ticket | Size | Status | Depends on | Branch |
+|---|---|---|---|---|---|
+| 22 | [xkb-keycode-mapping](core-dictation-pipeline/xkb-keycode-mapping/ticket.md) — libxkbcommon reverse lookup, generic over layouts | M | to do | 2 | — |
+| 24 | [layout-detection-and-config](core-dictation-pipeline/layout-detection-and-config/ticket.md) — live keymap, KWin D-Bus, injection config blocks | S | to do | 3 | — |
+| 23 | [batched-key-emission](core-dictation-pipeline/batched-key-emission/ticket.md) — one `ydotool key` batch + the latency measurement | M | to do | 7, 22, 24 | — |
+| 25 | [clipboard-paste-injector](core-dictation-pipeline/clipboard-paste-injector/ticket.md) — `wl-copy` + paste chord as a configured alternative | S | to do | 23, 24 | — |
+
 ## Epic 2 — [Live dictation UX](live-dictation-ux/epic.md) · P1
 
 Streaming as the default path, a tray that shows state, actionable notifications, and
@@ -62,7 +73,7 @@ independent and may run in parallel (they touch disjoint files).
 
 | Wave | Tickets |
 |---|---|
-| 0 | 20 (corrective; independent of everything else) |
+| 0 | 20 (done), 21 (corrective) |
 | 1 | 1 | 
 | 2 | 2, 3 |
 | 3 | 4, 5, 6, 7, 13 |
@@ -74,6 +85,9 @@ independent and may run in parallel (they touch disjoint files).
 | 9 | 16, 17 |
 | 10 | 18 |
 | 11 | 19 |
+| 12 | 22, 24 (injection rework; disjoint files) |
+| 13 | 23 |
+| 14 | 25 |
 
 Serialization is also required wherever two tickets touch the same file: `10 → 11/12`
 (`cli.py`, `doctor.py`), `11 → 16` (`pipeline.py`), `17 → 18` (`pipeline.py`).
