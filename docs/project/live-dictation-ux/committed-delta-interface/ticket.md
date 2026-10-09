@@ -1,7 +1,7 @@
 # Expose the committed delta on the streaming segment
 
 - **Priority:** P1
-- **Status:** in review
+- **Status:** done
 - **Complexity:** S
 - **Epic:** ../epic.md
 
