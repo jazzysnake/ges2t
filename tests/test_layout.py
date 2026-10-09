@@ -9,10 +9,13 @@ verbatim as parser fixtures.
 from __future__ import annotations
 
 import subprocess
-from collections.abc import Mapping, Sequence
+import sys
+import threading
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import FrozenInstanceError
+from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import pytest
 
@@ -37,6 +40,7 @@ from ges2t.injectors.layout import (
     YdotoolConfigResult,
     detect_layout,
     live_keymap_text,
+    _run_command,
     parse_active_layout_index,
     parse_layouts_list,
     resolve_layout,
@@ -98,6 +102,37 @@ class RecordingRunner:
 def _runner(**outputs: subprocess.CompletedProcess[bytes] | BaseException) -> RecordingRunner:
     """Build a :class:`RecordingRunner` from keyword arguments keyed by subcommand."""
     return RecordingRunner(outputs)
+
+
+_T = TypeVar("_T")
+
+
+def call_with_timeout(call: Callable[[], _T], *, timeout: float) -> _T:
+    """Run ``call`` on a worker thread and fail loudly if it outlives ``timeout``.
+
+    The timeout-enforcement test below deliberately starts a child that outlives
+    its bound; without this wrapper a regression to ``timeout=None`` would hang
+    the suite on that child. Raising :class:`AssertionError` (rather than
+    :class:`TimeoutError`) keeps the regression's failure unmistakable from the
+    :class:`subprocess.TimeoutExpired` the correct code is expected to raise.
+    """
+    results: list[_T] = []
+    errors: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            results.append(call())
+        except BaseException as exc:  # re-raised on the main thread below
+            errors.append(exc)
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(timeout=timeout)
+    if thread.is_alive():
+        raise AssertionError(f"call did not return within {timeout:.1f}s")
+    if errors:
+        raise errors[0]
+    return results[0]
 
 
 # --- parsing real ``busctl`` output -------------------------------------------
@@ -181,8 +216,14 @@ def test_detect_layout_returns_none_when_the_service_is_absent() -> None:
 
 
 def test_detect_layout_returns_none_on_a_non_zero_exit() -> None:
+    # Valid stdout with a failing exit code isolates the returncode guard from the
+    # parse-failure path: with empty stdout a removed guard is indistinguishable
+    # from a successful parse that then failed (review gap F1).
     runner = _runner(
-        getLayoutsList=_completed("", returncode=1, stderr="Call failed: no such service")
+        getLayoutsList=_completed(
+            REAL_LAYOUTS_LIST, returncode=1, stderr="Call failed: no such service"
+        ),
+        getLayout=_completed(REAL_GET_LAYOUT),
     )
     assert detect_layout(runner=runner) is None
 
@@ -198,9 +239,11 @@ def test_detect_layout_returns_none_on_a_timeout() -> None:
 
 
 def test_detect_layout_returns_none_when_the_active_layout_call_fails() -> None:
+    # ``getLayout``'s own guard, isolated: a valid ``u 0`` body with ``rc=1`` must
+    # be rejected as a failure, not parsed into a successful LayoutInfo (gap F1).
     runner = _runner(
         getLayoutsList=_completed(REAL_LAYOUTS_LIST),
-        getLayout=_completed("", returncode=1),
+        getLayout=_completed(REAL_GET_LAYOUT, returncode=1),
     )
     assert detect_layout(runner=runner) is None
 
@@ -222,6 +265,14 @@ def test_detect_layout_passes_a_bounded_timeout_to_every_call() -> None:
     assert 0 < LAYOUT_COMMAND_TIMEOUT_SECONDS < 60
 
 
+def test_the_documented_two_second_bound_is_pinned() -> None:
+    # The timeout the detectors hand to the runner is a fixed, documented bound,
+    # not a variable that may drift while every ``== LAYOUT_COMMAND_TIMEOUT_SECONDS``
+    # assertion follows it. Its literal value is what an execution-latency budget
+    # (ticket 23) is written against.
+    assert LAYOUT_COMMAND_TIMEOUT_SECONDS == 2.0
+
+
 # --- live_keymap_text ---------------------------------------------------------
 
 
@@ -237,7 +288,9 @@ def test_live_keymap_text_returns_none_when_xkbcli_is_absent() -> None:
 
 
 def test_live_keymap_text_returns_none_on_a_non_zero_exit() -> None:
-    runner = _runner(**{"dump-keymap-wayland": _completed("", returncode=1)})
+    # A failing exit code with a *valid* keymap on stdout: only the returncode
+    # guard can reject this, so the guard is actually pinned (review gap F1/F2).
+    runner = _runner(**{"dump-keymap-wayland": _completed(REAL_KEYMAP, returncode=1)})
     assert live_keymap_text(runner=runner) is None
 
 
@@ -255,6 +308,31 @@ def test_live_keymap_text_uses_a_bounded_timeout() -> None:
     runner = _runner(**{"dump-keymap-wayland": _completed(REAL_KEYMAP)})
     live_keymap_text(runner=runner)
     assert runner.timeouts == [LAYOUT_COMMAND_TIMEOUT_SECONDS]
+
+
+#: A real, hermetic child that outlives the short bound injected below: the
+#: project's own interpreter, so the test depends on nothing on ``PATH`` and
+#: starts no ``xkbcli``/``busctl`` and touches no session.
+_SLOW_CHILD_ARGV: tuple[str, ...] = (sys.executable, "-c", "import time; time.sleep(5)")
+
+
+def test_run_command_enforces_its_timeout_without_ignoring_it() -> None:
+    """The *real* runner must hand its timeout to ``subprocess.run``.
+
+    The other timeout tests only assert the value an *injected* runner receives,
+    so ``timeout=None`` inside :func:`_run_command` was invisible (gap F3). Here
+    the real runner starts a child that outlives a deliberately short 0.2 s bound
+    and must raise :class:`subprocess.TimeoutExpired`. ``call_with_timeout`` fails
+    the test within 2 s if the bound is gone, instead of hanging on the 5 s child.
+    """
+    with pytest.raises(subprocess.TimeoutExpired):
+        call_with_timeout(partial(_run_command, _SLOW_CHILD_ARGV, 0.2), timeout=2.0)
+
+
+def test_run_command_returns_the_child_result_when_it_finishes_in_time() -> None:
+    """A child that finishes inside the bound is returned normally, not killed."""
+    completed = _run_command((sys.executable, "-c", "raise SystemExit(0)"), 5.0)
+    assert completed.returncode == 0
 
 
 # --- resolution order ---------------------------------------------------------
@@ -310,6 +388,22 @@ def test_falls_back_to_detected_names_when_the_keymap_is_unavailable() -> None:
     assert resolved.keymap_text is None
 
 
+def test_a_failing_keymap_exit_with_valid_stdout_falls_through_to_detection() -> None:
+    # The live keymap is the path the service actually types through: a non-zero
+    # xkbcli exit whose stdout happens to parse must not be used as the keymap.
+    # This pins the guard on the resolution path, not only in isolation (gap F2).
+    runner = _runner(
+        **{"dump-keymap-wayland": _completed(REAL_KEYMAP, returncode=1)},
+        getLayoutsList=_completed(REAL_LAYOUTS_LIST),
+        getLayout=_completed(REAL_GET_LAYOUT),
+    )
+    resolved = resolve_layout(runner=runner)
+    assert resolved.source is LayoutSource.DETECTED
+    assert resolved.keymap_text is None
+    assert resolved.layout == "hu"
+    assert resolved.variant == ""
+
+
 def test_detected_multi_layout_uses_the_active_index() -> None:
     runner = _runner(
         **{"dump-keymap-wayland": FileNotFoundError("no wayland session")},
@@ -329,7 +423,12 @@ def test_blank_or_auto_configuration_means_detect_not_guess_us(configured: str) 
     )
     resolved = resolve_layout(configured_layout=configured, runner=runner)
     assert resolved.source is LayoutSource.LIVE_KEYMAP
-    assert "us" not in (resolved.layout or "")
+    # The old assertion here was ``"us" not in (resolved.layout or "")``: with
+    # ``layout`` always ``None`` on this path it compared against the empty
+    # string, so it could never fail. Assert the real claim instead -- no layout
+    # name was invented and the live keymap is what came back.
+    assert resolved.layout is None
+    assert resolved.keymap_text == REAL_KEYMAP
 
 
 def test_raises_when_no_source_can_determine_the_layout() -> None:
@@ -343,7 +442,10 @@ def test_raises_when_no_source_can_determine_the_layout() -> None:
     assert "could not determine the keyboard layout" in message
     assert "xkbcli dump-keymap-wayland" in message
     assert "org.kde.keyboard" in message
-    assert "layout" in message
+    # ``assert "layout" in message`` was vacuous (the fixed prefix contains it);
+    # pin the actionable fix hint the message must carry instead.
+    assert "Set an explicit layout" in message
+    assert "'auto'" in message
 
 
 def test_layout_info_and_resolved_layout_are_frozen() -> None:

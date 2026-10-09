@@ -1,7 +1,7 @@
 # Pin the layout detection test guarantees (three falsified gaps)
 
 - **Priority:** P2
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** XS
 - **Epic:** ../epic.md
 
