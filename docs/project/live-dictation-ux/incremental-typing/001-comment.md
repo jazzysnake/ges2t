@@ -4,7 +4,7 @@
 - **Branch:** `feat/incremental-typing`
 - **Worktree:** `.worktrees/incremental-typing`
 - **Date:** 2026-10-09
-- **Status:** in review. `uv run pytest` → **900 passed**, exit 0; `uv run mypy src/ges2t tests`
+- **Status:** in review. `uv run pytest` → **901 passed**, exit 0; `uv run mypy src/ges2t tests`
   → **0 errors** (53 files).
 - **⚠️ This ticket amends [ADR 0011](../../../adr/0011-streaming-sliding-window.md).** The full
   amendment is in §7; the orchestrator must surface it to the user (the user escalates on ADR
@@ -124,8 +124,9 @@ restored clean.** Full output: `/tmp/ticket34-mutations.txt`.
 | M10 | one `CommittedTyper` reused across recordings | `test_each_streaming_recording_gets_a_fresh_watermark` |
 | M11 | the streaming live typer is disabled (silent downgrade to batch injection) | `test_wired_streaming_path_types_the_byte_identical_document` (5 failed) |
 
-**No new test passes before and after a mutation in the table.** All 14 `test_incremental_typing.py`
-tests and all 10 new/rewritten `test_pipeline_streaming.py` tests are covered. Two tests are
+**No new test passes before and after a mutation in the table.** All 15 `test_incremental_typing.py`
+tests and all 11 new `test_pipeline_streaming.py` tests are covered (plus the pre-existing
+parametrised trailing-space test, which now exercises the live `type_text` path — M7). Two tests are
 deliberately *not* individually discriminating and are declared so:
 
 - `test_finish_is_idempotent` — a second `finish()` is a no-op because the watermark already equals
@@ -229,7 +230,9 @@ The ADR was edited, not quietly superseded. Three edits:
 **`injection.backend = "clipboard"` + `streaming.enabled = true` is a hard startup error, not a
 warning.** `_validate_injection_backend` runs first in `_startup` (before artifacts) and raises
 `PipelineError`; `_build_live_typer_factory` raises the same error structurally when a streaming
-session is paired with an injector that is not a `TextTyper`.
+session is paired with an injector that is not a `TextTyper`. The message reaches the user through
+`run_service`, which prints both setting names and the fix and returns exit code 1
+(`test_run_service_reports_the_clipboard_streaming_conflict`).
 
 Justification:
 
@@ -275,7 +278,7 @@ documented.
 
 ```
 $ timeout 300 uv run pytest -q
-900 passed in 5.69s
+901 passed in 5.64s
 PYTEST_EXIT=0                       # the process exited; no exit-124 leaked-thread hang
 
 $ rm -rf .mypy_cache __pycache__ && uv run mypy src/ges2t tests
