@@ -86,10 +86,15 @@ ShutdownRequest = Callable[[], None]
 
 
 class TrayBackendError(RuntimeError):
-    """``pystray`` would not select the visible AppIndicator backend (ADR 0013).
+    """The tray could not start for an *environmental* reason (ADR 0013).
 
-    Raising this is the whole point: it is better to have no tray than a tray
-    that silently never appears on Plasma 6.
+    Two such failures are named this way: ``pystray`` would not select the
+    visible AppIndicator backend (ADR 0013's whole point), or the OS refused a
+    thread for the icon's event loop. Both are environmental, so the composition
+    root degrades to :class:`~ges2t.ui.status.NullStatusUI` with a warning;
+    a programming error is deliberately *not* named this way and still
+    propagates loudly. It is better to have no tray than a tray that silently
+    never appears on Plasma 6.
     """
 
 
@@ -265,7 +270,8 @@ class TrayStatusUI:
         The assertion runs **before** the icon is created, so an invisible
         backend is refused rather than merely looking healthy (ADR 0013).
 
-        :raises TrayBackendError: when the selected backend is not AppIndicator.
+        :raises TrayBackendError: when the selected backend is not AppIndicator,
+            or the OS refuses a thread for the icon's event loop.
         """
         if self._thread is not None or self._stopped:
             return
@@ -277,7 +283,15 @@ class TrayStatusUI:
         self._apply_display()
         thread = threading.Thread(target=self._run_icon, name="ges2t-tray", daemon=True)
         self._thread = thread
-        thread.start()
+        try:
+            thread.start()
+        except RuntimeError as exc:
+            # The OS refused a thread (resource/RLIMIT_NPROC exhaustion): an
+            # environmental failure, not a bug. Caught here, at the operation
+            # that actually fails, so build_status_ui degrades to NullStatusUI
+            # (ADR 0013) while a programming RuntimeError anywhere else still
+            # propagates and fails loudly (review 002/003).
+            raise TrayBackendError(f"the tray thread could not be started ({exc})") from exc
 
     def stop(self) -> None:
         """Stop the icon thread so the service can exit cleanly.

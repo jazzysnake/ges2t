@@ -50,6 +50,32 @@ def _fake_pystray(icon_module: str) -> types.ModuleType:
     return module
 
 
+class _RefusingThread:
+    """A stand-in for ``threading.Thread`` whose ``start`` fails like an exhausted OS."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        pass
+
+    def start(self) -> None:
+        raise RuntimeError("can't start new thread")
+
+    def is_alive(self) -> bool:
+        return False
+
+    def join(self, timeout: float | None = None) -> None:
+        return None
+
+
+class _ThreadlessIcon:
+    """The minimum icon ``TrayStatusUI._apply_display`` touches, with no display."""
+
+    title = ""
+    icon: object = None
+
+    def update_menu(self) -> None:
+        return None
+
+
 # --- assert_appindicator_backend --------------------------------------------
 
 
@@ -209,6 +235,26 @@ def test_build_status_ui_falls_back_for_environmental_failures(
     assert isinstance(ui, NullStatusUI)
     stderr = capsys.readouterr().err
     assert "no display or typelib" in stderr
+    assert "fully usable from the CLI" in stderr
+
+
+def test_build_status_ui_falls_back_when_the_tray_thread_cannot_start(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Review 003 (blocking, Angle A): the OS refusing a thread is environmental,
+    # so TrayStatusUI.start() names it locally as TrayBackendError and the tray
+    # degrades to NullStatusUI instead of aborting ges2t (ADR 0013). The real
+    # build_tray_status_ui path is exercised, minus the display and the thread.
+    monkeypatch.setattr(tray, "assert_appindicator_backend", lambda: None)
+    monkeypatch.setattr(tray.TrayStatusUI, "_create_icon", lambda self: _ThreadlessIcon())
+    monkeypatch.setattr(tray, "threading", types.SimpleNamespace(Thread=_RefusingThread))
+
+    ui = pipeline.build_status_ui(Config(ui=UIConfig(tray=True)))
+
+    assert isinstance(ui, NullStatusUI)
+    stderr = capsys.readouterr().err
+    assert "the tray thread could not be started" in stderr
+    assert "can't start new thread" in stderr
     assert "fully usable from the CLI" in stderr
 
 
