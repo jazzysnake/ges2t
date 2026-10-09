@@ -1,7 +1,7 @@
 # Ydotool injector
 
 - **Priority:** P0
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** S
 - **Epic:** ../epic.md
 
