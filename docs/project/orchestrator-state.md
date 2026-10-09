@@ -184,6 +184,16 @@ someone **trying to falsify a claim**. Ask reviewers for that explicitly every t
   agent should also state how long a window will be up. Current rule: any ticket whose verification
   needs a **human voice** or a **visible GUI surface** has that step marked **user-owned**
   (tickets 11 and 17) — the agent prepares a script and hands it over.
+- **Long agent runs die on connection errors, and context dies with them.** Three runs were lost in
+  one session (ticket 15's reviewer twice, ticket 23's implementer once), all at 600–1160 s. The
+  work is not lost if it was *committed*; it **is** lost if a reviewer was still holding findings in
+  context. Mitigations: (a) for any long task, tell the agent to **write its artifact to disk
+  incrementally** and append after each check, so a death costs at most one check; (b) `resume`
+  preserves context and is much cheaper than restarting, but **an agent can be cleaned up and be
+  unresumable** — then dispatch a **fresh** agent scoped to *"verify and extend the existing work,
+  never rewrite it"*, and say explicitly that the work already exists and where; (c) instruct
+  implementers to **commit the code before attempting anything risky or slow** (e.g. an authorised
+  measurement), so an infrastructure death cannot leave valuable work uncommitted.
 
 ## 8. Merge procedure (and the mistake to avoid)
 
