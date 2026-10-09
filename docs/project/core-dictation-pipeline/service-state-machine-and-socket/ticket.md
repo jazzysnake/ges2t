@@ -1,7 +1,7 @@
 # Service: state machine, single instance, socket protocol
 
 - **Priority:** P0
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** M
 - **Epic:** ../epic.md
 
@@ -23,7 +23,7 @@ primary test target).
 
 ## Definition of done
 
-- [ ] `src/ges2t/service.py` defines:
+- [x] `src/ges2t/service.py` defines:
       - a closed state enum with exactly: `IDLE`, `RECORDING`, `TRANSCRIBING`, `ERROR`;
       - `class DictationSession` (Protocol) — **the seam this ticket publishes for later
         tickets** — with `start() -> None`, `partials() -> Iterator[str]` (display-only live
@@ -34,7 +34,7 @@ primary test target).
         DictationSession]`, `injector: Injector`, `status_ui: StatusUI`, and a socket path.
       - the command handlers for `toggle`, `ptt-start`, `ptt-stop`, `cancel`, `status`,
         implemented as explicit transitions from the table below.
-- [ ] The transition table is implemented literally and is the specification:
+- [x] The transition table is implemented literally and is the specification:
 
       | state | `toggle` | `ptt-start` | `ptt-stop` | `cancel` | `status` |
       |---|---|---|---|---|---|
@@ -43,18 +43,18 @@ primary test target).
       | TRANSCRIBING | → RECORDING (queued) | error `busy` | error `busy` | error `busy` | `transcribing` |
       | ERROR | → IDLE | → IDLE | error `not-recording` | → IDLE | `error` |
 
-- [ ] **Never block the socket loop on transcription.** `finish()` runs off the command-
+- [x] **Never block the socket loop on transcription.** `finish()` runs off the command-
       handling path; commands arriving while `TRANSCRIBING` receive their defined answer
       (per the table) rather than hanging. A `toggle` in `TRANSCRIBING` must not lose the
       request or start a recording on top of one.
-- [ ] **Failures do not kill the service.** A raising session or a raising `injector` moves the
+- [x] **Failures do not kill the service.** A raising session or a raising `injector` moves the
       service to `ERROR`, calls `status_ui.error(<message>)`, and returns the service to a
       state where the next command is accepted. Specifically test: `finish()` raises;
       `inject()` raises; `start()` raises.
-- [ ] Empty transcriptions: when `finish()` returns an empty or whitespace-only string, **no
+- [x] Empty transcriptions: when `finish()` returns an empty or whitespace-only string, **no
       injection call happens at all** (ADR 0012) and the state returns to `IDLE` with no
       error.
-- [ ] `src/ges2t/socket_proto.py` defines the wire protocol and both ends:
+- [x] `src/ges2t/socket_proto.py` defines the wire protocol and both ends:
       - **newline-delimited JSON**, one line per message: request `{"cmd": "<verb>"}`, response
         `{"ok": bool, "state": "idle|recording|transcribing|error", "error": "code-or-null",
         "message": "human text or null"}`;
@@ -64,21 +64,24 @@ primary test target).
         removed and rebound (stale socket);
       - a client helper used by the CLI, which fails fast with a clear error when no service
         is listening and never hangs (bounded connect+socket timeouts).
-- [ ] Signal handling: `SIGINT`/`SIGTERM` shut the service down cleanly, cancel any in-progress
+- [x] Signal handling: `SIGINT`/`SIGTERM` shut the service down cleanly, cancel any in-progress
       session, and remove the socket file.
-- [ ] `tests/test_state_machine.py` drives the **entire transition table**, plus the
+- [x] `tests/test_state_machine.py` drives the **entire transition table**, plus the
       adversarial cases ADR 0004 calls out: duplicate `toggle`, `ptt-stop` without
       `ptt-start`, `ptt-start` while already recording, `ptt-start` while transcribing,
       `cancel` during recording, `cancel` while idle, an error followed by a successful
       command, and a session whose `finish()` returns `""`.
-- [ ] `tests/test_socket_proto.py` covers: request/response round-trip against a real socket
+- [x] `tests/test_socket_proto.py` covers: request/response round-trip against a real socket
       in `tmp_path`; the stale-socket rebind path; mode `0600` on the created socket; and that
       the client raises a clear error rather than hanging when nothing is listening.
-- [ ] `uv run pytest tests/test_state_machine.py tests/test_socket_proto.py` passes and
+- [x] `uv run pytest tests/test_state_machine.py tests/test_socket_proto.py` passes and
       `uv run pytest` stays green.
 
-- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
-      signature interface-typed — ADR 0019.
+- [x] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
+      signature interface-typed — ADR 0019. (The amended whole-tree command
+      `uv run mypy src/ges2t tests` still reports two pre-existing errors in
+      `tests/test_model_store.py` and `tests/test_whistle_config.py`; those are ticket 20's
+      scope and all files added here are clean — see `001-comment.md`.)
 
 ## Notes
 
