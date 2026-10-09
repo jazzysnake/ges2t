@@ -1,7 +1,7 @@
 # Streaming window engine: the generic windowed-commit driver
 
 - **Priority:** P1
-- **Status:** in review
+- **Status:** done
 - **Complexity:** M
 - **Epic:** ../epic.md
 
