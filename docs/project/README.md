@@ -43,7 +43,7 @@ documentation that takes a fresh machine to a working dictation.
 
 | # | Ticket | Size | Status | Depends on | Branch |
 |---|---|---|---|---|---|
-| 13 | [streaming-window-engine](live-dictation-ux/streaming-window-engine/ticket.md) — generic 5 s windowed-commit driver | M | to do | 2 | — |
+| 13 | [streaming-window-engine](live-dictation-ux/streaming-window-engine/ticket.md) — generic 5 s windowed-commit driver | M | in review | 2 | feat/streaming-window-engine |
 | 14 | [whistle-streaming-adapter](live-dictation-ux/whistle-streaming-adapter/ticket.md) — engine decoder + `stream()` | M | to do | 8, 13 | — |
 | 15 | [streaming-session](live-dictation-ux/streaming-session/ticket.md) — `DictationSession` over capture + window | M | to do | 9, 14 | — |
 | 16 | [streaming-wiring-and-e2e](live-dictation-ux/streaming-wiring-and-e2e/ticket.md) — selection rule + >30 s E2E | S | to do | 11, 15 | — |
