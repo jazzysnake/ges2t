@@ -654,6 +654,68 @@ def test_real_immediate_runner_still_bounds_a_wedged_child(
     assert excinfo.value.timeout == 0.2
 
 
+def test_real_immediate_runner_delivers_a_non_empty_payload_to_stdin(
+    tmp_path: Path,
+) -> None:
+    """The REAL immediate ``_run_command`` must feed a non-empty payload to stdin.
+
+    ``_run_immediate`` hands the payload to ``subprocess.run(input=...)``, and
+    that is the only route transcript text takes to ``wl-copy``: ADR 0020's rule
+    is that text never reaches argv, so nothing but the child's stdin carries
+    it. Every other clipboard test substitutes :class:`FakeClipboardRunner`, so
+    the fakes answer before the bytes matter and the real seam never sees a
+    payload -- mutating ``input=stdin_bytes`` to ``input=b""`` left the whole
+    877-test suite green (ticket 36 review section 11, M4). That is the same
+    blind spot that hid ticket 25's D1 and ticket 36 itself.
+
+    ``cat`` redirects stdin to a file under ``tmp_path``; no clipboard binary
+    and no keystroke is involved, so the file can be compared byte-for-byte. The
+    payload is deliberately multi-byte UTF-8, so a text-mode or re-encoding
+    defect cannot pass either.
+    """
+    target = tmp_path / "immediate-stdin.bin"
+    payload = "naïve café — 日本語 🎤\n".encode()
+
+    completed = _run_command(
+        ("sh", "-c", 'cat > "$1"', "sh", str(target)),
+        payload,
+        dict(os.environ),
+    )
+
+    assert completed.returncode == 0
+    assert len(payload) > 0, "the payload under test must be non-empty"
+    assert any(byte > 0x7F for byte in payload), "payload must be multi-byte"
+    assert target.read_bytes() == payload, "the child did not receive stdin bytes"
+
+
+def test_real_immediate_runner_captures_a_non_empty_stdout_payload(
+    tmp_path: Path,
+) -> None:
+    """The REAL immediate runner must capture stdout written to a regular file.
+
+    The same immediate path serves ``wl-paste``, whose **stdout** is the previous
+    selection the deferred restore later writes back. Ticket 36 replaced the
+    stdout pipe with a ``tempfile.TemporaryFile``, so that capture path is now
+    "a child writes a regular file, the runner reads it back" and has to be
+    pinned end to end, not just for an empty stream.
+
+    A real ``cat`` prints a file under ``tmp_path`` -- a stand-in for the
+    previous selection -- and the runner must return those bytes exactly,
+    multi-byte included. No clipboard binary and no keystroke is involved.
+    """
+    source = tmp_path / "previous-selection.bin"
+    previous = "old selection — 選択 🎤".encode()
+    source.write_bytes(previous)
+
+    completed = _run_command(("cat", str(source)), b"", dict(os.environ))
+
+    assert completed.returncode == 0
+    assert len(previous) > 0, "the payload under test must be non-empty"
+    assert any(byte > 0x7F for byte in previous), "payload must be multi-byte"
+    assert completed.stdout == previous, "stdout bytes were not captured exactly"
+    assert completed.stderr == b""
+
+
 # --- delivery failures are typed and actionable -------------------------------
 
 

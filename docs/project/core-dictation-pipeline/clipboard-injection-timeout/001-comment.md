@@ -111,10 +111,20 @@ tests pin that stdout is still captured (for `wl-paste`) and that a genuinely sl
 raises `TimeoutExpired` (the bound survives); the latter monkeypatches the module constant to 0.2 s
 so it does not add 5 s to the suite.
 
-**Falsification** (overlay the pre-fix blob from `HEAD`, run, restore byte-identically):
+**Falsification** (overlay the pre-fix blob from the pre-fix commit, run, restore byte-identically):
+
+> **Correction (ticket 37, `pin-clipboard-real-seam-payload`):** this artifact originally quoted
+> `git show HEAD:src/ges2t/injectors/clipboard.py`. `HEAD` contains the fix, so that command
+> yields the **fixed** blob `9e0f4e9b…`, not the pre-fix blob. The recorded hash
+> `deef264efdf6bd370ddacd4944b4f2e1cc01d56fbebc8f349154b6f7f97f7bfb` was **correct**; only the
+> quoted command was mis-transcribed. The pre-fix blob comes from the commit *before* the fix,
+> `git show 2e9fb05^:…` (that commit is `78141d2`, the review-time `main` tip). The ticket
+> suggested `main` because `main` had not yet merged the fix when it was written, but `main` has
+> since merged it as `ddeb278`, so `git show main:…` now also yields the **fixed** blob. Both
+> hashes were re-confirmed during ticket 37; corrected in place rather than silently rewritten.
 
 ```
-$ git show HEAD:src/ges2t/injectors/clipboard.py > src/ges2t/injectors/clipboard.py
+$ git show 2e9fb05^:src/ges2t/injectors/clipboard.py > src/ges2t/injectors/clipboard.py
 $ sha256sum src/ges2t/injectors/clipboard.py
 deef264efdf6bd370ddacd4944b4f2e1cc01d56fbebc8f349154b6f7f97f7bfb  src/ges2t/injectors/clipboard.py
 $ rm -rf .mypy_cache __pycache__ && uv run pytest -q -p no:cacheprovider \
