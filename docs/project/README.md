@@ -36,6 +36,7 @@ speak → `ges2t toggle` types the right text into a text editor and a terminal.
 | 11 | [dictation-pipeline-batch](core-dictation-pipeline/dictation-pipeline-batch/ticket.md) — composition root + E2E | M | to do | 6, 7, 8, 9, 10 | — |
 | 12 | [doctor-command](core-dictation-pipeline/doctor-command/ticket.md) — diagnose every prerequisite | M | to do | 3, 5, 6, 7, 9, 10 | — |
 | 20 | [type-check-whole-tree](core-dictation-pipeline/type-check-whole-tree/ticket.md) — fix the tests-not-type-checked gap | XS | done | 4 | feat/type-check-whole-tree (merged) |
+| 21 | [status-ui-outside-lock](core-dictation-pipeline/status-ui-outside-lock/ticket.md) — fix the reproduced status_ui-under-lock deadlock | XS | to do | 9 | — |
 
 ## Epic 2 — [Live dictation UX](live-dictation-ux/epic.md) · P1
 
@@ -48,7 +49,7 @@ documentation that takes a fresh machine to a working dictation.
 | 14 | [whistle-streaming-adapter](live-dictation-ux/whistle-streaming-adapter/ticket.md) — engine decoder + `stream()` | M | done | 8, 13 | feat/whistle-streaming-adapter (merged) |
 | 15 | [streaming-session](live-dictation-ux/streaming-session/ticket.md) — `DictationSession` over capture + window | M | to do | 9, 14 | — |
 | 16 | [streaming-wiring-and-e2e](live-dictation-ux/streaming-wiring-and-e2e/ticket.md) — selection rule + >30 s E2E | S | to do | 11, 15 | — |
-| 17 | [tray-status-ui](live-dictation-ux/tray-status-ui/ticket.md) — pystray AppIndicator + backend assertion | M | to do | 10, 11 | — |
+| 17 | [tray-status-ui](live-dictation-ux/tray-status-ui/ticket.md) — pystray AppIndicator + backend assertion | M | to do | 10, 11, 21 | — |
 | 18 | [notifications-and-cancel](live-dictation-ux/notifications-and-cancel/ticket.md) — `notify-send` on failure | S | to do | 16, 17 | — |
 | 19 | [user-documentation-and-setup-guide](live-dictation-ux/user-documentation-and-setup-guide/ticket.md) — README + setup guide + unit file | M | to do | 10, 11, 12, 16, 17, 18 | — |
 
