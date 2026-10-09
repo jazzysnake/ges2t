@@ -70,7 +70,7 @@ documentation that takes a fresh machine to a working dictation.
 | 18 | [notifications-and-cancel](live-dictation-ux/notifications-and-cancel/ticket.md) — `notify-send` on failure | S | done | 16, 17 | feat/notifications-and-cancel (merged) |
 | 19 | [user-documentation-and-setup-guide](live-dictation-ux/user-documentation-and-setup-guide/ticket.md) — README + setup guide + unit file | M | to do | 10, 11, 12, 16, 17, 18 | — |
 | 32 | [commit-cadence-diagnostic](live-dictation-ux/commit-cadence-diagnostic/ticket.md) — measure commit cadence and prove the append-only prefix (the gate for 34) | S | to do | 13, 14, 15, 16 | — |
-| 33 | [committed-delta-interface](live-dictation-ux/committed-delta-interface/ticket.md) — carry committed text separately from the pending tail | S | to do | 32 | — |
+| 33 | [committed-delta-interface](live-dictation-ux/committed-delta-interface/ticket.md) — carry committed text separately from the pending tail | S | in review | 32 | feat/committed-delta-interface |
 | 34 | [incremental-typing](live-dictation-ux/incremental-typing/ticket.md) — type committed words as they are committed (amends ADR 0011) | M | to do | 32, 33 | — |
 
 ---
