@@ -44,20 +44,20 @@ Original orchestrator brief: `.pi/prompts/orchestrate-project.md`.
 
 ## 4. Current baselines on `main`
 
-- `uv run pytest` → **407 passed** (~1.7 s)
-- **`uv run mypy src/ges2t tests` → 0 errors (30 files)** — this is the required command. ADR 0019
+- `uv run pytest` → **483 passed** (~1.5 s)
+- **`uv run mypy src/ges2t tests` → 0 errors (32 files)** — this is the required command. ADR 0019
   was amended 2026-10-09: the old `mypy src/ges2t`-only check let a real violation through a
   completed review (see ticket 20).
-- `main` HEAD at time of writing: `16d1996` ("board: ticket 10 … is done")
-- 21 ADRs (0000–0020), 26 tickets, 2 epics.
+- `main` HEAD at time of writing: `f135868` (ticket 27 filed). Ticket 24 merged at `a6ba892`.
+- 21 ADRs (0000–0020), **27 tickets**, 2 epics.
 
 ## 5. Board state (13 of 26 done)
 
-**Done:** 1 project-scaffold · 2 core-interfaces-and-fakes · 3 config-loading ·
+**Done (14 of 27):** 1 project-scaffold · 2 core-interfaces-and-fakes · 3 config-loading ·
 4 whistle-engine-config · 5 model-store-and-verification · 6 audio-capture-pw-record ·
 7 ydotool-injector · 8 whistle-transcriber-adapter-batch · 9 service-state-machine-and-socket ·
 10 cli-surface-and-commands · 13 streaming-window-engine · 14 whistle-streaming-adapter ·
-20 type-check-whole-tree
+20 type-check-whole-tree · **24 layout-detection-and-config** (merged `a6ba892`, review `002` pass)
 
 **In review / in flight (see §6):** 21 status-ui-outside-lock (changes requested, B1 fix running) ·
 22 xkb-keycode-mapping (implementing, nothing committed yet) · 24 layout-detection-and-config
@@ -66,7 +66,11 @@ nothing committed yet)
 
 **To do:** 11 dictation-pipeline-batch · 12 doctor-command · 15 streaming-session ·
 16 streaming-wiring-and-e2e · 17 tray-status-ui · 18 notifications-and-cancel ·
-19 user-documentation-and-setup-guide · 23 batched-key-emission · 25 clipboard-paste-injector
+19 user-documentation-and-setup-guide · 23 batched-key-emission · 25 clipboard-paste-injector ·
+**27 pin-layout-test-guarantees** (filed from ticket 24's review: both detectors' non-zero-exit
+guards are unexercised — empty stdout makes `rc=1` indistinguishable from success — and the 2 s
+timeout is never enforced, since `timeout=None` still passes the suite. Same failure class as
+tickets 20 and 26. The guards themselves were hand-verified, so it is a **test** gap, not a bug.)
 
 Modules already on `main`: `interfaces.py`, `config.py`, `model_store.py`, `service.py`,
 `socket_proto.py`, `streaming.py`, `cli.py`, `audio/pw_record.py`, `injectors/ydotool.py`,
@@ -80,10 +84,14 @@ worktree is dirty-but-complete — recover from artifacts, do not re-run blindly
 
 | Ticket | Worktree (`/home/matee/Workspace/Personal/ges2t/.worktrees/…`) | Branch | Task |
 |---|---|---|---|
-| 21 | `status-ui-outside-lock` | `feat/status-ui-outside-lock` | Fix review finding **B1** (see §9) |
-| 22 | `xkb-keycode-mapping` | `feat/xkb-keycode-mapping` | libxkbcommon reverse lookup, `injectors/keymap.py` |
-| 24 | `layout-detection-and-config` | `feat/layout-detection-and-config` | Live keymap + KWin D-Bus + injection config blocks |
-| 26 | `pin-cli-test-guarantees` | `feat/pin-cli-test-guarantees` | Falsify/pin two CLI test gaps (F1, F2) |
+| 21 | `status-ui-outside-lock` | `feat/status-ui-outside-lock` | **Re-review** of the B1 fix (`080a2a4`) |
+| 22 | `xkb-keycode-mapping` | `feat/xkb-keycode-mapping` | **Review** of `d58a50d`, incl. an authorized `ydotool key` round-trip probe |
+| 26 | `pin-cli-test-guarantees` | `feat/pin-cli-test-guarantees` | **Review** of `99ff8fb` |
+
+Ticket 24 merged and its worktree removed. Note ticket 26's branch will hit an **add/add conflict on
+ticket.md** plus a row-26 conflict at merge (it was cut before the ticket folder and board row were
+committed to `main`); resolve to the branch's version — `ticket.md` `in review`, row 26 `in review`.
+Use three-dot diffs (`git diff main...<branch>`): several branches were cut before ticket 10 merged.
 
 ## 7. Workflow discipline (the protocol that has been working)
 
