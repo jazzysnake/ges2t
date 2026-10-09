@@ -851,10 +851,10 @@ def test_delivery_records_a_wall_time() -> None:
 # --- chord parsing ------------------------------------------------------------
 
 
-def test_default_chord_is_ctrl_v() -> None:
+def test_default_chord_is_ctrl_shift_v() -> None:
     chord = KeyChord.parse(DEFAULT_PASTE_KEYS[0])
 
-    assert chord.keycodes == (KEY_LEFTCTRL, KEY_V)
+    assert chord.keycodes == (KEY_LEFTCTRL, KEY_LEFTSHIFT, KEY_V)
     assert chord.events[-1].pressed is False
 
 
@@ -972,8 +972,19 @@ def test_injector_rejects_a_malformed_paste_key_at_construction() -> None:
 def test_clipboard_config_defaults_when_the_block_is_absent() -> None:
     result = ClipboardConfig.from_mapping({})
 
-    assert result.config.paste_keys == DEFAULT_PASTE_KEYS == ("ctrl+v",)
+    # Ticket 38's default; see test_layout.py for the full rationale.
+    assert result.config.paste_keys == DEFAULT_PASTE_KEYS == ("ctrl+shift+v",)
     assert result.warnings == []
+
+
+def test_injector_defaults_to_ctrl_shift_v_without_paste_keys() -> None:
+    # Ticket 38 pins the injector's *own* default: constructing it without
+    # `paste_keys` must yield the new chord. The literal is asserted, not
+    # `DEFAULT_PASTE_KEYS`, because the injector declares its default separately
+    # from the config constant and this is what catches the two diverging.
+    injector = ClipboardPasteInjector(runner=FakeClipboardRunner())
+
+    assert injector.paste_keys == ["ctrl+shift+v"]
 
 
 def test_clipboard_config_reads_paste_keys() -> None:

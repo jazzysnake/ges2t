@@ -609,10 +609,13 @@ def test_ydotool_config_integral_float_key_delay_is_accepted() -> None:
 # --- [injection.clipboard] block ----------------------------------------------
 
 
-def test_clipboard_config_defaults_to_ctrl_v() -> None:
+def test_clipboard_config_defaults_to_ctrl_shift_v() -> None:
     result = ClipboardConfig.from_mapping({})
     assert isinstance(result, ClipboardConfigResult)
-    assert result.config.paste_keys == DEFAULT_PASTE_KEYS == ("ctrl+v",)
+    # Ticket 38's default: ctrl+shift+v is the only chord with manual-verification
+    # evidence and it pastes in terminals, where ctrl+v does not. Do not revert
+    # this without the same evidence for the replacement chord.
+    assert result.config.paste_keys == DEFAULT_PASTE_KEYS == ("ctrl+shift+v",)
     assert result.warnings == []
 
 

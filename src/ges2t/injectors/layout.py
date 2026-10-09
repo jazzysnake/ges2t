@@ -490,9 +490,16 @@ CLIPBOARD_BLOCK_NAME: str = "injection.clipboard"
 #: ``docs/project/core-dictation-pipeline/batched-key-emission/001-comment.md``.
 DEFAULT_KEY_DELAY_MS: int = 0
 
-#: Default paste chord for the clipboard backend (ticket 25). A tuple because a
-#: future default may add a fallback chord; today it is exactly one.
-DEFAULT_PASTE_KEYS: tuple[str, ...] = ("ctrl+v",)
+#: Default paste chord for the clipboard backend (ticket 25; changed to
+#: ``ctrl+shift+v`` by ticket 38). A tuple for parity with the ``paste_keys``
+#: config type, but deliberately **exactly one** chord: the injector emits every
+#: configured chord, so a second entry would paste twice. ``ctrl+shift+v`` is
+#: the only chord with real evidence behind it -- the user's manual verification
+#: of ticket 25 (``clipboard-paste-injector/008-comment.md``) pasted in every
+#: target they tried, including a terminal, where ``ctrl+v`` does not. The
+#: honest caveat: an application that does not bind ``ctrl+shift+v`` pastes
+#: **nothing**, so set ``paste_keys = ["ctrl+v"]`` there instead.
+DEFAULT_PASTE_KEYS: tuple[str, ...] = ("ctrl+shift+v",)
 
 #: Keys ``[injection.ydotool]`` understands; everything else warns.
 YDOTOOL_KNOWN_KEYS: frozenset[str] = frozenset({"layout", "variant", "key_delay_ms"})
@@ -559,8 +566,11 @@ class ClipboardConfig:
     """Validated ``[injection.clipboard]`` settings (ticket 25).
 
     ``paste_keys`` is a sequence of key-chord spellings, defaulting to
-    ``("ctrl+v",)``. It is a tuple so the frozen config cannot be mutated
-    through a shared list.
+    ``("ctrl+shift+v",)`` (ticket 38). It is a tuple so the frozen config
+    cannot be mutated through a shared list. The default is ``ctrl+shift+v``
+    because it is the only chord with manual-verification evidence and it
+    pastes in terminals, where ``ctrl+v`` does not; an application that leaves
+    it unbound pastes **nothing**, so set ``paste_keys = ["ctrl+v"]`` there.
     """
 
     paste_keys: tuple[str, ...] = DEFAULT_PASTE_KEYS
@@ -657,7 +667,7 @@ def _read_paste_keys(raw: Mapping[str, Any]) -> tuple[str, ...]:
     if not keys:
         raise InjectionConfigError(
             f"{CLIPBOARD_BLOCK_NAME}.{key} must contain at least one key chord "
-            '(the default is ["ctrl+v"])'
+            '(the default is ["ctrl+shift+v"])'
         )
     return tuple(keys)
 
