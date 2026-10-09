@@ -71,7 +71,7 @@ Original orchestrator brief: `.pi/prompts/orchestrate-project.md`.
 **Remaining (4):**
 | # | Ticket | State |
 |---|---|---|
-| **25** | clipboard-paste-injector | **review: REQUEST CHANGES** (`2b5fb26`) — 3 blocking defects: **D1 (critical)** the deferred restore never receives the previous bytes, so a real run (and any manual test) leaves the clipboard **empty** rather than restored; **D2 (high)** the letter-keycode fallback is wrong for **21 of 26** letters, so `ctrl+q` silently emits `ctrl+c` — a config typo can fire a destructive chord; **D3 (med)** a `wl-paste` timeout escapes as a raw `Subprocess.TimeoutExpired`. Safety **confirmed**: nothing in the suite could have touched the real clipboard. Fix dispatched. |
+| **25** | clipboard-paste-injector | **REVIEW PASS** (`1c93a35`), **NOT MERGED** — D1/D2/D3 fixed and independently verified (the new tests were run against the *actual* rejected revision `2b5fb26`: **25 failures** = exactly 2 D1 + 1 D3 + 21 letters + 1 chord). 4 non-blocking residuals: **R1** a >64 KiB restore truncates to exactly 65536 B if the process exits inside the delay window; **R2 an uncaught `Thread.start()` `RuntimeError`**; R3 a blocked daemon thread if the restore child never reads; R4 (pre-existing) a non-`FileNotFoundError` `OSError` on the read path still escapes raw. The **user's manual test is the last gate**. |
 | **19** | user-documentation-and-setup-guide | **not started** — the last core ticket; deliberately last because it documents final behaviour |
 | **30** | tray-failure-diagnostics | filed follow-up; needs a read-only socket verb (**requires an ADR 0016 amendment**) |
 | **31** | speech-gate-recalibration | **PARKED by the user** — branch exists, **review passed on its own evidence** (`dc75977`), **not merged**; the cost is noise-relative and may gate quiet speech in a noisy place. See §10 |
@@ -84,10 +84,29 @@ worktree is dirty-but-complete — recover from artifacts, do not re-run blindly
 
 | Ticket | Worktree | Branch | Task |
 |---|---|---|---|
-| 25 | `.worktrees/clipboard-paste-injector` | `feat/clipboard-paste-injector` | **FIXING D1/D2/D3** per `002-review.md`; next free artifact is `003-comment.md`, then re-review |
+| 25 | `.worktrees/clipboard-paste-injector` | `feat/clipboard-paste-injector` | **REVIEW PASS** (`1c93a35`) — **NOT merged** (user said hold). 686 tests, mypy 41 files, tree clean, `ydotool.py` byte-identical. Next free artifact `005-*` |
 
 **⚠️ Ticket 25's compaction summary said the review "PASSED" — it did not.** The artifact says
 **REQUEST CHANGES**. Verified from `002-review.md` directly. Do not merge it.
+
+**Ticket 25's D1 fix carried the classic regression risk, and the probes came back clean — with measured
+residuals.** The fix retains the `Popen` and writes `stdin_bytes` on a **daemon thread**. Measured: a
+4 MiB deferred payload returns in **1.4 ms** (an inlined write would block the caller **413 ms**, so the
+thread is load-bearing); 18 B restores fully even on an immediate `os._exit`; **4 MiB truncates to
+exactly 65536 B** (the pipe buffer) if the process exits inside the delay window — new, disclosed,
+consistent with "restore is best effort", and transcript-affecting only in that the old selection comes
+back short. No thread leak; one blocked daemon thread only if the child never reads. The immediate
+path is unchanged. Orchestrator's own pre-check: the D2 table matches real evdev (Q=16…M=50), the D1
+tests drive the **real** `_run_command` deferred branch via `tee`, `_wait_for_bytes` is bounded, and
+`_deliver` skips the restore when the read returned `None` — so it cannot wipe the clipboard by
+"restoring" nothing.
+
+**⚠️ R2 is a re-run of a bug class this project has already shipped once.** An uncaught
+`Thread.start()` `RuntimeError` — the same shape as ticket 17's tray release, where narrowing an
+`except` stopped catching thread-start failures. Here it would escape `_restore_clipboard` **after the
+paste already succeeded**, so the service reports `ERROR` on a dictation whose text was in fact typed.
+Rare (needs thread exhaustion) and non-blocking, but the precedent argues for wrapping it rather than
+filing it.
 | 31 | `.worktrees/speech-gate-recalibration` | `feat/speech-gate-recalibration` | **Review DONE** (`dc75977`): mergeable on its own evidence, but **do not merge** — the cost is noise-relative and the user parked it. Branch stays **unmerged**. |
 
 Everything else is merged and its worktree removed. Use three-dot diffs
