@@ -125,6 +125,9 @@ def test_a_late_partial_after_finish_is_a_noop() -> None:
 
     typer.finish("abcdef")
     typer.type_committed("abc")
+    # A second finish is legitimate (idempotent) and must not surface the late
+    # partial as a spurious non-append-only error.
+    typer.finish("abcdef")
 
     assert raw.typed == ["abcdef"]
     assert typer.typed == "abcdef"

@@ -102,9 +102,6 @@ class CommittedTyper:
         with self._lock:
             if self._finished or self._error is not None:
                 return
-            if not committed.startswith(self._typed):
-                self._error = self._non_prefix_error()
-                return
             self._extend(committed)
 
     def finish(self, final_text: str) -> None:
@@ -114,14 +111,16 @@ class CommittedTyper:
         deduplicated ``partials()`` sequence skipped. Assembles the final
         document with :func:`decide_injection` (so the trailing-space rule has
         one implementation) and types only the suffix beyond the watermark, then
-        raises the first latched typing error if there was one. Idempotent.
+        raises the first latched typing error if there was one. A second call
+        after a successful one is a no-op; a call after a latched failure still
+        raises it.
         """
         with self._lock:
+            if self._error is not None:
+                raise self._error
             if self._finished:
                 return
             self._finished = True
-            if self._error is not None:
-                raise self._error
             decision = decide_injection(
                 final_text, trailing_space=self._trailing_space
             )
