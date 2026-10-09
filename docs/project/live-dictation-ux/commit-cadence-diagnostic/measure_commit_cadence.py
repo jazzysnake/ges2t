@@ -909,16 +909,19 @@ def report_pending_revisions(report: Report, measurement: UtteranceMeasurement) 
     pairs: list[tuple[float, str, str]] = []
     previous_pending = ""
     for event in measurement.events:
-        if event.kind == "process" and event.pending:
-            previous_pending = event.pending
         if event.is_commit:
             pairs.append((event.source_seconds, previous_pending, event.committed))
+        if event.kind == "flush":
+            # The flush committed this window's tail, so the fresh stream has nothing
+            # pending until its first process() call.
             previous_pending = ""
+        else:
+            previous_pending = event.pending
     if not pairs:
         return
     report.line(
-        f"    uncommitted tail on screen before each commit ({len(pairs)} commits); "
-        "the tail is revised before commit, it is never typed:"
+        f"    uncommitted tail that was on screen when each commit landed "
+        f"({len(pairs)} commits); the tail is display-only and is never typed:"
     )
     for seconds, pending, committed in sample_spread(pairs, limit=8):
         report.line(f"      t=+{seconds:.2f}s")
