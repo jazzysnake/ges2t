@@ -27,6 +27,11 @@ Ticket 22 (`../xkb-keycode-mapping/ticket.md`) produces the `KeyEvent` sequence;
 
 Modify `src/ges2t/injectors/ydotool.py`; add `tests/test_ydotool_emitter.py`.
 
+- [ ] **Scope note:** the injection contract `YdotoolInjector` exposes is changing (text → key
+      sequence), so `build_injector` in `src/ges2t/pipeline.py` — created by ticket 11 — must be
+      updated to construct it with a key-sequence source. That file is **in scope**, but keep the
+      change minimal and read ticket 11's `001-comment.md` first; ticket 25 will rework the same
+      function again for the clipboard backend, so do not restructure it beyond what this needs.
 - [ ] `YdotoolInjector` stops passing text to `ydotool`. It takes a key-sequence source (ticket
       22's `XkbKeymap` or an equivalent injected callable) and emits the precomputed events.
       **`ydotool type` is never called** — that code path is deleted, not merely unused.
@@ -49,15 +54,38 @@ Modify `src/ges2t/injectors/ydotool.py`; add `tests/test_ydotool_emitter.py`.
       known input); that **text is never in argv**; the trailing-space and empty-input rules; the
       unreachable-skip and all-unreachable-error behaviour; and that one injection is one spawn.
 - [ ] `uv run pytest`, `uv run mypy src/ges2t tests` (ADR 0019 covers tests) both green.
-- [ ] **THE MEASUREMENT (the headline deliverable).** With the real daemon, time a **~20-word
-      (124–127 char)** injection end to end through `YdotoolInjector`, at two or three delay
-      values including the minimum that loses no characters, and report:
-      - wall time and **per-character** cost at each delay;
-      - whether the characters arrived **byte-perfect** (the user will confirm what appeared);
-      - **whether it fits ADR 0001's sub-1-second framework budget**, explicitly yes or no.
-      Record the raw numbers in `001-comment.md`. **Do not tune the delay to the point of dropping
-      characters to make the number look good** — a dropped character is a far worse outcome than a
-      slow injection, and report the lowest delay that was clean.
+- [ ] **Build batching and its unit tests first, and do not inject anything until the measurement
+      step below is separately authorised.** The code work is independent of the measurement and
+      must not be blocked on it.
+- [ ] **THE MEASUREMENT (the headline deliverable) — needs explicit authorisation and a bounded,
+      controlled probe.** Emitting keys types into whatever window holds focus, and an earlier probe
+      in this project opened terminal windows on the user's desktop unannounced, which hid their
+      work. Therefore:
+      - **Ask the orchestrator for authorisation before injecting.** Do not open a window and do not
+        emit anything on your own initiative.
+      - When authorised: use **exactly one scratch target** (e.g. a terminal capturing to a file with
+        `stty -icanon min 1 time 0`, so no newline is needed to flush), **verify it holds focus
+        before emitting**, keep the entire attempt inside a **hard 30-second budget**, and close the
+        window afterwards (kill it if it lingers).
+      - The payload must contain **no Return, no Esc, no Ctrl/Meta chords** beyond the modifiers the
+        mapping itself requires. Do **not** emit a trailing Return to flush.
+      - Time a **~20-word (124–127 char)** injection end to end through `YdotoolInjector`, at two or
+        three delay values including the minimum that loses no characters, and report:
+        - wall time and **per-character** cost at each delay;
+        - whether the characters arrived **byte-perfect** (capture and compare them, with a hexdump
+          — the user will also confirm what appeared);
+        - **whether it fits ADR 0001's sub-1-second framework budget**, explicitly yes or no.
+      - Record the raw numbers in `001-comment.md`. **Do not tune the delay to the point of dropping
+        characters to make the number look good** — a dropped character is far worse than a slow
+        injection; report the lowest delay that was clean.
+      - **If authorisation is not given, do not inject.** Record the measurement as **pending**,
+        supply a copy-pasteable script the user can run, and say plainly that the budget question is
+        unanswered — **never** report it as met.
+- [ ] **No spurious modifier or control key.** Unit-test that a batch built from text containing no
+      newline includes **no Return/Esc**, that no modifier is pressed without a matching release,
+      and that every event list is press/release balanced. (A stray leading newline `0x0a` appeared
+      once during ticket 22's probe and did not reproduce. Treat an unexpected Return as a defect,
+      not a curiosity: it is the one output that could *execute* something rather than type it.)
 
 **Decision gate — read carefully.** If batching **meets** the budget, we are done with latency and
 nothing else is needed. If it **does not**, do **not** silently accept it and do not invent a
