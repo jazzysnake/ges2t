@@ -478,11 +478,17 @@ def resolve_layout(
 YDOTOOL_BLOCK_NAME: str = "injection.ydotool"
 CLIPBOARD_BLOCK_NAME: str = "injection.clipboard"
 
-#: Default delay between emitted key events, in milliseconds. ``ydotool key``'s
-#: own default is 12 ms (``man ydotool``). Ticket 23 measures the batched path
-#: and may revise this after the real numbers; it is a single constant so the
-#: revision touches one line.
-DEFAULT_KEY_DELAY_MS: int = 12
+#: Default delay between emitted key events, in milliseconds. Ticket 23 measured
+#: the batched ``ydotool key`` path for a 125-character phrase, byte-compared
+#: against the capture: ``0`` took 47.9 ms and was byte-perfect, while ``6`` took
+#: 1.6 s and ``12`` took 3.1 s -- both over ADR 0001's sub-1-second framework
+#: budget. Only 0, 6 and 12 were measured, so ``0`` is the only measured
+#: in-budget value (a small margin would be an extrapolation, not evidence).
+#: ``key_delay_ms`` remains a documented user override, and raising it is the
+#: intended fix if a specific application ever drops characters. The measured
+#: capture target was a pty, not a real editor; see
+#: ``docs/project/core-dictation-pipeline/batched-key-emission/001-comment.md``.
+DEFAULT_KEY_DELAY_MS: int = 0
 
 #: Default paste chord for the clipboard backend (ticket 25). A tuple because a
 #: future default may add a fallback chord; today it is exactly one.
