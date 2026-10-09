@@ -1,7 +1,7 @@
 # Core interfaces and test fakes
 
 - **Priority:** P0
-- **Status:** to do
+- **Status:** done
 - **Complexity:** S
 - **Epic:** ../epic.md
 
