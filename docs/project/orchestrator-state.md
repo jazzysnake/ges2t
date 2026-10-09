@@ -232,12 +232,14 @@ and `git grep -n '^<<<<<<<' HEAD -- docs` must both be empty. A clean `git statu
 the index was staged from the wrong moment. If it slips through, `git commit --amend --no-edit`
 repairs a merge at the tip while preserving both parents.
 
-**Link check** (run after any docs change; must report 0):
+**Link check** (run after any docs change; must report 0). Note the negative lookbehind also
+excludes `.`, because an **ellipsis** in prose (``.../001-comment.md``) contains `../` and a
+naive pattern flags it as a broken parent link — that happened once and cost a false alarm:
 
 ```bash
 python3 - <<'PY'
 import re, pathlib
-tok = re.compile(r'(?<![\w/`(])((?:\.\./)+[\w./-]+?\.md)')
+tok = re.compile(r'(?<![\w/`.])((?:\.\./)+[\w./-]+?\.md)')
 bad=[(str(f), m.group(1)) for f in sorted(pathlib.Path("docs").rglob("*.md"))
      for m in tok.finditer(f.read_text()) if not (f.parent / m.group(1)).resolve().exists()]
 print(f"{len(bad)} broken references"); [print(" ", f, t) for f, t in bad]
