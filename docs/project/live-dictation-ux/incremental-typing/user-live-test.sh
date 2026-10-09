@@ -5,7 +5,7 @@
 # so this script only *checks prerequisites and prints the procedure*: it never
 # opens the microphone, never touches the clipboard, and never types.
 #
-# Run it from the worktree:
+# Run it from the repo root (ticket 34 is merged; there is no worktree any more):
 #   bash docs/project/live-dictation-ux/incremental-typing/user-live-test.sh
 set -u
 
@@ -41,8 +41,18 @@ cat <<'STEPS'
 
 === the procedure ===
 
+FIRST: put the backend back to `ydotool`. The clipboard backend is now *refused*
+together with streaming (by design -- it cannot type incrementally, so continuing
+would either silently drop the feature or silently rewrite your clipboard). If your
+config still says backend = "clipboard", the service will refuse to start.
+
+    [injection]
+    backend = "ydotool"
+
+(or delete the [injection] block entirely -- ydotool is the default.)
+
 Terminal A (the service):
-    cd /home/matee/Workspace/Personal/ges2t/.worktrees/incremental-typing
+    cd /home/matee/Workspace/Personal/ges2t
     uv run ges2t run
 
 Terminal B, or a key you have bound to `ges2t toggle`:
