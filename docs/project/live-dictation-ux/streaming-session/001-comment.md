@@ -196,3 +196,111 @@ is typed.
   `StatusUI.partial()`; ticket 16 only decides streaming-vs-batch and does not
   need to change `service.py`.
 - No `main` commit was made; the worktree is left in place for the reviewer.
+
+## Addendum — review fixes (commit `04e0e50`)
+
+`002-review.md` raised one blocking finding (waiting tests can hang) and one
+required test-strength gap (consecutive-vs-global dedup). Both are fixed in
+place; nothing else in the design was touched, and the review's verified
+good parts (injection boundary, locking, scope) are unchanged.
+
+### FIX 1 — the suite can no longer hang: daemon worker + bounded test waits
+
+The review reproduced it: under an M14-style mutation (lock held across
+`audio.stop()`/`worker.join()`) the file printed `1 failed, 20 passed in 2.17s`
+and then the pytest process never exited (`exit 124` under a 20 s cap). The
+leaked **non-daemon** worker was blocked on the lock held by the wedged
+`finish` thread, so `threading._shutdown` joined it forever.
+
+**Decision: make the worker a daemon thread, and keep the production join
+unbounded.** The two are a deliberate pair, not independent knobs.
+
+*Why daemon, not a production join timeout.* A bound is only safe if it cannot
+fire during a legitimately slow final transcription, and the final flush's
+latency is model-dependent and unbounded (Whisper decode on a slow machine, a
+long utterance). Any value we could pick would eventually truncate a valid
+transcript — reading whatever `_final_text` happened to hold, or `""` — which
+is silent data loss and violates ADR 0011's authoritative-final rule. A
+visible hang is strictly better than an invisible truncation for a dictation
+tool, so the join stays unbounded. The daemon flag then removes the one thing
+that made the hang unrecoverable: because `threading` only joins `daemon=False`
+threads, a wedged daemon worker can no longer trap interpreter shutdown. This
+is exactly the ticket note's stated goal ("a test failure cannot leave a
+process behind") better served than `daemon=False` did, since under `daemon=False`
+a `finish()`-held lock *is* what left the process behind.
+
+*What guards a wedged worker in production.* ADR 0008 drain-on-stop:
+`finish()`/`cancel()` call `audio.stop()` first, which terminates capture and
+drains its stdout, ending the chunk iterator; the worker's loop then ends and
+the adapter's `drive()` emits its final flush. The session never holds the lock
+across the engine call or `audio.stop()`, so the worker can always make
+progress. The residual risk — an engine that never returns — is not bounded,
+and is accepted for the reason above. What the daemon flag guarantees is that
+the *process* can still exit. The unbounded join is commented in the source at
+`_stop_capture` so a future reader sees the trade-off.
+
+*Test-level bounds.* Every test that drove `finish()`/`cancel()` on the main
+thread now goes through the existing `_call_with_timeout` helper (2 s), so a
+wedged lifecycle surfaces as an `AssertionError`, not silence. No pytest
+timeout plugin and no config change was used or needed.
+
+**Falsification (M14 replay).** Same mutation as the review, run after
+`rm -rf src/ges2t/__pycache__ tests/__pycache__`:
+
+Before (unfixed `baff8f2`):
+
+```
+=== M14 run: exit=124 (cap=20) ===
+FAILED tests/test_streaming_session.py::test_a_waiting_partials_consumer_does_not_block_finish
+1 failed, 20 passed in 2.18s
+```
+
+After (fixed `04e0e50`):
+
+```
+=== M14 run: exit=1 (cap=20) ===
+FAILED tests/test_streaming_session.py::test_a_waiting_partials_consumer_does_not_block_finish
+1 failed, 21 passed in 2.18s
+```
+
+The full suite under M14 likewise exits non-zero in bounded time instead of
+hanging: `1 failed, 536 passed in 5.02s` (external cap 30 s, `exit=1`).
+
+### FIX 2 — consecutive-only dedup, both directions (MA)
+
+Framed exactly as the review did: this is a **test-strength gap, not a product
+bug**. The shipped code is consecutive-only (`_partials[-1]`). Added
+`test_partials_allow_a_legitimate_non_consecutive_repeat` with
+`a, a, "a b", "a b", a` → `["a", "a b", "a"]`, the direction the existing
+advancing-partials test did not pin.
+
+**Falsification (MA).** With `segment.text not in self._partials` (global
+dedup):
+
+```
+E       AssertionError: assert ['a', 'a b'] == ['a', 'a b', 'a']
+E         Right contains one more item: 'a'
+FAILED tests/test_streaming_session.py::test_partials_allow_a_legitimate_non_consecutive_repeat
+1 failed, 21 passed in 0.17s
+```
+
+Reverted; only the new test plus the M14 replay were run against mutated
+source, and `__pycache__`/`.mypy_cache` were deleted after every probe (the
+stale-bytecode trap in the review's appendix).
+
+### Verification after the fixes
+
+```
+$ uv run pytest -q
+537 passed in 3.00s
+
+$ uv run pytest tests/test_streaming_session.py -q   # 22 collected, run 8x
+22 passed (0.06–0.08 s each run)
+
+$ rm -rf .mypy_cache __pycache__ && uv run mypy src/ges2t tests
+Success: no issues found in 36 source files
+```
+
+536 → 537 tests (one added, none deleted, skipped, or weakened); the new file
+is 21 → 22 tests; mypy still 36 files. `git diff main...HEAD --
+src/ges2t/pipeline.py` is still empty and no config or ADR was touched.
