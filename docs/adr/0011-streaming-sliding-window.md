@@ -1,6 +1,9 @@
 # Streaming transcription: 5-second sliding window, commit on `stop()`
 
-- **Status:** accepted
+- **Status:** accepted — **amended 2026-10-09** by ticket `incremental-typing` (see the
+  [Amendment](#amendment-2026-10-09--inject-the-committed-prefix-as-it-is-committed) at the end:
+  the committed prefix is now typed as it is committed; the original "nothing is injected until
+  release" rule was broader than its own reason)
 - **Date:** 2026-10-09
 
 ## Context
@@ -64,10 +67,17 @@ Design rules this fixes:
 
 - **The 30 s per-call ceiling does not apply to the streaming path**, because no single pass
   ever sees more than a 5 s buffer. This is what lifts the length limit for the user.
-- **Partial text is display-only.** `committed + pending` may be shown as live status
-  (tray/notification), but **nothing is injected until release**. Typing partials into the
-  focused window would duplicate and race with the committed-text revisions; the user asked
-  for dictation, not ghost text.
+- **Partial text is display-only; the committed prefix is typed as it is committed.**
+  `committed + pending` may be shown as live status (tray/notification) and is **never**
+  injected. During a streaming dictation the **committed** prefix -- the words two consecutive
+  passes agree on, which are append-only and never revised -- is injected **as it is
+  committed**, and the final flush applies ADR 0012's single trailing space once. The original
+  rule ("nothing is injected until release") was broader than its own stated reason: typing
+  `committed + pending` would indeed duplicate and race with the committed-text revisions, but
+  that objection does **not** apply to `committed` alone, which is exactly the part that has
+  stopped changing. Ticket 34 measured the change on real audio and made it; the evidence is
+  in the amendment below. The user asked for dictation, not ghost text -- and text appearing
+  while they speak is dictation, not ghost text.
 - **Never run the window uncapped.** The 5 s cap is the whole reason streaming is viable; an
   "improvement" that lets the buffer grow reintroduces the 0.75–0.92× realtime failure.
 - **Timings are ours.** Because streaming JSON lacks `ttft_ms`/`decode_tps`, per-chunk timing
@@ -109,3 +119,75 @@ Design rules this fixes:
 - The batch path stays alive and tested, both for `streaming.enabled = false` and for a
   future backend whose capability flag is `False` (ADR 0010) — which is exactly the
   abstraction requirement paying off.
+
+## Amendment 2026-10-09 — inject the committed prefix as it is committed
+
+**Superseding decision (ticket `incremental-typing`, the payload of the incremental-typing
+chain):** during a streaming dictation, ges2t injects the words the engine has **committed**
+**as they are committed**, instead of nothing until release. The injected text is only the
+`committed` prefix — never `pending`, never `committed + pending`. A typed watermark over the
+cumulative committed string guarantees each committed character is typed exactly once, and the
+final reconciliation against `finish()` recovers any advance the deduplicated partials skipped.
+ADR 0012's trailing-space rule is applied **once at the end of the utterance**, not per commit.
+
+### Why the original reasoning did not require the original rule
+
+The original decision rejected typing during dictation because *"typing partials into the
+focused window would duplicate and race with the committed-text revisions"*. That reason is
+sound for the value the pipeline surfaced at the time — `committed + pending` — because
+`pending` is replaced on every pass and is where the engine's tentative words live. It does
+**not** apply to `committed` alone: `committed` is the part the engine has already agreed on
+twice and is append-only (ticket `committed-delta-interface` made that boundary explicit on
+`LiveText`). Typing only `committed` therefore cannot require a backspace. **The rule was
+broader than its own reason required, and this amendment narrows it to the reason.**
+
+### The measured evidence
+
+Commit cadence, from ticket 32's real-device run (`commit-cadence-diagnostic`, 25.04 s recorded
+/ 25.00 s fed, 17 commits through the real `pw-record` path, with a deliberate mid-utterance
+pause), folded in with the shipped clips (3 inputs, 57.0 s of audio, 40 commits total):
+
+| measurement | result |
+|---|---|
+| median characters per commit | **17** (clips 20; p90 34–38, max 63) |
+| median gap between commits, source audio | **1.00 s** (p90 2.50 s, max 4.00 s) |
+| median `pending` size | **18 characters**, persisting **1.00 s** |
+| committed deltas that repeat already-committed words | **0** (0 with 2+ words, both detectors) |
+| injection cost | ticket 23 measured **0.38 ms/char**, so a median commit is **~6 ms** of typing |
+
+The measured cost is cheap enough that the real risk is **locking**, not speed, and the median
+commit is small enough that typing it as it arrives keeps up with speech. Two observations from
+the real recording shape the caveat below:
+
+- the `Thank you.` hallucination appeared in `pending` **twice** and was **never committed**, so
+  committed-only typing types none of it — this is the design's best evidence; and
+- the deliberate mid-utterance pause produced a **committed** `' Great night.'` that nothing
+  later contradicted. The two-pass commit rule protects against *revision*, not against a
+  *stable hallucination*.
+
+### Consequences accepted with the change (user decisions, not open questions)
+
+- **A stable hallucination can now be delivered mid-dictation.** The `' Great night.'` case
+  above is the concrete instance. The user accepted this and its recovery: **stop the recording,
+  delete the wrong text, and continue** — which is why the stop path stays instant and the tool
+  deliberately attempts **no** auto-correction.
+- **Focus must hold for the whole utterance.** Committed text lands wherever focus is at each
+  commit; the user does not consider mid-utterance window switching a real usage pattern.
+- **Interleaving with the user's own typing is out of scope** and is a documented limitation.
+- **The clipboard backend is incompatible with streaming**: incremental paste would rewrite the
+  user's clipboard on every commit. The composition root refuses `injection.backend =
+  "clipboard"` together with `streaming.enabled = true` with a loud, actionable error naming both
+  settings and the fix (set `ydotool`, or disable streaming).
+- **The streaming change is cancel-safe but not cancel-undoable:** once a commit has been typed it
+  is in the focused window; `cancel` abandons the rest of the utterance and types nothing further,
+  it cannot remove what was already typed. This is the same accepted risk as the hallucination.
+
+### What does *not* change
+
+- ADR 0011's decision to **stream** (5 s sliding window, commit on `stop()`) is unchanged.
+- ADR 0003's **no automatic fallback** rule still holds; the clipboard/streaming refusal is
+  exactly that rule applied to a new configuration contradiction.
+- ADR 0012's text rules are unchanged: otherwise verbatim, exactly one trailing space when
+  `ui.trailing_space` is enabled, and whitespace-only input injects **nothing**.
+- The **batch** path and `streaming.enabled = false` behave exactly as before.
+- Language, timestamps, and the window/chunk configuration are untouched.
