@@ -144,7 +144,8 @@ def test_build_injector_defaults_when_the_ydotool_block_is_absent() -> None:
     injector = pipeline.build_injector(Config())
 
     assert isinstance(injector, YdotoolInjector)
-    assert injector.key_delay_ms == 12
+    # 0 ms is the measured default (ticket 23 `001-comment.md`); do not "tidy".
+    assert injector.key_delay_ms == 0
 
 
 # --- BatchDictationSession ----------------------------------------------------

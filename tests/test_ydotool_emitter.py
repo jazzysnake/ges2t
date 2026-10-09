@@ -212,7 +212,7 @@ def test_real_us_keymap_passes_linux_keycode_through_without_offset() -> None:
     injector.inject("a")
 
     # KEY_A is Linux 30 (XKB 38); a ydotool type payload would have been "a".
-    assert runner.calls[0].argv == (YDOTOOL_BINARY, "key", "-d", "12", "30:1", "30:0")
+    assert runner.calls[0].argv == (YDOTOOL_BINARY, "key", "-d", "0", "30:1", "30:0")
 
 
 def test_ydotool_type_is_never_invoked() -> None:
@@ -259,7 +259,10 @@ def test_one_injection_is_one_spawn() -> None:
     assert len(runner.calls[0].argv) == 4 + len(events)
 
 
-def test_default_key_delay_is_twelve_ms() -> None:
+def test_default_key_delay_is_the_measured_zero_ms() -> None:
+    # 0 ms comes from ticket 23's measurement (`001-comment.md`): 0/6/12 ms were
+    # captured byte-perfect and only 0 fits ADR 0001's budget. Do not "tidy"
+    # this to a margin.
     runner = FakeRunner()
     injector = YdotoolInjector(
         FakeKeySequenceSource(_sequence((KEY_A, True), (KEY_A, False))), runner=runner
@@ -267,7 +270,7 @@ def test_default_key_delay_is_twelve_ms() -> None:
 
     injector.inject("a")
 
-    assert runner.calls[0].argv[1:4] == ("key", KEY_DELAY_FLAG, "12")
+    assert runner.calls[0].argv[1:4] == ("key", KEY_DELAY_FLAG, "0")
 
 
 # --- ADR 0012 text rules at the emitter boundary -----------------------------
@@ -381,7 +384,7 @@ def test_unreachable_characters_are_skipped_with_a_warning() -> None:
         injector.inject("a\U0001f600")
 
     assert len(runner.calls) == 1
-    assert runner.calls[0].argv == (YDOTOOL_BINARY, "key", "-d", "12", "30:1", "30:0")
+    assert runner.calls[0].argv == (YDOTOOL_BINARY, "key", "-d", "0", "30:1", "30:0")
     assert "\U0001f600" in str(record[0].message)
 
 

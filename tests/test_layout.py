@@ -553,7 +553,10 @@ def test_ydotool_config_defaults_match_the_adr_shape() -> None:
     assert isinstance(result, YdotoolConfigResult)
     assert result.config.layout == AUTO_LAYOUT == "auto"
     assert result.config.variant == ""
-    assert result.config.key_delay_ms == DEFAULT_KEY_DELAY_MS == 12
+    # The default is the measured 0 ms from ticket 23's `001-comment.md`, not a
+    # guess: 0/6/12 ms were measured and only 0 fits ADR 0001's budget. Do not
+    # "tidy" this to a margin.
+    assert result.config.key_delay_ms == DEFAULT_KEY_DELAY_MS == 0
     assert result.warnings == []
 
 
