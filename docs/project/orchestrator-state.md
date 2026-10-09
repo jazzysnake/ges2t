@@ -44,41 +44,36 @@ Original orchestrator brief: `.pi/prompts/orchestrate-project.md`.
 
 ## 4. Current baselines on `main`
 
-- `uv run pytest` → **541 passed** (~2.1 s)
-- **`uv run mypy src/ges2t tests` → 0 errors (36 files)** — this is the required command. ADR 0019
+- `uv run pytest` → **567 passed** (~2.7 s)
+- **`uv run mypy src/ges2t tests` → 0 errors (37 files)** — this is the required command. ADR 0019
   was amended 2026-10-09: the old `mypy src/ges2t`-only check let a real violation through a
   completed review (see ticket 20).
-- `main` HEAD when last checked: `46c7122` (ticket 23's DoD amendment). Merged this session: 24
-  `a6ba892`, 21 `11b1bf3`, 26 `ceee7a2`, 11 `338cdc2`, **22 `0a2074a`**; all five worktrees removed.
-- 21 ADRs (0000–0020), **27 tickets**, 2 epics.
+- `main` HEAD when last checked: `b4aa911` (ticket 23 closed). Merged this session: 24 `a6ba892`,
+  21 `11b1bf3`, 26 `ceee7a2`, 11 `338cdc2`, 22 `0a2074a`, **23 `0a2074a`→ its merge commit**;
+  all six worktrees removed.
+- 21 ADRs (0000–0020), **28 tickets**, 2 epics.
 
-## 5. Board state (18 of 27 done)
+## 5. Board state (20 of 28 done)
 
-**Done (18 of 27):** 1 project-scaffold · 2 core-interfaces-and-fakes · 3 config-loading ·
+**Done (20 of 28):** 1 project-scaffold · 2 core-interfaces-and-fakes · 3 config-loading ·
 4 whistle-engine-config · 5 model-store-and-verification · 6 audio-capture-pw-record ·
 7 ydotool-injector · 8 whistle-transcriber-adapter-batch · 9 service-state-machine-and-socket ·
 10 cli-surface-and-commands · 13 streaming-window-engine · 14 whistle-streaming-adapter ·
 20 type-check-whole-tree · 24 layout-detection-and-config (`a6ba892`) · 21 status-ui-outside-lock
 (`11b1bf3`) · 26 pin-cli-test-guarantees (`ceee7a2`) · 11 dictation-pipeline-batch (`338cdc2`) ·
-**22 xkb-keycode-mapping** (`0a2074a`)
+22 xkb-keycode-mapping (`0a2074a`) · **23 batched-key-emission** (`b4aa911`)
 
-**In review (see §6):** 17 tray-status-ui, 15 streaming-session, 27 pin-layout-test-guarantees — all
-three implemented, reviewers running · **23 batched-key-emission** — implementing (code work only;
-its latency measurement is its headline deliverable)
+**In review (see §6):** 17 tray-status-ui and 15 streaming-session — both had **changes requested**
+and are in a fix/re-review cycle (17 is on its fifth agent; see §7 on connection deaths) ·
+**25 clipboard-paste-injector** and **28 injection-delay-default** — dispatch just made
 
-**⛔ TICKET 23 IS BLOCKED ON ONE USER DECISION — see §9.** Its measurement means *emitting keys into
-whatever window holds focus*, so it needs the same bounded-probe authorisation the user granted once
-before (one scratch terminal, focus verified, hard 30 s budget, no Return in the payload). **The user
-has been asked and has not yet answered.** The implementer was explicitly told to build and unit-test
-without injecting and to stop there.
+**To do:** 12 doctor-command (needs 17) · 16 streaming-wiring-and-e2e (needs 15) ·
+18 notifications-and-cancel (needs 17) · 19 user-documentation-and-setup-guide (needs everything)
 
-**To do:** 12 doctor-command · 16 streaming-wiring-and-e2e · 18 notifications-and-cancel ·
-19 user-documentation-and-setup-guide · 25 clipboard-paste-injector
-
-**27 pin-layout-test-guarantees** was filed from ticket 24's review: both detectors' non-zero-exit
-guards are unexercised (empty stdout makes `rc=1` indistinguishable from success) and the 2 s
-timeout is never enforced (`timeout=None` still passes the suite). Same failure class as tickets 20
-and 26. The guards themselves were hand-verified, so it is a **test** gap, not a bug.
+**28 injection-delay-default** is new and was filed from ticket 23's measurement: `0`/`6`/`12` ms were
+measured and only `0` (47.9 ms, byte-perfect) fits ADR 0001's budget, so the shipped default of `12`
+(3.1 s) would have shipped the product **over its own budget**. Fixing it is a one-value change to
+ticket 24's `DEFAULT_KEY_DELAY_MS`.
 
 Modules already on `main`: `interfaces.py`, `config.py`, `model_store.py`, `service.py`,
 `socket_proto.py`, `streaming.py`, `cli.py`, `audio/pw_record.py`, `injectors/ydotool.py`,
@@ -278,12 +273,24 @@ sleeps.** So the floor is client-side and may be avoidable by batching.
 - **`wtype` is a dead end** (KWin lacks `zwp_virtual_keyboard_v1`); **`dotool`** is AUR-only →
   fallback backend only.
 
-**⛔ TICKET 23 DECISION GATE — do not lose this.** Ticket 23 measures the batched emission against
-ADR 0001's **sub-1-second** framework budget. If it **meets** it, latency work is done. If it does
-**not**, report the number and *then* raise with the user whether to type committed text **during**
-dictation (overlapping typing with speaking), which would require revisiting **ADR 0011**'s "nothing
-is injected until release" rule. The user approved that option in principle, but it is deliberately
-held in reserve pending the measurement. **Do not build it speculatively.**
+**✅ TICKET 23 MEASURED IT — THE GATE RESOLVED IN OUR FAVOUR.** Batched `ydotool key`, 125-char
+phrase, byte-compared against the capture:
+
+| delay ms | wall ms | ms/char | byte-perfect | within budget |
+|---:|---:|---:|:--:|:--|
+| 12 | 3100.7 | 24.81 | yes | **no** |
+| 6 | 1595.4 | 12.76 | yes | **no** |
+| **0** | **47.9** | **0.38** | **yes** | **yes** |
+
+Against a ~4.99 s baseline that is a **~104× speedup**, and it meets ADR 0001's budget by 20×. So
+**latency work is finished** and the option to type committed text *during* dictation was **NOT
+built** — ADR 0011's "nothing is injected until release" rule stands unchanged.
+
+The cost is linear (`delay × 2 × 126` events — `ydotool key` sleeps once per event, down *and* up,
+not per character), so **any non-zero delay reintroduces 252 sleeps**; that is why ticket 28 sets the
+default to `0`. Caveat to keep honest: the capture target was a **pty**, not a real editor, and the
+numbers are **not independently reproducible** (the captures were deleted) — the reviewer audited
+the evidence and recomputed the md5 and the linear model rather than re-running it.
 
 ## 10. Open items not yet ticketed / to watch
 
