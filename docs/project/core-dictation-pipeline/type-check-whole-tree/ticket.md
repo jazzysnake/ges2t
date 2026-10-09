@@ -1,7 +1,7 @@
 # Make the whole tree type-clean, tests included
 
 - **Priority:** P2
-- **Status:** blocked
+- **Status:** in review
 - **Complexity:** XS
 - **Epic:** ../epic.md
 
@@ -32,9 +32,10 @@ Relevant decisions: ADR 0019 (typing rules and enforcement), ADR 0014 (quality b
 
 ## Definition of done
 
-- [ ] `uv run mypy src/ges2t tests` exits **0**. **NOT MET** — see `001-comment.md`; a second,
-      out-of-scope violation at `tests/test_model_store.py:349` (`[exit-return]`, from ticket 5)
-      keeps the command at exit 1. Fixing it is forbidden by this ticket's scope.
+- [x] `uv run mypy src/ges2t tests` exits **0**. **MET** — the second violation at
+      `tests/test_model_store.py:349` (`[exit-return]`, from ticket 5) was fixed by widening
+      this ticket's scope by exactly one annotation (`-> bool` → `-> Literal[False]`); see
+      `001-comment.md` §002. The wide check now reports no issues at all.
 - [x] The violation at `tests/test_whistle_config.py:247` is fixed by giving the test helper a
       correct type — **not** by `cast(Any, ...)`, not by a blanket `# type: ignore`, and not by
       deleting or weakening the assertion. Work out what the helper actually receives and

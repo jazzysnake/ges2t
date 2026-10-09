@@ -191,3 +191,103 @@ change required touching `src/`.
    `tests/test_model_store.py`, or (b) open a follow-up ticket for it. The change is a
    one-line annotation with no behaviour change, but it belongs to ticket 5's file and is not
    mine to make under the stated rules.
+
+---
+
+# 002 — Scope widened by one annotation: the second error is now fixed
+
+## Status: in review
+
+The orchestrator widened this ticket's scope by exactly the one annotation the previous agent
+offered as the first way forward. The ticket is literally "make the whole tree type-clean", so
+fixing the second violation is in remit, not scope creep. With it fixed, the wide enforcement
+command `uv run mypy src/ges2t tests` exits **0** and the headline DoD is met.
+
+## What I changed
+
+`tests/test_model_store.py`, the `FakeResponse` test double, plus its `Literal` import:
+
+```diff
+ from collections.abc import Iterator
+ from pathlib import Path
++from typing import Literal
+
+@@ class FakeResponse:
+-    def __exit__(self, *exc: object) -> bool:
++    # ``Literal[False]`` rather than ``bool`` or ``None``: the double must never
++    # swallow an exception, and ``Literal[False]`` states that invariant exactly,
++    # whereas ``bool`` admits a possible ``True`` (mypy's [exit-return] complaint).
++    # ``None`` would be equally safe for mypy but would mean rewriting the body,
++    # since returning a value from a ``-> None`` method is itself an error; keeping
++    # the explicit ``return False`` preserves the double's existing behaviour.
++    def __exit__(self, *exc: object) -> Literal[False]:
+         return False
+```
+
+No `cast`, no `# type: ignore`, no assertion touched, and no change to the double's runtime
+behaviour: it still returns `False` from `__exit__`, so it still propagates any exception out
+of the `with` block. The only change is the declared return type.
+
+## Why `Literal[False]` and not `None`
+
+Both annotations satisfy mypy (its note offers both). I chose `Literal[False]` because it is
+the more precise statement of the contract:
+
+- `bool` is too wide: it admits `True`, and a `True`-returning `__exit__` swallows the
+  exception. That possible-`True` is exactly the risk mypy's `[exit-return]` check flags, and
+  a test double that silently ate an exception would mask a real failure.
+- `Literal[False]` says precisely what the code does: this context manager *always* returns
+  `False`, and therefore *never* suppresses an exception. It keeps the explicit
+  `return False` intact, so there is zero behavioural change and zero body churn.
+- `None` is equally accepted by mypy and also means "does not suppress", but it would require
+  rewriting the body (`return`/`return None`), because a `-> None` method cannot `return
+  False` without a new mypy error. `Literal[False]` expresses the same no-swallow guarantee
+  while leaving the double byte-for-byte behaviourally identical.
+
+Getting this right matters beyond the one file: `_download` must see `urlopen`'s context
+manager propagate a failure so the atomic-install path can clean up. A `True`/`bool` contract
+on the double could hide that. The precise annotation documents the invariant the test relies
+on.
+
+## Final command output (real)
+
+```
+$ uv run mypy src/ges2t tests
+Success: no issues found in 17 source files          # exit 0
+
+$ uv run mypy src/ges2t
+Success: no issues found in 9 source files           # exit 0
+
+$ uv run pytest
+collected 181 items
+...
+============================= 181 passed in 0.56s ==============================
+
+$ uv run pytest tests/test_model_store.py -q
+29 passed in 0.12s
+```
+
+Any other violations? **No.** The wide check now reports nothing at all, in either `src/ges2t`
+or `tests/` — the only two errors ever seen on this branch were `tests/test_whistle_config.py:247`
+(previously fixed) and `tests/test_model_store.py:349` (fixed here). `uv run mypy src/ges2t
+tests` exits 0.
+
+## Test counts (before → after)
+
+| Scope | Before | After |
+|---|---|---|
+| `uv run pytest` | 181 passed | 181 passed |
+| `uv run pytest tests/test_model_store.py -q` | 29 passed | 29 passed |
+
+Identical. No test was added, deleted, skipped, or weakened. The test double's behaviour is
+unchanged, so the coverage of the download/verify paths is unchanged.
+
+## Confirmation
+
+- The wide check `uv run mypy src/ges2t tests` exits **0**.
+- `uv run mypy src/ges2t` exits **0**.
+- `uv run pytest` passes 181/181, unchanged.
+- The scope widening was one annotation (`-> bool` → `-> Literal[False]`) plus its `Literal`
+  import; nothing else was widened.
+- `ticket.md` Status is now `in review` (the blocker is resolved) and this ticket's Epic 1 row
+  in `docs/project/README.md` is `in review`.
