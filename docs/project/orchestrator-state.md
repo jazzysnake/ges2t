@@ -59,8 +59,10 @@ Original orchestrator brief: `.pi/prompts/orchestrate-project.md`.
 10 cli-surface-and-commands · 13 streaming-window-engine · 14 whistle-streaming-adapter ·
 20 type-check-whole-tree
 
-**In review / in flight (see §6):** 21 status-ui-outside-lock (changes requested, fix running) ·
-22 xkb-keycode-mapping · 24 layout-detection-and-config · 26 pin-cli-test-guarantees
+**In review / in flight (see §6):** 21 status-ui-outside-lock (changes requested, B1 fix running) ·
+22 xkb-keycode-mapping (implementing, nothing committed yet) · 24 layout-detection-and-config
+(implementation committed `5332885`, reviewer running) · 26 pin-cli-test-guarantees (implementing,
+nothing committed yet)
 
 **To do:** 11 dictation-pipeline-batch · 12 doctor-command · 15 streaming-session ·
 16 streaming-wiring-and-e2e · 17 tray-status-ui · 18 notifications-and-cancel ·
@@ -124,6 +126,29 @@ or renumber.
 **On changes requested:** resume the *same* implementer with the findings, then re-review. (If
 `resume` fails with "agent not found", spawn a fresh implementer scoped to *verify and extend the
 existing work* — never to rewrite it.)
+
+**A fix can introduce its own regression — re-review the new paths, not just the finding.** Ticket
+21 fixed a reproduced deadlock and thereby *created* a worse bug: the display drain moved into a
+`finally` outside the defensive `try/except`, so a raising `status_ui` callback skipped a deferred
+side effect and left the service **permanently wedged in `TRANSCRIBING`** (every later command
+returned `busy`) — the same "hotkey silently stops responding" class the ticket existed to fix.
+So when a change-requested fix comes back, the re-review must inspect the **new code paths it
+introduced** and their exception behaviour, not merely confirm that the original finding is gone.
+Corollary for briefs: when a fix makes something best-effort, **say explicitly what must stay
+fatal** — otherwise one silent failure is traded for another.
+
+**Do not build a ticket's default on a ticket that depends on it.** Ticket 24's `key_delay_ms`
+default was specified as "chosen from ticket 23's measurement", but ticket 23 *depends on* ticket 24,
+so the default could not exist yet. The implementer made it a single provisional constant and
+flagged the contradiction — the right call. Watch for this when writing DoD lines that cite a
+downstream ticket's output.
+
+**Enforcement is where the real bugs were found — keep raising the bar.** The defects that
+mattered were almost never found by a test: a US-only keymap that corrupted every non-US layout
+(all 274 tests passed), a `mypy` check that did not cover tests, a laziness test that passed with a
+top-level forbidden import, exit-code tests that compared against their own constants, and a
+`sys.modules` assertion that was vacuous because the module was never installed. Each was caught by
+someone **trying to falsify a claim**. Ask reviewers for that explicitly every time.
 
 ## 8. Merge procedure (and the mistake to avoid)
 
