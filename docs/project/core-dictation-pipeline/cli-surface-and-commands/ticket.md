@@ -1,7 +1,7 @@
 # CLI surface and commands
 
 - **Priority:** P0
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** M
 - **Epic:** ../epic.md
 
@@ -29,7 +29,7 @@ ADR 0017 (setup/models), ADR 0009 (`--config`).
 
 ## Definition of done
 
-- [ ] `src/ges2t/cli.py` implements `main(argv=None) -> int` with `argparse` and exactly these
+- [x] `src/ges2t/cli.py` implements `main(argv=None) -> int` with `argparse` and exactly these
       subcommands, each with its ADR 0016 purpose:
 
       | Command | Behaviour |
@@ -44,34 +44,34 @@ ADR 0017 (setup/models), ADR 0009 (`--config`).
       | `doctor` | lazy-import and call `doctor.run_doctor(config)` |
       | `models` | list the pinned models, present/verified status; `--verify` forces a full sha256 check |
 
-- [ ] **Exit codes are implemented as documented**, not as arbitrary 1s: `0` success; `2`
+- [x] **Exit codes are implemented as documented**, not as arbitrary 1s: `0` success; `2`
       service not running/absent socket; `3` engine or injection failure. `doctor` returns
       non-zero when something is broken. Each code is defined as a named constant.
-- [ ] `--config <path>` is accepted by every subcommand that reads configuration, and passed
+- [x] `--config <path>` is accepted by every subcommand that reads configuration, and passed
       through to `load_config`.
-- [ ] **Lazy imports.** Running `ges2t toggle` must not import `needle`, `gi`,
+- [x] **Lazy imports.** Running `ges2t toggle` must not import `needle`, `gi`,
       `pystray`, `ges2t.pipeline`, or `ges2t.doctor`. Assert this in a test by inspecting
       `sys.modules` after invoking `main(["toggle"])` with a stubbed client.
-- [ ] **Every failure prints an actionable sentence** and returns its exit code; no raw
+- [x] **Every failure prints an actionable sentence** and returns its exit code; no raw
       traceback reaches the user. A traceback is shown only when `--debug` (or an env var) is
       set.
-- [ ] Help text for `toggle`, `ptt-start`, `ptt-stop`, and `cancel` includes the KDE
+- [x] Help text for `toggle`, `ptt-start`, `ptt-stop`, and `cancel` includes the KDE
       **System Settings → Shortcuts → Add → Command or URL** line to bind them, since that is
       the only way the hotkey works (ADR 0004). `ges2t doctor` also prints the recommended
       bindings.
-- [ ] No subcommand writes to the user's config file or compositor settings.
-- [ ] `tests/test_cli.py` covers: `--version`; `--help` for the parser and for each
+- [x] No subcommand writes to the user's config file or compositor settings.
+- [x] `tests/test_cli.py` covers: `--version`; `--help` for the parser and for each
       subcommand; argument parsing for every subcommand including `--config`; the
       service-absent path returning exactly `2` with a clear message; the engine-failure path
       returning `3`; `status` printing the state; `setup` calling the injected
       `model_store` functions (monkeypatched, no network); `models` listing and
       `--verify` behaviour; and the **lazy-import** assertion above.
-- [ ] `uv run pytest tests/test_cli.py` passes and `uv run pytest` stays green.
-- [ ] `uv run ges2t --help` lists all nine subcommands, and
+- [x] `uv run pytest tests/test_cli.py` passes and `uv run pytest` stays green.
+- [x] `uv run ges2t --help` lists all nine subcommands, and
       `uv run ges2t toggle` with no service running prints a clear message and exits `2`
       (verified by hand, reported in `001-comment.md`).
 
-- [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
+- [x] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
       signature interface-typed — ADR 0019.
 
 ## Notes
