@@ -71,7 +71,7 @@ Original orchestrator brief: `.pi/prompts/orchestrate-project.md`.
 **Remaining (4):**
 | # | Ticket | State |
 |---|---|---|
-| **25** | clipboard-paste-injector | **implemented, in review** — `clipboard.py` + `build_injector` backend selection; the reviewer's first job is confirming nothing ever wrote the user's real clipboard |
+| **25** | clipboard-paste-injector | **review: REQUEST CHANGES** (`2b5fb26`) — 3 blocking defects: **D1 (critical)** the deferred restore never receives the previous bytes, so a real run (and any manual test) leaves the clipboard **empty** rather than restored; **D2 (high)** the letter-keycode fallback is wrong for **21 of 26** letters, so `ctrl+q` silently emits `ctrl+c` — a config typo can fire a destructive chord; **D3 (med)** a `wl-paste` timeout escapes as a raw `Subprocess.TimeoutExpired`. Safety **confirmed**: nothing in the suite could have touched the real clipboard. Fix dispatched. |
 | **19** | user-documentation-and-setup-guide | **not started** — the last core ticket; deliberately last because it documents final behaviour |
 | **30** | tray-failure-diagnostics | filed follow-up; needs a read-only socket verb (**requires an ADR 0016 amendment**) |
 | **31** | speech-gate-recalibration | **PARKED by the user** — branch exists, **review passed on its own evidence** (`dc75977`), **not merged**; the cost is noise-relative and may gate quiet speech in a noisy place. See §10 |
@@ -84,7 +84,10 @@ worktree is dirty-but-complete — recover from artifacts, do not re-run blindly
 
 | Ticket | Worktree | Branch | Task |
 |---|---|---|---|
-| 25 | `.worktrees/clipboard-paste-injector` | `feat/clipboard-paste-injector` | **Review** in progress (real-clipboard safety first) |
+| 25 | `.worktrees/clipboard-paste-injector` | `feat/clipboard-paste-injector` | **FIXING D1/D2/D3** per `002-review.md`; next free artifact is `003-comment.md`, then re-review |
+
+**⚠️ Ticket 25's compaction summary said the review "PASSED" — it did not.** The artifact says
+**REQUEST CHANGES**. Verified from `002-review.md` directly. Do not merge it.
 | 31 | `.worktrees/speech-gate-recalibration` | `feat/speech-gate-recalibration` | **Review DONE** (`dc75977`): mergeable on its own evidence, but **do not merge** — the cost is noise-relative and the user parked it. Branch stays **unmerged**. |
 
 Everything else is merged and its worktree removed. Use three-dot diffs
@@ -349,6 +352,39 @@ Recorded in `docs/project/core-dictation-pipeline/dictation-pipeline-batch/003-c
   *afterwards*, so the basics were worth a repeat pass on the streaming path (partials now show in
   the tray tooltip, a new visible behaviour).
 
+## 11a. The clipboard manual test (ticket 25) — the user's step, verbatim and ready
+
+**Do not run this until D1 is fixed and the re-review passes.** With D1 present, the run ends with the
+clipboard **empty** instead of restored, so it would destroy the user's clipboard rather than restore
+it. Once fixed, merge first, then hand over these steps.
+
+**Why this one needs the user and cannot be automated:** it is the only mechanism that **writes the
+user's clipboard** and the only one that types into a window via a keychord. The suite provably never
+reaches the real runner (verified in `002-review.md` §0), so nothing short of a real run tests it.
+
+**Preconditions:**
+- `wl-copy`/`wl-paste` present (yes, wl-clipboard 2.3.0).
+- **`ydotoold` must be running** — the clipboard backend still sends the **paste keychord** through
+  `ydotool key`. The clipboard only replaces how the *text* gets in.
+- Config: `~/.config/ges2t/config.toml` → `injection.backend = "clipboard"`, then restart the
+  service. Terminals need `paste_keys = ["ctrl+shift+v"]` under `[injection.clipboard]`; the default
+  is `["ctrl+v"]`, so **the editor and the terminal need two passes with different config**.
+
+**Steps (per target):**
+1. Put a distinctive marker on the clipboard **first**, so restoration is provable rather than a
+   guess: `printf 'MY-ORIGINAL-CLIPBOARD' | wl-copy`.
+2. Focus the target — a **text editor** (with `ctrl+v`), then a **terminal** (`ctrl+shift+v`).
+3. Toggle on, say a short phrase, toggle off.
+4. Confirm the phrase was pasted, and **time it** (`time` around the toggle-off).
+5. Confirm the clipboard came back: `wl-paste` should print `MY-ORIGINAL-CLIPBOARD`.
+
+**Report:** pasted correctly in each target? wall time for each? **was the pre-existing clipboard
+restored?** Any failure here is a real defect, not a flake — report it as found.
+
+**Honest caveats to pass on:** the restore is a **courtesy with a bounded delay (~0.4 s)**, not a
+guarantee; a long transcript must not be replaced before the target app has pasted it. And the
+clipboard is *written* by design — that is the mechanism, not a bug.
+
 ## 12. User preferences and escalation rules
 
 - **Tickets must be small enough for a capable junior developer in one session.** Split anything
@@ -378,12 +414,15 @@ Recorded in `docs/project/core-dictation-pipeline/dictation-pipeline-batch/003-c
 final behaviour, and writing it earlier means documenting behaviour that then changes.
 
 ```
-25 (in review) ─→ merge
+25 (fixing D1/D2/D3) ─→ re-review ─→ merge ─→ USER's manual test (editor + terminal, clipboard restored?)
 31 (reviewed, PARKED — do not merge without the user's quiet-room + noisy-environment result)
 
 19 (docs)      — needs everything else settled first
 30 (tray diagnostics) — optional, P2; needs the ADR 0016 amendment
 ```
+
+**Ticket 25's user-owned manual step is the last real verification before v1** — it is the only
+ticket that writes the user's clipboard, so it carries a warning the others do not (see §11a).
 
 **Epic 1's exit test** — `ges2t toggle` → speak → `ges2t toggle` types correct text into a **text
 editor** and a **terminal**; silence types nothing; framework overhead < 1 s excluding model time;
