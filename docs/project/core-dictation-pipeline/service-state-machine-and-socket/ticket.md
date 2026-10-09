@@ -1,7 +1,7 @@
 # Service: state machine, single instance, socket protocol
 
 - **Priority:** P0
-- **Status:** in review
+- **Status:** done
 - **Complexity:** M
 - **Epic:** ../epic.md
 

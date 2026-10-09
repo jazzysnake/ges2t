@@ -31,7 +31,7 @@ speak → `ges2t toggle` types the right text into a text editor and a terminal.
 | 6 | [audio-capture-pw-record](core-dictation-pipeline/audio-capture-pw-record/ticket.md) — PipeWire capture, drain on stop | M | done | 2, 3 | feat/audio-capture-pw-record (merged) |
 | 7 | [ydotool-injector](core-dictation-pipeline/ydotool-injector/ticket.md) — uinput injection + trailing space | S | done | 2, 3 | feat/ydotool-injector (merged) |
 | 8 | [whistle-transcriber-adapter-batch](core-dictation-pipeline/whistle-transcriber-adapter-batch/ticket.md) — batch `transcribe()` | M | done | 2, 4, 5 | feat/whistle-transcriber-adapter-batch (merged) |
-| 9 | [service-state-machine-and-socket](core-dictation-pipeline/service-state-machine-and-socket/ticket.md) — states, single instance, socket | M | in review | 2, 3 | feat/service-state-machine-and-socket |
+| 9 | [service-state-machine-and-socket](core-dictation-pipeline/service-state-machine-and-socket/ticket.md) — states, single instance, socket | M | done | 2, 3 | feat/service-state-machine-and-socket (merged) |
 | 10 | [cli-surface-and-commands](core-dictation-pipeline/cli-surface-and-commands/ticket.md) — 9 subcommands, exit codes | M | to do | 3, 5, 9 | — |
 | 11 | [dictation-pipeline-batch](core-dictation-pipeline/dictation-pipeline-batch/ticket.md) — composition root + E2E | M | to do | 6, 7, 8, 9, 10 | — |
 | 12 | [doctor-command](core-dictation-pipeline/doctor-command/ticket.md) — diagnose every prerequisite | M | to do | 3, 5, 6, 7, 9, 10 | — |
