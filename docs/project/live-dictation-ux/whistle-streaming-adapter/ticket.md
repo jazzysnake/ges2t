@@ -83,6 +83,17 @@ path), ADR 0010 (adapter isolation), ADR 0005 (audio contract).
 
 ## Notes
 
+- **Deltas must be concatenation-safe.** `drive()` builds the transcript by concatenating the
+  `committed` deltas **verbatim**, with no separator inserted, so `_WhistleStreamingDecoder`
+  must return deltas that already carry whatever whitespace the text needs. If a committed
+  delta is a continuation, the leading space is the decoder's responsibility — do not rely on
+  `drive()` to join words. Ticket 13's `001-comment.md` flags this as the ticket-14 contract.
+- **Report the engine's language on the pass that knows it.** `StreamingPass` carries
+  `language: str | None`, and `drive()` propagates the most recent non-`None` value onto the
+  segments it yields. Populate it from the engine's JSON rather than leaving it `None`,
+  because ADR 0011 requires the streaming path to report the engine's language; the engine
+  auto-detects per pass and may be unstable on mixed-language audio, which is recorded as a
+  measurement and deliberately **not** worked around in v1.
 - Do not put the window cap in the generic config; it is engine-specific and already lives in
   `[engine.whistle]` (ADR 0009, validated by the engine-config ticket).
 - Streaming must not be attempted before `load()`, and must reuse the single loaded model
