@@ -35,6 +35,7 @@ speak → `ges2t toggle` types the right text into a text editor and a terminal.
 | 10 | [cli-surface-and-commands](core-dictation-pipeline/cli-surface-and-commands/ticket.md) — 9 subcommands, exit codes | M | done | 3, 5, 9 | feat/cli-surface-and-commands (merged) |
 | 11 | [dictation-pipeline-batch](core-dictation-pipeline/dictation-pipeline-batch/ticket.md) — composition root + E2E | M | done | 6, 7, 8, 9, 10 | feat/dictation-pipeline-batch (merged) |
 | 12 | [doctor-command](core-dictation-pipeline/doctor-command/ticket.md) — diagnose every prerequisite | M | to do | 3, 5, 6, 7, 9, 10 | — |
+| 29 | [silence-gate](core-dictation-pipeline/silence-gate/ticket.md) — silence must type nothing (the model hallucinates `thank you` on quiet audio) | S | to do | 11 | — |
 | 20 | [type-check-whole-tree](core-dictation-pipeline/type-check-whole-tree/ticket.md) — fix the tests-not-type-checked gap | XS | done | 4 | feat/type-check-whole-tree (merged) |
 | 21 | [status-ui-outside-lock](core-dictation-pipeline/status-ui-outside-lock/ticket.md) — fix the reproduced status_ui-under-lock deadlock | XS | done | 9 | feat/status-ui-outside-lock (merged) |
 | 26 | [pin-cli-test-guarantees](core-dictation-pipeline/pin-cli-test-guarantees/ticket.md) — pin the two falsified CLI test guarantees | XS | done | 10 | feat/pin-cli-test-guarantees (merged) |
