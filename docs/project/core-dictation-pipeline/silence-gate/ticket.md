@@ -55,6 +55,19 @@ need an ADR amendment; it implements existing intent.**
       `src/ges2t/pipeline.py` is being edited concurrently by ticket
       `../../live-dictation-ux/streaming-wiring-and-e2e/ticket.md` — avoid touching it if you can; if
       the design genuinely requires a change there, say so and keep it minimal.
+- [ ] **Minimum recording duration — added at the user's direction, value fixed at 100 ms.** A
+      recording shorter than **100 ms** is treated as no-speech: return an empty result **without
+      calling the model**, exactly like the RMS gate. Rationale: an **accidental double-tap** on the
+      hotkey produces a very short recording that the model can still hallucinate into a phrase, and
+      the RMS gate alone does not catch it because a key click is **loud**. **100 ms is the user's
+      specified value** — use it as a named constant and document that it is user-specified and why it
+      is safe (real utterances are orders of magnitude longer). **Do not add config plumbing** for it;
+      a constant is right at this size. Test it **in isolation from the RMS gate** — synthesise audio
+      loud enough to pass the RMS check (e.g. a full-scale tone burst) and assert that a **99 ms**
+      buffer is still dropped while a **101 ms** buffer is **not**; otherwise the test would pass
+      because of the RMS gate and prove nothing about the duration rule. Falsify by removing the
+      duration check. State how the two gates compose (which is evaluated first, and why the order
+      cannot change the outcome for real audio).
 - [ ] **Consider the streaming path explicitly.** A per-chunk gate would misfire on the natural pauses
       *within* an utterance, so think about what the gate should mean for `stream()` — a silent
       utterance must produce nothing, but a pause mid-sentence must not truncate. State what you
