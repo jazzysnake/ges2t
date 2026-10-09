@@ -6,7 +6,9 @@ characters per commit**, one commit per **1.00 s** of source audio (p90 2.50 s,
 max 4.00 s), with the uncommitted ``pending`` tail (median 18 characters)
 persisting about **1.00 s**. So the words are available early enough to type
 them as they are committed instead of waiting for release, and each commit is
-cheap (ticket 23 measured ~0.38 ms/char, so a median commit is ~6 ms of typing).
+cheap (ticket 23 measured ~0.38 ms/char for the emission, so a median commit is
+~6 ms of emission; the per-commit keymap rebuild is excluded, so this is a lower
+bound on the whole per-commit cost).
 
 What this module is
 -------------------

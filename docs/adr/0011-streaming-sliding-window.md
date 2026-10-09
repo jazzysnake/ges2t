@@ -61,7 +61,9 @@ The v1 streaming loop is precisely:
 3. **Accumulate committed text** across the whole utterance — each `process()` call returns
    only the words it committed, so the transcript is the concatenation of those deltas plus
    the final `stop()` tail. Do not re-derive it from `pending`.
-4. On key release, call `stop()` a final time, append the tail, and inject **once**.
+4. On key release, call `stop()` a final time, append the tail, and type the
+   remaining suffix **once** -- the committed prefix has already been typed as it
+   arrived (ADR 0011 as amended below).
 
 Design rules this fixes:
 
@@ -145,7 +147,9 @@ broader than its own reason required, and this amendment narrows it to the reaso
 
 Commit cadence, from ticket 32's real-device run (`commit-cadence-diagnostic`, 25.04 s recorded
 / 25.00 s fed, 17 commits through the real `pw-record` path, with a deliberate mid-utterance
-pause), folded in with the shipped clips (3 inputs, 57.0 s of audio, 40 commits total):
+pause), folded in with the shipped clips (3 inputs, 57.0 s of audio). The **40 commits total**
+below is the persisted-WAV re-read total (5 + 19 + 16); the authoritative live run had **17**
+commits, and adding the clips' 24 gives **41** for the live run, so 40 is not a live-run total:
 
 | measurement | result |
 |---|---|
@@ -153,7 +157,7 @@ pause), folded in with the shipped clips (3 inputs, 57.0 s of audio, 40 commits 
 | median gap between commits, source audio | **1.00 s** (p90 2.50 s, max 4.00 s) |
 | median `pending` size | **18 characters**, persisting **1.00 s** |
 | committed deltas that repeat already-committed words | **0** (0 with 2+ words, both detectors) |
-| injection cost | ticket 23 measured **0.38 ms/char**, so a median commit is **~6 ms** of typing |
+| injection cost | ticket 23 measured **0.38 ms/char** for the `ydotool key` emission, so a median commit is **~6 ms** of emission. This excludes the per-commit `XkbKeySequenceSource.sequence_for` keymap rebuild, so it is a lower bound, not the whole per-commit cost. |
 
 The measured cost is cheap enough that the real risk is **locking**, not speed, and the median
 commit is small enough that typing it as it arrives keeps up with speech. Two observations from

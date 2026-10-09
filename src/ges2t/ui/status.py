@@ -88,7 +88,11 @@ class NullStatusUI:
         print(f"ges2t: {message}", file=sys.stderr)
 
     def partial(self, live: LiveText) -> None:
-        """Show display-only live text (no-op; never typed, ADR 0011)."""
+        """Show display-only live text (no-op; the display is never typed).
+
+        On the streaming path the committed prefix is typed as it is committed
+        (ADR 0011 as amended by ticket 34).
+        """
 
 
 @runtime_checkable

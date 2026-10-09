@@ -32,9 +32,11 @@ through it; the ``pending`` tail is still display-only.
 Shutdown is bounded. :meth:`Service.shutdown` waits up to
 :data:`_SHUTDOWN_JOIN_TIMEOUT_SECONDS` for an in-flight transcription, because a
 wedged engine must never hang the process (ADR 0015). If that bound is exceeded
-the utterance is lost -- under ADR 0011 nothing is injected until release, so
-the loss is a missing transcript, never partial text -- and the give-up is
-logged at WARNING so it is visible instead of silent.
+the utterance is lost. On the batch path nothing is injected until release, so
+the loss is a missing transcript, never partial text; on the streaming path the
+already-committed prefix *has* been typed (ADR 0011, as amended by ticket 34),
+so the loss is only the uncommitted remainder. The give-up is logged at WARNING
+so it is visible instead of silent.
 """
 
 from __future__ import annotations
@@ -575,14 +577,17 @@ class Service:
         if worker is not None and worker.is_alive():
             worker.join(timeout=_SHUTDOWN_JOIN_TIMEOUT_SECONDS)
             if worker.is_alive():
-                # ADR 0011: nothing was injected, because injection only happens
-                # after finish() returns. The utterance is lost, not partial or
-                # corrupt -- but a lost utterance must still be visible, so it
-                # is logged rather than dropped silently (ticket 16 follow-up).
+                # ADR 0011 as amended by ticket 34: on the batch path nothing was
+                # injected, but on the streaming path the committed prefix has
+                # already been typed, so only the uncommitted remainder is lost.
+                # Either way the remainder is lost, not partial or corrupt -- but
+                # a lost utterance must still be visible, so it is logged rather
+                # than dropped silently (ticket 16 follow-up).
                 _logger.warning(
                     "shutdown gave up after %.1f s waiting for an in-flight "
-                    "transcription; the current utterance was not typed "
-                    "(ADR 0011: a lost utterance, never partial text)",
+                    "transcription; only the uncommitted remainder is lost "
+                    "(ADR 0011 as amended by ticket 34; on the batch path nothing "
+                    "was typed, on the streaming path the committed prefix was)",
                     _SHUTDOWN_JOIN_TIMEOUT_SECONDS,
                 )
         if partials is not None and partials.is_alive():

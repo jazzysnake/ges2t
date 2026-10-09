@@ -342,3 +342,24 @@ docs/project/live-dictation-ux/incremental-typing/001-comment.md this artifact
 docs/project/live-dictation-ux/incremental-typing/user-live-test.sh (new) the user's script
 docs/project/README.md                     only ticket 34's row
 ```
+
+## 15. §11 wording cleanup (hand-back from `002-review.md` §11)
+
+Applied after the review's PASS, as the review's non-blocking findings (§11) requested. All five
+changes are documentation/comments only: no logic, no test, and no assertion was touched. Each
+addresses a statement the ADR 0011 amendment left stale (the pre-amendment "nothing is injected
+until release" rule).
+
+| # | §11 finding | correction made |
+|---|---|---|
+| 1 | ADR decision bullet 4 still said the tail is injected **once** on release | `docs/adr/0011-streaming-sliding-window.md:64` now says to type the remaining suffix once, because the committed prefix was already typed as it arrived (points at the amendment). |
+| 2 | `Service` shutdown docstring and warning asserted "never partial text" / "nothing was injected" | `src/ges2t/service.py` docstring and the shutdown WARNING now say the batch path injects nothing, while the streaming path has already typed the committed prefix, so only the uncommitted remainder is lost. |
+| 3 | Tray/status `partial` docstrings said the text is "never typed" | `src/ges2t/ui/tray.py` and `src/ges2t/ui/status.py` now say the ``display`` (committed + pending) is never typed, while the committed prefix is typed as committed (ADR 0011 as amended). |
+| 4 | The `~6 ms` figure is emission-only and excludes the keymap rebuild | `docs/adr/0011-streaming-sliding-window.md` amendment table now labels 0.38 ms/char the `ydotool key` emission cost, names the excluded `XkbKeySequenceSource.sequence_for` rebuild, and calls ~6 ms a lower bound. `src/ges2t/incremental_typing.py`'s docstring carries the same qualification. |
+| 5 | "40 commits total" is the WAV re-read total, not the live run | `docs/adr/0011-streaming-sliding-window.md` now labels 40 as the persisted-WAV re-read total (5 + 19 + 16) and notes the authoritative live run had 17 (clips + live = 41). |
+
+The two stale statements that remain are in **test** comments
+(`tests/test_state_machine.py:637-638`, `:657-658`); correcting them would mean editing a test
+file, so they were left untouched. The review cited only `src/` and the ADR, and the test comment
+claims do not affect behaviour.
+
