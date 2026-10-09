@@ -75,11 +75,15 @@ to satisfy this ADR: `config-loading` (`tuple[Config, list[str]]`-shaped warning
 
 **Enforcement.**
 
-- `mypy` is a development dependency, configured to check `src/ges2t` with
+- `mypy` is a development dependency, configured to check the project with
   `disallow_untyped_defs = true` and `no_implicit_optional = true`, ignoring missing imports
   for third-party libraries.
-- **`uv run mypy src/ges2t` must exit 0**, in addition to `uv run pytest`, as part of the
-  definition of done for every ticket. Ticket `project-scaffold` sets this up.
+- **`uv run mypy src/ges2t tests` must exit 0**, in addition to `uv run pytest`, as part of the
+  definition of done for every ticket. Test code is in scope: this ADR requires annotations
+  "in tests and helper code", so a check limited to `src/ges2t` would not enforce its own rule.
+  (Tickets written before 2026-10-09 name only `src/ges2t`; the wider command is the one that
+  counts.) Ticket `project-scaffold` sets this up, and ticket `type-check-whole-tree` closed
+  the initial gap this omission created in `tests/test_whistle_config.py`.
 - This is a static check only. No runtime type-validation library (`pydantic`, `beartype`,
   `typeguard`) is added — the project stays stdlib-first (ADR 0001).
 
@@ -87,6 +91,11 @@ to satisfy this ADR: `config-loading` (`tuple[Config, list[str]]`-shaped warning
 
 - Swapping the engine (ADR 0006) is a one-module change **only if** this rule holds, so a
   reviewer should treat an implementation-typed signature as a defect, not a nitpick.
+- **Discovered 2026-10-09:** the original enforcement command (`mypy src/ges2t`) did not cover
+  tests, and a genuine violation survived ticket 4's review as a result — exactly the kind of
+  silent non-enforcement this ADR exists to prevent. The command is now
+  `mypy src/ges2t tests`. This is recorded because the failure mode (an enforced rule whose
+  check does not actually cover the rule's scope) is more dangerous than the violation itself.
 - Test fakes become drop-in because every call site is interface-typed (ADR 0014); a signature
   that takes a concrete class is also a testability defect.
 - Named return classes make call sites self-documenting and make it impossible to confuse two

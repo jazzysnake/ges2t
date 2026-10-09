@@ -77,6 +77,15 @@ the service enforces it too), ADR 0001 (the latency budget being measured here).
       non-model portion of a round trip — socket call, capture stop and drain, buffer handoff,
       and injection of a ≤20-word phrase — measured by timing each stage. This must be
       **under 1 second** total (ADR 0001). State the method, not just the number.
+- [ ] **Settle the `--key-delay` question with a number, not an opinion.** Ticket 7 left
+      `ydotool` at its default 12 ms per key event and flagged that this likely blows the 1 s
+      budget (the man page implies roughly **2.8 s for a 20-word phrase**). Once injection is
+      live, measure it and either accept the default with the real number recorded, or reduce
+      the delay and record the dropped-character behaviour. Ticket 7's live injection test is
+      **deferred to this ticket** because it needs a running `ydotoold` (see that ticket's
+      `001-comment.md`); the epic's latency criterion is **not** satisfied until this is
+      measured. Do **not** run `sudo` or enable services — if the daemon is not running, record
+      the measurement as pending and report it.
 
 - [ ] `uv run mypy src/ges2t` exits 0: every definition fully annotated and every
       signature interface-typed — ADR 0019.

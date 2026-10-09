@@ -35,6 +35,7 @@ speak → `ges2t toggle` types the right text into a text editor and a terminal.
 | 10 | [cli-surface-and-commands](core-dictation-pipeline/cli-surface-and-commands/ticket.md) — 9 subcommands, exit codes | M | to do | 3, 5, 9 | — |
 | 11 | [dictation-pipeline-batch](core-dictation-pipeline/dictation-pipeline-batch/ticket.md) — composition root + E2E | M | to do | 6, 7, 8, 9, 10 | — |
 | 12 | [doctor-command](core-dictation-pipeline/doctor-command/ticket.md) — diagnose every prerequisite | M | to do | 3, 5, 6, 7, 9, 10 | — |
+| 20 | [type-check-whole-tree](core-dictation-pipeline/type-check-whole-tree/ticket.md) — fix the tests-not-type-checked gap | XS | to do | 4 | — |
 
 ## Epic 2 — [Live dictation UX](live-dictation-ux/epic.md) · P1
 
@@ -60,7 +61,8 @@ independent and may run in parallel (they touch disjoint files).
 
 | Wave | Tickets |
 |---|---|
-| 1 | 1 |
+| 0 | 20 (corrective; independent of everything else) |
+| 1 | 1 | 
 | 2 | 2, 3 |
 | 3 | 4, 5, 6, 7, 13 |
 | 4 | 8, 9 |
@@ -81,9 +83,12 @@ All 20 decision records live in [`adr/`](../adr/). Start with
 [ADR 0000 (scope)](../adr/0000-project-scope-and-non-goals.md) and
 [ADR 0005 (the Whistle/Needle 3 backend)](../adr/0005-stt-backend-cactus-whistle.md).
 
-**Every ticket's definition of done includes `uv run mypy src/ges2t` in addition to
+**Every ticket's definition of done includes `uv run mypy src/ges2t tests` in addition to
 `uv run pytest`** — full annotations, interface-typed signatures, and classes instead of
-tuples, per [ADR 0019](../adr/0019-code-style-typing-and-interfaces.md).
+tuples, per [ADR 0019](../adr/0019-code-style-typing-and-interfaces.md). The command covers
+**tests as well as `src/`**: ADR 0019 was amended on 2026-10-09 after ticket 7's review
+found that a `src/ges2t`-only check had let a real violation through ticket 4's review
+([ticket 20](core-dictation-pipeline/type-check-whole-tree/ticket.md) fixes it).
 
 ## Known accepted risks
 
