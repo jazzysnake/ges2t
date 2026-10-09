@@ -26,6 +26,7 @@ from ges2t.transcribers.whistle_config import (
     DEFAULT_LANGUAGE,
     DEFAULT_WINDOW_SECONDS,
 )
+from ges2t.ui.status import NullStatusUI, TrayFailure
 from tests.fakes import FakeAudioSource, FakeStatusUI, FakeTranscriber
 
 # --- build_transcriber --------------------------------------------------------
@@ -245,6 +246,8 @@ def test_run_service_never_downloads_and_loads_once_before_serving(
     fake.raise_on_ensure_model = AssertionError("the transcriber must not ensure")
     monkeypatch.setattr(pipeline, "build_transcriber", lambda config: fake)
     monkeypatch.setattr(pipeline, "_missing_artifacts", lambda config: [])
+    # The tray needs a display; this test injects the no-op instead.
+    monkeypatch.setattr(pipeline, "build_status_ui", lambda config: NullStatusUI())
     monkeypatch.setattr(FakeTranscriber, "load", lambda self: events.append("load"))
     monkeypatch.setattr(Service, "serve", lambda self: events.append("serve"))
     _forbid_downloads(monkeypatch)
@@ -273,6 +276,88 @@ def test_run_service_injects_the_status_ui_into_the_service(
     assert seen[0]._status_ui is status_ui
 
 
+class _DiagnosticStatusUI:
+    """A ``StatusUI`` that records a failure and reports it at shutdown.
+
+    Structurally satisfies ``StatusUI``, ``StoppableStatusUI`` and
+    ``DiagnosticStatusUI``, so ``run_service`` stops it and prints the report.
+    """
+
+    def __init__(self) -> None:
+        self.stop_calls = 0
+
+    def idle(self) -> None:
+        """No-op."""
+
+    def recording(self) -> None:
+        """No-op."""
+
+    def transcribing(self) -> None:
+        """No-op."""
+
+    def error(self, message: str) -> None:
+        """No-op."""
+
+    def partial(self, text: str) -> None:
+        """No-op."""
+
+    def stop(self) -> None:
+        """Record that the composition root stopped this UI."""
+        self.stop_calls += 1
+
+    def failure_report(self) -> TrayFailure | None:
+        """Always report one recorded tray failure."""
+        return TrayFailure(count=3, last_message="state update: no display available")
+
+
+_EXPECTED_SUMMARY = (
+    "the tray has failed 3 times: state update: no display available"
+)
+
+
+def test_run_service_reports_the_status_ui_failure_on_the_normal_path(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Review 002 / R3: deleting the shutdown call left the whole suite passing,
+    # so this test guards the normal exit path's failure summary (N1).
+    ui = _DiagnosticStatusUI()
+    monkeypatch.setattr(pipeline, "_missing_artifacts", lambda config: [])
+    monkeypatch.setattr(
+        pipeline, "build_transcriber", lambda config: FakeTranscriber()
+    )
+    monkeypatch.setattr(Service, "serve", lambda self: None)
+    _forbid_downloads(monkeypatch)
+
+    result = pipeline.run_service(Config(), status_ui=ui)
+
+    assert result == 0
+    assert ui.stop_calls == 1
+    assert _EXPECTED_SUMMARY in capsys.readouterr().err
+
+
+def test_run_service_reports_the_status_ui_failure_on_a_serve_error_path(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The ``finally`` around ``serve`` must cover the failure paths too.
+    ui = _DiagnosticStatusUI()
+
+    def fail_to_serve(self: Service) -> None:
+        raise OSError("cannot bind the socket")
+
+    monkeypatch.setattr(pipeline, "_missing_artifacts", lambda config: [])
+    monkeypatch.setattr(
+        pipeline, "build_transcriber", lambda config: FakeTranscriber()
+    )
+    monkeypatch.setattr(Service, "serve", fail_to_serve)
+    _forbid_downloads(monkeypatch)
+
+    result = pipeline.run_service(Config(), status_ui=ui)
+
+    assert result != 0
+    assert ui.stop_calls == 1
+    assert _EXPECTED_SUMMARY in capsys.readouterr().err
+
+
 def test_run_service_reports_missing_artifacts_and_returns_nonzero(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -282,6 +367,8 @@ def test_run_service_reports_missing_artifacts_and_returns_nonzero(
     monkeypatch.setattr(
         model_store, "engine_path", lambda version=model_store.ENGINE_VERSION: missing_engine
     )
+    # Startup fails before serving; the no-op avoids needing a display for the tray.
+    monkeypatch.setattr(pipeline, "build_status_ui", lambda config: NullStatusUI())
     loaded: list[str] = []
     served: list[str] = []
     monkeypatch.setattr(WhistleTranscriber, "load", lambda self: loaded.append("load"))
@@ -366,6 +453,6 @@ def test_missing_artifacts_reports_an_unsupported_platform(
 def test_null_status_ui_error_writes_to_stderr(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    pipeline.NullStatusUI().error("the engine rejected the audio")
+    NullStatusUI().error("the engine rejected the audio")
 
     assert "the engine rejected the audio" in capsys.readouterr().err
