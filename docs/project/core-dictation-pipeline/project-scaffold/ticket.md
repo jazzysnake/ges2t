@@ -1,0 +1,66 @@
+# Project scaffold: uv-managed Python project with a console script
+
+- **Priority:** P0
+- **Status:** to do
+- **Complexity:** S
+- **Epic:** ../epic.md
+
+## Current state / context
+
+The repository currently contains only `docs/` (19 ADRs and two `epic.md` files), a
+`.gitignore`, and `.pi/`. There is no Python project at all: no `pyproject.toml`, no source
+tree, no test runner. Every later ticket in this epic needs a place to put code and a command
+to run tests, so this ticket is the first one and everything depends on it.
+
+Environment facts: Arch Linux, Python **3.14.7** at `/usr/bin/python3`, `uv` 0.12.23
+installed, GTK3 + PyGObject 3.56.3 installed **system-wide**, `gi` therefore only importable
+from a venv created with system site packages.
+
+Relevant decisions: ADR 0001 (Python, `src/` layout, `uv`), ADR 0013 (the venv must see the
+system `gi`), ADR 0014 (pytest, run locally, no CI).
+
+## Definition of done
+
+- [ ] `pyproject.toml` exists with: `name = "ges2t"`, `version = "0.1.0"`,
+      `requires-python = ">=3.12"`, a `[project.scripts]` entry point
+      `ges2t = "ges2t.cli:main"`, runtime dependencies `cactus-needle==3.1.3`, `pystray`,
+      `pillow`, and a `[dependency-groups]` (or `[project.optional-dependencies]`) dev group
+      containing `pytest`. No HTTP client dependency: downloads use the stdlib.
+- [ ] `src/ges2t/__init__.py` defines `__version__ = "0.1.0"`.
+- [ ] `src/ges2t/cli.py` exists as a **minimal stub only** — `main()` handling `--version`
+      and `--help` — because the full surface is ticket `../cli-surface-and-commands/ticket.md`.
+      This ticket must not define any subcommand.
+- [ ] `tests/test_smoke.py` asserts the version string is importable from the installed
+      package (not from a relative path).
+- [ ] `README.md` exists with a one-paragraph description, the "Status: early MVP, not
+      packaged for distribution" note (ADR 0000), and a **Development** section recording the
+      exact commands below.
+- [ ] `uv.lock` is committed.
+- [ ] **The venv sees system site packages.** Running
+      `uv run python -c "import gi; gi.require_version('Gtk','3.0'); from gi.repository import Gtk; print('ok')"`
+      prints `ok`. Document in the README exactly which mechanism achieves this with the
+      installed uv (e.g. `uv venv --system-site-packages --python /usr/bin/python3` or a
+      `[tool.uv]` setting) — verify it empirically rather than assuming a flag exists.
+- [ ] `uv run ges2t --version` prints `0.1.0` and exits 0.
+- [ ] `uv run pytest` passes with exit code 0.
+
+## Notes
+
+- Add `from __future__ import annotations` and target modern typing; the codebase is
+  3.12+ and uses `typing.Protocol` heavily (ADR 0010).
+- Do **not** add `numpy` as a dependency here. The probe measured that the transcription
+  package does not need it (ADR 0007); if a later ticket wants it, that ticket adds it.
+- Do not create `src/ges2t/{interfaces,config,model_store,service,doctor}.py`, `audio/`,
+  `injectors/`, `transcribers/`, or `ui/` — those files belong to other tickets. Creating
+  them here causes merge conflicts.
+- No CI configuration (ADR 0014). No packaging metadata beyond what `uv` needs.
+- `pystray` and `pillow` are declared now even though the tray is ticket
+  `../../live-dictation-ux/tray-status-ui/ticket.md`, so the dependency set is fixed once.
+
+## Related tickets
+
+- depends on: none
+- blocks: every other ticket in this epic
+- related ADRs: ../../../adr/0001-python-implementation-language.md,
+  ../../../adr/0013-tray-via-pystray-appindicator.md,
+  ../../../adr/0014-testing-and-quality-bar.md

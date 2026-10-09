@@ -1,0 +1,93 @@
+# ges2t — project board
+
+**ges2t** (*good enough speech 2 text*) is a minimal, fully offline speech-to-text tool for
+Linux that types what you say into whatever window has focus. Press a hotkey, speak, release:
+Cactus Compute's 16 MB **Whistle** model runs locally and the text lands in the focused field.
+No cloud, no account.
+
+**Target:** usable as the user's daily driver on Arch Linux + KDE Plasma 6 on Wayland.
+**Not** packaged or distributed in v1 — see [ADR 0000](../adr/0000-project-scope-and-non-goals.md).
+
+## Status legend
+
+`to do` · `in progress` · `in review` · `blocked` · `done` · `obsolete`
+
+Branch convention: `feat/<ticket-slug>`, worktree at `.worktrees/<ticket-slug>`.
+
+---
+
+## Epic 1 — [Core dictation pipeline](core-dictation-pipeline/epic.md) · P0
+
+A CLI-driven, batch-mode dictation path that works end to end. Exit test: `ges2t toggle` →
+speak → `ges2t toggle` types the right text into a text editor and a terminal.
+
+| # | Ticket | Size | Status | Depends on | Branch |
+|---|---|---|---|---|---|
+| 1 | [project-scaffold](core-dictation-pipeline/project-scaffold/ticket.md) — uv project, console script, pytest | S | to do | — | — |
+| 2 | [core-interfaces-and-fakes](core-dictation-pipeline/core-interfaces-and-fakes/ticket.md) — `Transcriber`/`AudioSource`/`Injector`/`StatusUI` + fakes | S | to do | 1 | — |
+| 3 | [config-loading](core-dictation-pipeline/config-loading/ticket.md) — generic TOML layer + engine selector | S | to do | 1, 2 | — |
+| 4 | [whistle-engine-config](core-dictation-pipeline/whistle-engine-config/ticket.md) — `[engine.whistle]` validation | S | to do | 3 | — |
+| 5 | [model-store-and-verification](core-dictation-pipeline/model-store-and-verification/ticket.md) — pinned download + sha256 | S | to do | 2 | — |
+| 6 | [audio-capture-pw-record](core-dictation-pipeline/audio-capture-pw-record/ticket.md) — PipeWire capture, drain on stop | M | to do | 2, 3 | — |
+| 7 | [ydotool-injector](core-dictation-pipeline/ydotool-injector/ticket.md) — uinput injection + trailing space | S | to do | 2, 3 | — |
+| 8 | [whistle-transcriber-adapter-batch](core-dictation-pipeline/whistle-transcriber-adapter-batch/ticket.md) — batch `transcribe()` | M | to do | 2, 4, 5 | — |
+| 9 | [service-state-machine-and-socket](core-dictation-pipeline/service-state-machine-and-socket/ticket.md) — states, single instance, socket | M | to do | 2, 3 | — |
+| 10 | [cli-surface-and-commands](core-dictation-pipeline/cli-surface-and-commands/ticket.md) — 9 subcommands, exit codes | M | to do | 3, 5, 9 | — |
+| 11 | [dictation-pipeline-batch](core-dictation-pipeline/dictation-pipeline-batch/ticket.md) — composition root + E2E | M | to do | 6, 7, 8, 9, 10 | — |
+| 12 | [doctor-command](core-dictation-pipeline/doctor-command/ticket.md) — diagnose every prerequisite | M | to do | 3, 5, 6, 7, 9, 10 | — |
+
+## Epic 2 — [Live dictation UX](live-dictation-ux/epic.md) · P1
+
+Streaming as the default path, a tray that shows state, actionable notifications, and
+documentation that takes a fresh machine to a working dictation.
+
+| # | Ticket | Size | Status | Depends on | Branch |
+|---|---|---|---|---|---|
+| 13 | [streaming-window-engine](live-dictation-ux/streaming-window-engine/ticket.md) — generic 5 s windowed-commit driver | M | to do | 2 | — |
+| 14 | [whistle-streaming-adapter](live-dictation-ux/whistle-streaming-adapter/ticket.md) — engine decoder + `stream()` | M | to do | 8, 13 | — |
+| 15 | [streaming-session](live-dictation-ux/streaming-session/ticket.md) — `DictationSession` over capture + window | M | to do | 9, 14 | — |
+| 16 | [streaming-wiring-and-e2e](live-dictation-ux/streaming-wiring-and-e2e/ticket.md) — selection rule + >30 s E2E | S | to do | 11, 15 | — |
+| 17 | [tray-status-ui](live-dictation-ux/tray-status-ui/ticket.md) — pystray AppIndicator + backend assertion | M | to do | 10, 11 | — |
+| 18 | [notifications-and-cancel](live-dictation-ux/notifications-and-cancel/ticket.md) — `notify-send` on failure | S | to do | 16, 17 | — |
+| 19 | [user-documentation-and-setup-guide](live-dictation-ux/user-documentation-and-setup-guide/ticket.md) — README + setup guide + unit file | M | to do | 10, 11, 12, 16, 17, 18 | — |
+
+---
+
+## Dispatch order
+
+Dependencies are respected by working the board in this order; tickets in the same row are
+independent and may run in parallel (they touch disjoint files).
+
+| Wave | Tickets |
+|---|---|
+| 1 | 1 |
+| 2 | 2, 3 |
+| 3 | 4, 5, 6, 7, 13 |
+| 4 | 8, 9 |
+| 5 | 10 |
+| 6 | 11, 12 |
+| 7 | 14 |
+| 8 | 15 |
+| 9 | 16, 17 |
+| 10 | 18 |
+| 11 | 19 |
+
+Serialization is also required wherever two tickets touch the same file: `10 → 11/12`
+(`cli.py`, `doctor.py`), `11 → 16` (`pipeline.py`), `17 → 18` (`pipeline.py`).
+
+## Decisions
+
+All 19 decision records live in [`adr/`](../adr/). Start with
+[ADR 0000 (scope)](../adr/0000-project-scope-and-non-goals.md) and
+[ADR 0005 (the Whistle/Needle 3 backend)](../adr/0005-stt-backend-cactus-whistle.md).
+
+## Known accepted risks
+
+- The Needle 3 engine is a **closed binary** — Apache-2.0 declared, but unauditable and
+  unpatchable. Accepted knowingly, with a documented escape hatch to whisper.cpp/ggml.
+  See [ADR 0006](../adr/0006-needle3-closed-engine-accepted-risk.md).
+- `ges2t` cannot work without `ydotoold` running and `/dev/uinput` access; both are manual
+  setup steps. See [ADR 0003](../adr/0003-text-injection-via-ydotool.md).
+- The tray needs system packages (`python-gobject`, `gtk3`, `libappindicator`) and a venv
+  created with `--system-site-packages`; a pip-only tray silently fails on Plasma 6.
+  See [ADR 0013](../adr/0013-tray-via-pystray-appindicator.md).

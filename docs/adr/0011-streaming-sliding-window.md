@@ -78,6 +78,14 @@ Design rules this fixes:
   in v1 (post-processing is out of scope, ADR 0000).
 - **`streaming.enabled = false`** must be a first-class, tested configuration (ADR 0009,
   ADR 0014) that takes the batch path unchanged from epic 1.
+- **The window and chunk sizes are configurable**, in the **engine-specific** config block
+  `[engine.whistle]` (ADR 0009), because they are properties of *this* engine's
+  re-transcription behaviour and mean nothing to an engine that streams properly:
+  `window_seconds` (default **5**) and `chunk_seconds` (default **1**). Validation is the
+  Whistle adapter's job and must reject: `chunk_seconds < 0.25`, `chunk_seconds >=
+  window_seconds`, and `window_seconds > 30` (the engine's own per-call ceiling).
+  **`window_seconds` above ~6 s is permitted but warned about**, because the measured curve
+  crosses the 1 s per-chunk budget there; a user who raises it is choosing the latency.
 - The window/commit logic lives in its own module (`ges2t/streaming.py`) so it is unit
   testable against a fake `Transcriber` streaming in both good and pathological ways.
 
@@ -86,6 +94,10 @@ Design rules this fixes:
 - Longer dictation works and the total cost is **0.19× realtime**, comfortably inside the
   framework budget (ADR 0001) — the per-chunk latency is ~148 ms median, well under the 1 s
   the user asked the framework to stay below.
+- The defaults are deliberately tuned to the measured knee in the curve, and they are
+  configurable rather than frozen, so a faster machine or a future engine can be retuned
+  without a code change. The warning above the knee is what keeps configurability from
+  silently degrading the experience.
 - Quality did not degrade by windowing; measured WER was marginally *better* than the 30 s
   one-shot path. The user's "I do not mind if it is a bit slower than real time" turned out
   not to be needed — the capped design is faster than realtime by ~5×.

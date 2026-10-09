@@ -28,20 +28,23 @@ Configuration is read from **`$XDG_CONFIG_HOME/ges2t/config.toml`**
 (default **`~/.config/ges2t/config.toml`**), parsed with the stdlib `tomllib`. A `--config
 <path>` flag overrides the location.
 
-Accepted v1 schema (keys shown with their defaults):
+Accepted v1 schema. It is split into a **generic layer** that ges2t understands
+independently of any engine, and **engine-specific blocks** that only the selected engine's
+adapter interprets.
 
 ```toml
-[hotkey]
-mode = "ptt"          # "ptt" | "toggle"
-key  = ""             # documentation only; bound in the compositor
-
-[audio]
-device = ""           # PipeWire target (node name or id); "" = system default
+# ---- generic: understood by ges2t regardless of which engine is selected ----
 
 [transcriber]
-backend  = "whistle"
-model_path = ""       # "" = default cache location (ADR 0017)
-language = ""         # "" = engine auto-detect
+engine     = "whistle"   # ENGINE SELECTOR: which [engine.<name>] block is active
+model_path = ""          # "" = default cache location (ADR 0017)
+
+[hotkey]
+mode = "ptt"            # "ptt" | "toggle"
+key  = ""               # documentation only; bound in the compositor (ADR 0004)
+
+[audio]
+device = ""             # PipeWire target (node name or id); "" = system default
 
 [injection]
 backend = "ydotool"
@@ -49,11 +52,35 @@ backend = "ydotool"
 [ui]
 tray           = true
 notifications  = true
-trailing_space = true   # ADR 0012
+trailing_space = true      # ADR 0012
 
 [streaming]
-enabled = true          # ADR 0011
+enabled = true             # app-level: use the streaming path when the engine supports it
+
+# ---- engine-specific: owned and validated by the selected engine's adapter ----
+
+[engine.whistle]           # active only while transcriber.engine == "whistle"
+language       = ""        # "" = engine auto-detect
+window_seconds = 5         # streaming commit window cap (ADR 0011)
+chunk_seconds  = 1         # streaming feed granularity (ADR 0011)
 ```
+
+**The generic/engine split is a hard boundary:**
+
+- The generic layer (`config.py`) knows the keys above plus the *existence* of
+  `[engine.<name>]` tables. It does **not** interpret any key inside them. Each `[engine.*]`
+  block is handed to the selected adapter as a raw mapping, and the adapter owns its
+  validation, defaults, and error messages.
+- `transcriber.engine` is the **engine selector** and is the only place the choice is made.
+  The factory (ADR 0010) maps it to an implementation; the matching `[engine.<name>]` block
+  is what that implementation receives.
+- **Blocks for engines that are not selected are ignored, not errors.** A user may keep
+  `[engine.whisper_cpp]` configured while running `whistle`; switching back must not require
+  re-adding it. Unknown keys *inside the selected block* are the selected adapter's problem,
+  and it must warn about them the same way the generic layer does.
+- Adding a new engine must not require editing the generic config schema. It adds a new
+  `[engine.<name>]` block and a new adapter; nothing else changes. This is the config-level
+  counterpart of ADR 0010's abstraction rule.
 
 Rules the implementation must follow:
 
@@ -68,6 +95,9 @@ Rules the implementation must follow:
   config, it writes text or does not write at all.
 - Config is loaded and validated **once at service start** and re-read only on explicit
   request, never mid-recording.
+- **Generic validation happens once; engine validation happens per engine.** The generic
+  layer rejects a bad `engine` selector it does not recognise with a list of the engines it
+  does; the adapter then validates its own block. Neither layer validates the other's keys.
 
 ## Consequences
 
@@ -81,3 +111,7 @@ Rules the implementation must follow:
   permissions (ADR 0004).
 - `model_path = ""` deliberately defers the cache layout decision to ADR 0017, so this ADR
   does not hardcode a path that the setup ticket may need to change.
+- The engine split keeps engine assumptions out of the app. A knob like
+  `window_seconds` is meaningless to a non-streaming engine, so it lives in
+  `[engine.whistle]` and not in `[streaming]`; `[streaming].enabled` is the only streaming
+  key the app itself understands.

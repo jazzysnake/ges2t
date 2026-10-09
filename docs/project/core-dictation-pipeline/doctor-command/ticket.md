@@ -1,0 +1,90 @@
+# Doctor command: diagnose every prerequisite
+
+- **Priority:** P0
+- **Status:** to do
+- **Complexity:** M
+- **Epic:** ../epic.md
+
+## Current state / context
+
+Because packaging is out of scope (ADR 0000), ges2t depends on several **manual** system
+prerequisites. The user approved this, and explicitly required that ges2t **detect and explain**
+a broken environment rather than failing silently (ADR 0003 for the daemon, ADR 0013 for the
+tray backend, ADR 0016 for the command itself).
+
+`doctor` is the payoff: it is the single place that answers "why isn't it working?", and
+ADR 0016 makes it the designated home for **every** environment check discovered by any
+ticket. The reference machine is currently in a "broken" state for at least one check —
+`ydotoold` is inactive/disabled — so this ticket has a real failing case to develop against.
+
+Relevant decisions: ADR 0016 (the command, exit codes, no silent mutation), ADR 0003
+(ydotoold/uinput), ADR 0013 (tray backend must not silently fall back), ADR 0009 (config
+warnings), ADR 0017 (model presence), ADR 0015 (socket/single instance).
+
+## Definition of done
+
+- [ ] `src/ges2t/doctor.py` provides `run_doctor(config) -> int`, the entry point ticket
+      `../cli-surface-and-commands/ticket.md` calls lazily.
+- [ ] Each check below is an independent function returning a result object with a status of
+      `OK`, `WARN`, or `FAIL`, a one-line summary, and — for anything not `OK` — an
+      **actionable fix line naming an exact command or setting**:
+
+      | Check | FAIL when | Fix line must say |
+      |---|---|---|
+      | Python/pytest sanity | the package cannot import its own modules | reinstall instructions |
+      | Architecture | the platform has no pinned engine artifact | which platforms are pinned |
+      | Model present | `whistle.cact` missing or the wrong size | `ges2t setup` |
+      | Model verified | `--verify`: sha256 mismatch | `ges2t setup` (re-download) |
+      | Engine present | `libneedle.so` missing or the wrong size | `ges2t setup` |
+      | `cactus-needle` importable | the package cannot be imported | `uv sync` |
+      | Config valid | TOML error or bad-typed value | the file path and the offending key |
+      | Config warnings | unknown keys anywhere (generic **and** the selected engine block — ADR 0009) | which keys were ignored |
+      | `pw-record` present | not on `PATH` | which package provides it |
+      | PipeWire session | `pw-record` cannot reach a session | how to check the session |
+      | `ydotoold` running | the daemon is unreachable (true today) | `systemctl --user enable --now ydotoold` |
+      | `/dev/uinput` access | the process cannot open it | `input` group membership or the ydotool udev rule, plus re-login |
+      | Tray backend | `gi` or the `AppIndicator3` typelib is unavailable, **or** `pystray` would select `_xorg` (ADR 0013) | the three Arch packages and the `--system-site-packages` venv |
+      | Service/socket | a socket exists but refuses connections (stale) | restart `ges2t run` |
+      | Hotkey binding | always `WARN` | print the exact commands to bind in System Settings (ADR 0004) |
+
+- [ ] Output is human-readable, one line per check, with a final summary line. `FAIL` entries
+      are listed again at the end with their fix lines, so the user does not have to scroll.
+- [ ] Exit code is `0` when there are no `FAIL`s (warnings are allowed) and non-zero when any
+      check fails, consistent with ADR 0016.
+- [ ] `doctor` performs **no network I/O**, writes nothing to disk, and never mutates config or
+      system state (ADR 0016). It must be safe to run at any time, including while the service
+      is running.
+- [ ] A `--verify` flag forces the full sha256 model check; without it, only existence and
+      size are checked (ADR 0017).
+- [ ] `tests/test_doctor.py` covers each check's `OK`/`WARN`/`FAIL` branch by injecting fake
+      probes (a fake `PATH`, fake daemon probe callables, a fake `pystray` module, a fake data
+      dir), plus: the failure exit code, the warning-only exit code, that every `FAIL` produces
+      a non-empty fix line, and that no network client is invoked.
+- [ ] `uv run pytest tests/test_doctor.py` passes and `uv run pytest` stays green.
+- [ ] **Manual, on the reference machine**: `uv run ges2t doctor` reports the current state
+      truthfully — specifically, it must **FAIL** on `ydotoold` (inactive/disabled) and pass
+      the rest once `ges2t setup` has run. Paste the real output into `001-comment.md`.
+
+## Notes
+
+- Detecting the tray problem is subtler than importing `gi`: ADR 0013 explains that `pystray`
+  *silently* selects its `_xorg` backend when `gi` is missing, and that Plasma 6 has no
+  XEmbed systray. So the check must attempt the AppIndicator import explicitly (for example by
+  importing `pystray._appindicator` with the right `gi.require_version`) and treat failure as a
+  `FAIL`, not as "tray unavailable, fine".
+- The `ydotoold` check should probe the daemon socket rather than shelling out to
+  `systemctl` only; a daemon started by hand is equally valid (ADR 0003). Use both signals
+  with `systemctl` as the fix suggestion.
+- Keep the probes injectable: each check function should take its dependencies as parameters
+  with real defaults, so tests never touch the real system.
+- Every future ticket that adds a prerequisite is expected to add a row here; note that in the
+  module docstring.
+
+## Related tickets
+
+- depends on: ../model-store-and-verification/ticket.md, ../audio-capture-pw-record/ticket.md,
+  ../ydotool-injector/ticket.md, ../config-loading/ticket.md,
+  ../service-state-machine-and-socket/ticket.md, ../cli-surface-and-commands/ticket.md
+- blocks: ../../live-dictation-ux/user-documentation-and-setup-guide/ticket.md
+- related ADRs: ../../../adr/0016-cli-surface.md, ../../../adr/0003-text-injection-via-ydotool.md,
+  ../../../adr/0013-tray-via-pystray-appindicator.md, ../../../adr/0009-configuration-toml.md
