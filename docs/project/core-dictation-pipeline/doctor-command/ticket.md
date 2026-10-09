@@ -41,10 +41,10 @@ warnings), ADR 0017 (model presence), ADR 0015 (socket/single instance).
       | Config valid | TOML error or bad-typed value | the file path and the offending key |
       | Engine config valid | a `WhistleConfigError` from the selected engine's block (ticket 4 raises a **distinct** type from the generic `ConfigError`, deliberately — see its `001-comment.md`) | the block name, key and allowed range |
       | Config warnings | unknown keys anywhere (generic **and** the selected engine block — ADR 0009) | which keys were ignored |
-      | Audio device exists | `audio.device` is non-empty **and** does not appear in the session's node list (`pw-dump`/`wpctl status`) | the configured name and how to list available devices |
+      | Audio device exists | **`WARN`, not `FAIL`**, when `audio.device` is non-empty but absent from the session's node list; `FAIL` only for a syntactically invalid name. The DoD prose above overrides this row: ADR 0008's amendment records that a device name is only a hint that falls back silently, so absence cannot be detected reliably enough to fail a run. | the configured name and how to list available devices |
       | `pw-record` present | not on `PATH` | which package provides it |
       | PipeWire session | `pw-record` cannot reach a session | how to check the session |
-      | `ydotoold` running | the daemon is unreachable (true today) | `systemctl --user enable --now ydotoold` |
+      | `ydotoold` running | the daemon is unreachable (**it is running on the reference machine now**, so this reports `OK`; the FAIL path is demonstrated with a read-only `YDOTOOL_SOCKET` override, never by stopping the user's daemon) | `systemctl --user enable --now ydotool` — **the unit is `ydotool.service`**; the original `ydotoold` in this row was a typo, since `ydotoold` is only the daemon binary (`pacman -Ql ydotool` confirms). Corrected after review 002 found it. |
       | `/dev/uinput` access | the process cannot open it | `input` group membership or the ydotool udev rule, plus re-login |
       | Tray backend | `gi` or the `AppIndicator3` typelib is unavailable, **or** `pystray` would select `_xorg` (ADR 0013) | the three Arch packages and the `--system-site-packages` venv |
       | Service/socket | a socket exists but refuses connections (stale) | restart `ges2t run` |
