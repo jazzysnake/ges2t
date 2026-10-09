@@ -1,7 +1,7 @@
 # Pin the CLI test guarantees (two falsified gaps)
 
 - **Priority:** P2
-- **Status:** in review
+- **Status:** done
 - **Complexity:** XS
 - **Epic:** ../epic.md
 
