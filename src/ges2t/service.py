@@ -25,7 +25,9 @@ no-collaborator-under-lock rule.
 
 Partial text from ``session.partials()`` is forwarded to
 ``status_ui.partial()`` on its own thread. It is display-only and is never
-injected (ADR 0011).
+injected (ADR 0011). When a :class:`~ges2t.interfaces.LiveTyper` is configured
+(a streaming session, ticket 34) that same thread types the committed prefix
+through it; the ``pending`` tail is still display-only.
 
 Shutdown is bounded. :meth:`Service.shutdown` waits up to
 :data:`_SHUTDOWN_JOIN_TIMEOUT_SECONDS` for an in-flight transcription, because a
@@ -47,7 +49,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from ges2t.interfaces import Injector, LiveText, StatusUI
+from ges2t.interfaces import Injector, LiveText, LiveTyper, StatusUI
 
 __all__ = [
     "Command",
@@ -123,8 +125,11 @@ class DictationSession(Protocol):
       background thread, but it must not transcribe).
     * :meth:`partials` yields display-only live text while recording and may
       yield nothing at all; the service forwards it to ``status_ui.partial()``
-      and it is never injected (ADR 0011). Each value keeps the committed prefix
-      and the pending tail apart (ticket ``committed-delta-interface``).
+      and it is never injected through the batch :class:`Injector` (ADR 0011).
+      Each value keeps the committed prefix and the pending tail apart (ticket
+      ``committed-delta-interface``), and when a
+      :class:`~ges2t.interfaces.LiveTyper` is configured the service types the
+      committed part through it (ticket ``incremental-typing``).
     * :meth:`finish` is blocking and returns the final text; the service calls it
       on a worker thread so the socket loop is never blocked.
     * :meth:`cancel` abandons the recording without transcribing.
@@ -203,11 +208,23 @@ class Service:
         injector: Injector,
         status_ui: StatusUI,
         socket_path: Path,
+        *,
+        live_typer_factory: Callable[[], LiveTyper] | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._injector = injector
         self._status_ui = status_ui
         self._socket_path = socket_path
+        #: The streaming incremental-typing seam (ticket 34). ``None`` keeps the
+        #: batch behaviour: the whole transcript is handed to ``injector`` once,
+        #: after ``finish()``. A streaming service supplies a factory instead,
+        #: and each recording gets a **fresh** typer, because one carries a
+        #: per-utterance watermark that must not leak into the next recording.
+        self._live_typer_factory = live_typer_factory
+        #: The typer bound to the recording in flight, set in
+        #: :meth:`_commit_start` and read by the partials forwarder and the
+        #: finish worker so neither can observe the next recording's typer.
+        self._live_typer: LiveTyper | None = None
         self._lock = threading.Lock()
         self._pending_display: list[Callable[[], None]] | None = None
         self._state = ServiceState.IDLE
@@ -319,6 +336,11 @@ class Service:
         """Create and start a session without the lock, then commit under it."""
         try:
             session = self._session_factory()
+            live_typer = (
+                self._live_typer_factory()
+                if self._live_typer_factory is not None
+                else None
+            )
             session.start()
         except Exception as exc:
             message = f"could not start recording: {exc}"
@@ -332,9 +354,12 @@ class Service:
             )
         with self._transition_scope():
             self._session = session
+            # Fresh per recording: a typer carries a per-utterance watermark, so
+            # reusing one would make the second recording type nothing (ticket 34).
+            self._live_typer = live_typer
             self._pending_start = False
             self._set_state(ServiceState.RECORDING)
-            self._start_partials_locked(session)
+            self._start_partials_locked(session, live_typer)
         return _Decision(ok=True, state=ServiceState.RECORDING)
 
     def _begin_transcription_locked(self) -> _Decision:
@@ -353,7 +378,7 @@ class Service:
         self._set_state(ServiceState.TRANSCRIBING)
         worker = threading.Thread(
             target=self._run_finish,
-            args=(session,),
+            args=(session, self._live_typer),
             name="ges2t-finish",
             daemon=True,
         )
@@ -397,15 +422,28 @@ class Service:
 
     # -- background work --------------------------------------------------
 
-    def _run_finish(self, session: DictationSession) -> None:
-        """Call ``session.finish()`` off the socket loop and deliver the text."""
+    def _run_finish(
+        self, session: DictationSession, live_typer: LiveTyper | None
+    ) -> None:
+        """Call ``session.finish()`` off the socket loop and deliver the text.
+
+        ``live_typer`` is the typer bound to this recording (``None`` on the
+        batch path); it is passed in rather than read from the field so a queued
+        start cannot swap it out mid-finish.
+        """
         try:
             text = session.finish()
         except Exception as exc:
             self._fail(f"transcription failed: {exc}")
             return
         try:
-            if text.strip():
+            if live_typer is not None:
+                # Streaming (ticket 34): the committed prefix was typed as it
+                # arrived; finish() types the suffix beyond the watermark,
+                # including ADR 0012's single trailing space. The final text is
+                # never re-typed in full.
+                live_typer.finish(text)
+            elif text.strip():
                 self._injector.inject(text)
         except Exception as exc:
             self._fail(f"injection failed: {exc}")
@@ -482,7 +520,9 @@ class Service:
             message = error_message if error_message is not None else "unknown error"
             pending.append(functools.partial(self._status_ui.error, message))
 
-    def _start_partials_locked(self, session: DictationSession) -> None:
+    def _start_partials_locked(
+        self, session: DictationSession, live_typer: LiveTyper | None
+    ) -> None:
         stop = threading.Event()
         self._partials_stop = stop
 
@@ -491,6 +531,12 @@ class Service:
                 for live in session.partials():
                     if stop.is_set():
                         break
+                    if live_typer is not None:
+                        # Type the committed prefix as it is committed (ticket
+                        # 34). The typer latches its own errors and re-raises
+                        # them in ``finish`` on the finish worker, so a failed
+                        # injection still reaches the service error path.
+                        live_typer.type_committed(live.committed)
                     self._status_ui.partial(live)
             except Exception:
                 # Partials are display-only; a failing iterator must never

@@ -409,6 +409,22 @@ class YdotoolInjector:
             return
         self._deliver(self._source.sequence_for(decision.payload))
 
+    def type_text(self, text: str) -> None:
+        """Type ``text`` verbatim, applying no trailing-space rule (ticket 34).
+
+        This is the raw primitive the streaming path needs: it types the exact
+        payload and adds nothing, so a caller that types the engine's committed
+        prefix in pieces can apply ADR 0012's single trailing space once, at the
+        end, by assembling the final document itself. An empty payload is a
+        no-op that maps nothing and spawns nothing; a payload consisting only of
+        whitespace (for example the trailing space) **is** typed, because it is
+        part of the document and ADR 0012's "never inject whitespace-only" rule
+        is a whole-utterance rule applied by the caller.
+        """
+        if text == "":
+            return
+        self._deliver(self._source.sequence_for(text))
+
     def _deliver(self, sequence: KeySequence) -> None:
         """Emit ``sequence`` in a single ``ydotool key`` invocation."""
         if not sequence.events:

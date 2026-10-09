@@ -63,7 +63,16 @@ from ges2t.config import Config
 from ges2t.injectors.clipboard import ClipboardPasteInjector
 from ges2t.injectors.layout import ClipboardConfig, YdotoolConfig
 from ges2t.injectors.ydotool import XkbKeySequenceSource, YdotoolInjector
-from ges2t.interfaces import AudioSource, Injector, LiveText, StatusUI, Transcriber
+from ges2t.incremental_typing import CommittedTyper
+from ges2t.interfaces import (
+    AudioSource,
+    Injector,
+    LiveText,
+    LiveTyper,
+    StatusUI,
+    TextTyper,
+    Transcriber,
+)
 from ges2t.notify import NotifyingStatusUI
 from ges2t.service import CommandResponse, DictationSession, Service
 from ges2t.socket_proto import (
@@ -375,6 +384,18 @@ def _streaming_chunk_seconds(config: Config) -> float:
     return WhistleConfig.from_mapping(block).config.chunk_seconds
 
 
+def _streaming_is_selected(config: Config, transcriber: Transcriber) -> bool:
+    """Whether the streaming session is the one the factory will build.
+
+    The ADR 0010/0011 capability rule in one place: streaming needs both the
+    ``streaming.enabled`` switch and ``Transcriber.supports_streaming``. Both
+    :func:`_select_session_kind` and :func:`_build_live_typer_factory` consult it,
+    so the session and its incremental typer cannot disagree about which path is
+    live.
+    """
+    return config.streaming.enabled and transcriber.supports_streaming
+
+
 def _select_session_kind(config: Config, transcriber: Transcriber) -> str:
     """Return the session to build, and log why (ADR 0010, ADR 0011).
 
@@ -398,6 +419,65 @@ def _select_session_kind(config: Config, transcriber: Transcriber) -> str:
         kind = _SESSION_STREAMING
     _logger.debug("using the %s dictation session (%s)", kind, reason)
     return kind
+
+
+def _streaming_clipboard_error() -> PipelineError:
+    """The loud, actionable refusal of clipboard + streaming (ticket 34).
+
+    An error, not a warning: the clipboard backend pastes a whole selection at
+    once, so incremental typing would have to rewrite the user's clipboard on
+    every commit (which the user explicitly rejected). Continuing would mean
+    silently dropping incremental typing or silently corrupting the clipboard,
+    and either is exactly the silent behaviour switch ADR 0003 forbids.
+    """
+    return PipelineError(
+        'injection.backend = "clipboard" cannot be combined with '
+        'streaming.enabled = true: incremental typing would rewrite the '
+        "clipboard on every commit.",
+        hint=(
+            'set injection.backend = "ydotool" to type as you speak, or set '
+            "streaming.enabled = false to keep the clipboard backend"
+        ),
+    )
+
+
+def _validate_injection_backend(config: Config) -> None:
+    """Refuse the clipboard backend together with streaming (ticket 34).
+
+    This is the config-level check, run before artifacts are touched so the
+    user sees the contradiction even when the model is missing. The structural
+    check in :func:`_build_live_typer_factory` (a streaming typer needs a
+    :class:`~ges2t.interfaces.TextTyper`) is the backstop for a direct
+    ``_build_service`` call.
+    """
+    if config.streaming.enabled and config.injection.backend == "clipboard":
+        raise _streaming_clipboard_error()
+
+
+def _build_live_typer_factory(
+    config: Config, transcriber: Transcriber, injector: Injector
+) -> Callable[[], LiveTyper] | None:
+    """Build the streaming incremental-typing factory, or ``None`` for the batch path.
+
+    Streaming types the committed prefix as it is committed (ticket 34), so it
+    needs a :class:`~ges2t.interfaces.TextTyper`. The clipboard backend is not
+    one -- incremental paste would rewrite the user's clipboard on every commit
+    -- so that combination is refused loudly rather than silently downgrading
+    either setting. The batch path gets ``None`` and keeps its single
+    end-of-utterance injection unchanged. The returned factory builds a **fresh**
+    typer per recording, because one carries a per-utterance watermark.
+    """
+    if not _streaming_is_selected(config, transcriber):
+        return None
+    if not isinstance(injector, TextTyper):
+        raise _streaming_clipboard_error()
+    text_typer = injector
+    trailing_space = config.ui.trailing_space
+
+    def create() -> LiveTyper:
+        return CommittedTyper(text_typer, trailing_space=trailing_space)
+
+    return create
 
 
 def _session_factory(
@@ -438,6 +518,7 @@ def _build_service(
         injector,
         status_ui,
         default_socket_path(),
+        live_typer_factory=_build_live_typer_factory(config, transcriber, injector),
     )
 
 
@@ -524,11 +605,14 @@ def _require_artifacts(config: Config) -> None:
 def _startup(config: Config, status_ui: StatusUI) -> Service:
     """Do everything up to (but not including) serving the socket.
 
-    Order matters and is asserted in the tests: check the artifacts are present
-    locally, build the collaborators, apply the managed environment overrides
-    (ADR 0007), **load the model once** so it stays warm for the process
-    lifetime (ADR 0015), then construct the service.
+    Order matters and is asserted in the tests: the clipboard/streaming
+    contradiction is checked first (a config error the user can fix without any
+    artifacts), then the artifacts are confirmed present locally, the
+    collaborators are built, the managed environment overrides are applied
+    (ADR 0007), the model is **loaded once** so it stays warm for the process
+    lifetime (ADR 0015), and finally the service is constructed.
     """
+    _validate_injection_backend(config)
     _require_artifacts(config)
     transcriber = build_transcriber(config)
     audio_source = build_audio_source(config)

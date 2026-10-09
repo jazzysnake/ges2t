@@ -29,7 +29,7 @@ from typing import TypeVar
 import pytest
 
 from ges2t import pipeline
-from ges2t.config import Config, StreamingConfig, UIConfig
+from ges2t.config import Config, InjectionConfig, StreamingConfig, UIConfig
 from ges2t.injectors.keymap import KeyEvent, KeySequence
 from ges2t.injectors.ydotool import YdotoolInjector
 from ges2t.interfaces import (
@@ -67,6 +67,16 @@ def _buffer(seconds: float = 0.5) -> AudioBuffer:
 def _partial(text: str) -> TranscriptionSegment:
     return TranscriptionSegment(
         live=LiveText(committed=text, pending=""),
+        language="en",
+        is_final=False,
+        pass_ms=None,
+    )
+
+
+def _live(committed: str, pending: str) -> TranscriptionSegment:
+    """A non-final segment with the two lifetimes carried separately."""
+    return TranscriptionSegment(
+        live=LiveText(committed=committed, pending=pending),
         language="en",
         is_final=False,
         pass_ms=None,
@@ -245,13 +255,19 @@ def test_defaults_come_from_whistle_config_when_the_block_is_absent() -> None:
     assert session._chunk_seconds == DEFAULT_CHUNK_SECONDS
 
 
-# -- the wired path: partials are display-only and ADR 0012 still holds --------
+# -- the wired path: committed text is typed, pending is display-only --------
 
 
-def test_wired_streaming_path_displays_partials_but_injects_only_the_final_text() -> None:
+def test_wired_streaming_path_types_committed_text_and_never_the_pending_tail() -> None:
+    # Ticket 34: the committed prefix is typed as it is committed; the pending
+    # tail (where the engine's hallucinations live) is display-only. The batch
+    # injector is never used on the streaming path.
     config = Config()
     transcriber = FakeTranscriber(
-        segments=[_partial("POISON display only"), _final("published transcript")]
+        segments=[
+            _live(committed="published ", pending="POISON display only"),
+            _final("published transcript"),
+        ]
     )
     audio = FakeAudioSource(buffers=[_buffer()])
     injector = FakeInjector()
@@ -271,21 +287,84 @@ def test_wired_streaming_path_displays_partials_but_injects_only_the_final_text(
 
         assert "stream" in transcriber.calls
         assert "transcribe" not in transcriber.calls
-        assert injector.injected == ["published transcript"]
-        assert all("POISON" not in text for text in injector.injected)
-        assert "POISON display only" in [
+        assert injector.injected == []
+        assert "".join(injector.typed) == "published transcript "
+        assert all("POISON" not in text for text in injector.typed)
+        assert "published POISON display only" in [
             live.display for live in status_ui.partials
         ]
     finally:
         service.shutdown()
 
 
-def test_wired_streaming_path_injects_nothing_for_a_whitespace_final_text() -> None:
+def test_wired_streaming_path_recovers_a_collapsed_advance_from_finish() -> None:
+    # partials() dedups on display, so the pass that advanced committed from
+    # "abc" to "abcdef" while pending shrank is dropped; the final segment
+    # carries it and finish() must type it (ticket 33's review, section 3).
+    config = Config()
+    transcriber = FakeTranscriber(
+        segments=[_live(committed="abc", pending="def"), _final("abcdef")]
+    )
+    audio = FakeAudioSource(buffers=[_buffer()])
+    injector = FakeInjector()
+    status_ui = FakeStatusUI()
+    service = pipeline._build_service(config, transcriber, audio, injector, status_ui)
+    try:
+        assert service.handle("toggle").state is ServiceState.RECORDING
+        _wait_for(
+            lambda: bool(status_ui.partials), description="a forwarded partial"
+        )
+        assert service.handle("toggle").state is ServiceState.TRANSCRIBING
+        _wait_for(
+            lambda: service.state is ServiceState.IDLE,
+            description="idle after injection",
+        )
+
+        assert "".join(injector.typed) == "abcdef "
+        assert "".join(injector.typed) != "abcabcdef "
+    finally:
+        service.shutdown()
+
+
+def test_wired_streaming_path_types_the_byte_identical_document() -> None:
+    # The load-bearing criterion: the incrementally typed document is exactly
+    # what the single end-of-utterance injection produces, byte for byte,
+    # including one trailing space (ADR 0012).
+    final_text = "Good morning. Last night storm"
+    config = Config()
+    transcriber = FakeTranscriber(
+        segments=[
+            _live("Good morning.", " Last"),
+            _live("Good morning. Last", " night storm"),
+            _final(final_text),
+        ]
+    )
+    audio = FakeAudioSource(buffers=[_buffer()])
+    injector = FakeInjector()
+    status_ui = FakeStatusUI()
+    service = pipeline._build_service(config, transcriber, audio, injector, status_ui)
+    try:
+        assert service.handle("toggle").state is ServiceState.RECORDING
+        _wait_for(
+            lambda: bool(status_ui.partials), description="a forwarded partial"
+        )
+        assert service.handle("toggle").state is ServiceState.TRANSCRIBING
+        _wait_for(
+            lambda: service.state is ServiceState.IDLE,
+            description="idle after injection",
+        )
+
+        assert "".join(injector.typed) == final_text + " "
+    finally:
+        service.shutdown()
+
+
+def test_wired_streaming_path_types_nothing_for_a_whitespace_final_text() -> None:
     # Silence in, nothing out (ADR 0012); the streaming path must not resurrect
     # partial text for an empty final segment.
     config = Config()
     transcriber = FakeTranscriber(
-        segments=[_partial("POISON display only"), _final("   ")]
+        segments=[_live(committed="", pending="POISON display only"), _final("   ")]
     )
     audio = FakeAudioSource(buffers=[_buffer()])
     injector = FakeInjector()
@@ -304,6 +383,129 @@ def test_wired_streaming_path_injects_nothing_for_a_whitespace_final_text() -> N
 
         assert injector.calls == []
         assert injector.injected == []
+        assert injector.typed == []
+    finally:
+        service.shutdown()
+
+
+def test_each_streaming_recording_gets_a_fresh_watermark() -> None:
+    # The typer carries a per-utterance watermark; a service that reused one
+    # instance would type the first recording and then silently type nothing.
+    config = Config()
+    transcriber = FakeTranscriber(segments=[_live("first", ""), _final("first")])
+    audio = FakeAudioSource(buffers=[_buffer()])
+    injector = FakeInjector()
+    status_ui = FakeStatusUI()
+    service = pipeline._build_service(config, transcriber, audio, injector, status_ui)
+    try:
+        for _ in range(2):
+            assert service.handle("toggle").state is ServiceState.RECORDING
+            _wait_for(
+                lambda: bool(status_ui.partials), description="a forwarded partial"
+            )
+            assert service.handle("toggle").state is ServiceState.TRANSCRIBING
+            _wait_for(
+                lambda: service.state is ServiceState.IDLE,
+                description="idle after injection",
+            )
+
+        assert "".join(injector.typed) == "first first "
+    finally:
+        service.shutdown()
+
+
+def test_a_streaming_typing_failure_moves_the_service_to_error() -> None:
+    # A failing injector mid-utterance must be visible: CommittedTyper latches it
+    # and finish() re-raises it on the service's error path.
+    config = Config()
+    transcriber = FakeTranscriber(segments=[_live("abc", ""), _final("abcdef")])
+    audio = FakeAudioSource(buffers=[_buffer()])
+    injector = FakeInjector(error=RuntimeError("ydotoold is not reachable"))
+    status_ui = FakeStatusUI()
+    service = pipeline._build_service(config, transcriber, audio, injector, status_ui)
+    try:
+        assert service.handle("toggle").state is ServiceState.RECORDING
+        _wait_for(
+            lambda: bool(status_ui.partials), description="a forwarded partial"
+        )
+        assert service.handle("toggle").state is ServiceState.TRANSCRIBING
+        _wait_for(
+            lambda: service.state is ServiceState.ERROR,
+            description="error after a failed injection",
+        )
+
+        assert status_ui.errors
+        assert "injection failed" in status_ui.errors[-1]
+    finally:
+        service.shutdown()
+
+
+# -- config validation: clipboard is incompatible with streaming (ticket 34) --
+
+
+def test_clipboard_with_streaming_is_a_loud_actionable_error() -> None:
+    config = Config(injection=InjectionConfig(backend="clipboard"))
+
+    with pytest.raises(pipeline.PipelineError) as excinfo:
+        pipeline._validate_injection_backend(config)
+
+    message = str(excinfo.value)
+    assert "injection.backend" in message
+    assert "clipboard" in message
+    assert "streaming.enabled" in message
+    hint = excinfo.value.hint or ""
+    assert "ydotool" in hint
+    assert "streaming.enabled = false" in hint
+
+
+def test_clipboard_with_streaming_disabled_is_not_refused() -> None:
+    config = Config(
+        injection=InjectionConfig(backend="clipboard"),
+        streaming=StreamingConfig(enabled=False),
+    )
+
+    pipeline._validate_injection_backend(config)  # does not raise
+
+
+def test_build_service_structurally_refuses_streaming_with_a_non_typing_injector() -> None:
+    # The backstop for a direct ``_build_service`` call: a streaming session
+    # needs a TextTyper, and the clipboard injector deliberately is not one.
+    config = Config(injection=InjectionConfig(backend="clipboard"))
+
+    with pytest.raises(pipeline.PipelineError) as excinfo:
+        pipeline._build_service(
+            config,
+            FakeTranscriber(supports_streaming=True),
+            FakeAudioSource(),
+            pipeline.build_injector(config),
+            FakeStatusUI(),
+        )
+
+    assert "streaming.enabled" in str(excinfo.value)
+
+
+def test_clipboard_with_streaming_disabled_keeps_the_batch_injection() -> None:
+    config = Config(
+        injection=InjectionConfig(backend="clipboard"),
+        streaming=StreamingConfig(enabled=False),
+    )
+    transcriber = FakeTranscriber(
+        supports_streaming=True, result=_result("hello world")
+    )
+    audio = FakeAudioSource(buffers=[_buffer()])
+    injector = FakeInjector()
+    status_ui = FakeStatusUI()
+    service = pipeline._build_service(config, transcriber, audio, injector, status_ui)
+    try:
+        assert service.handle("toggle").state is ServiceState.RECORDING
+        assert service.handle("toggle").state is ServiceState.TRANSCRIBING
+        _wait_for(
+            lambda: service.state is ServiceState.IDLE,
+            description="idle after injection",
+        )
+
+        assert injector.injected == ["hello world"]
+        assert injector.typed == []
     finally:
         service.shutdown()
 
