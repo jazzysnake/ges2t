@@ -74,7 +74,7 @@ Original orchestrator brief: `.pi/prompts/orchestrate-project.md`.
 | **25** | clipboard-paste-injector | **implemented, in review** — `clipboard.py` + `build_injector` backend selection; the reviewer's first job is confirming nothing ever wrote the user's real clipboard |
 | **19** | user-documentation-and-setup-guide | **not started** — the last core ticket; deliberately last because it documents final behaviour |
 | **30** | tray-failure-diagnostics | filed follow-up; needs a read-only socket verb (**requires an ADR 0016 amendment**) |
-| **31** | speech-gate-recalibration | **PARKED by the user** — branch `feat/speech-gate-recalibration` exists, evidence complete, **not merged**; see §10 |
+| **31** | speech-gate-recalibration | **PARKED by the user** — branch exists, **review passed on its own evidence** (`dc75977`), **not merged**; the cost is noise-relative and may gate quiet speech in a noisy place. See §10 |
 
 ## 6. In-flight agents (collect these first on resume)
 
@@ -85,7 +85,7 @@ worktree is dirty-but-complete — recover from artifacts, do not re-run blindly
 | Ticket | Worktree | Branch | Task |
 |---|---|---|---|
 | 25 | `.worktrees/clipboard-paste-injector` | `feat/clipboard-paste-injector` | **Review** in progress (real-clipboard safety first) |
-| 31 | `.worktrees/speech-gate-recalibration` | `feat/speech-gate-recalibration` | **Review** in progress; branch to be **left unmerged and parked** |
+| 31 | `.worktrees/speech-gate-recalibration` | `feat/speech-gate-recalibration` | **Review DONE** (`dc75977`): mergeable on its own evidence, but **do not merge** — the cost is noise-relative and the user parked it. Branch stays **unmerged**. |
 
 Everything else is merged and its worktree removed. Use three-dot diffs
 (`git diff main...<branch>`): many branches were cut before later merges.
@@ -163,6 +163,13 @@ per-criterion findings / **evidence (commands + real output)** / risks / an expl
   popup), **the microphone** (privacy), stopping a service (`ydotoold` breaks their dictation while
   stopped). Agents must **prove** they didn't: a `PATH` shim recording invocations was used to show
   **zero** real notifications were sent.
+- **⚠️ A reviewer recorded the user's microphone anyway — the prohibition must be in the dispatch
+  brief, not a later steer.** Ticket 31's reviewer took **5 short idle captures** (0.08–2.5 s, raw
+  float32) from the default source while the user was **in a car**, despite being told via a mid-run
+  steer to use already-saved captures. Nothing was committed and the audio was deleted (verified: no
+  `*.f32` left in `/tmp/probe31`, no audio tracked in git) — but an agent asked to *"measure the real
+  device"* reads that as licence to record. Put the prohibition in the **first** brief, and say
+  plainly that the audio is the user's private data.
 - **Long agent runs die on connection errors, and context dies with them.** Many runs were lost
   (600–1760 s). Mitigations: (a) tell long-running agents to **write their artifact to disk
   incrementally**, appending after each check, so a death costs at most one check; (b) `resume`
@@ -291,6 +298,25 @@ attempts, each overturning the last explanation:
    gain ≥ 0.4 where the engine reads down to 0.1) was measured **with that noise present** — in the
    very environment where they dictate. Merging it could **drop real dictation**, which is worse than
    the bug. **Absence of absolute silence is not a use case they have.**
+
+**The review then sharpened the cost with its own fresh measurement, and the park decision came out
+stronger, not weaker.** Independent real captures: idle ratio **0.0031–0.0061** vs speech
+**0.762–0.980** — a **24.6× / 5.1×** margin around the 0.15 threshold, so the *rejection* side is
+safer than the ticket claimed, and idle is gated with a **counted zero engine calls** (the *old* gate
+on the same real idle makes the engine emit `'you'`, `"I'm not going to do anything."`,
+`"¿Qué estás buscando?"` — i.e. it types garbage on every silent toggle in this environment). **But**
+the reviewer's floor measured **0.28–0.35 RMS — 6–8× the ticket's 0.043-RMS floor** — and the
+keep-boundary is **noise-relative**: the gate needs speech RMS ≥ ~0.47 × the noise RMS (≈ −6.5 dB
+SNR), so on today's floor it keeps nothing below **gain ≈ 4.0 (speech RMS ≈ 0.21)** while the
+**engine still returns near-correct text at gain 0.5 (RMS 0.027)** — roughly **8× more conservative
+than the engine**. In the car, quiet speech the engine can read **is** gated. The ticket's cost table
+is correct *for the floor it used*; it simply never said the boundary moves with the noise.
+
+**Verdict shape: mergeable, but the noisy-environment trade is not settled by offline data.** It
+needs the user's live test in **both** a quiet room and a noisy one. If their real quiet speech fails
+it, the options are to lower `SPEECH_BAND_RATIO` (accepting more hallucination on noise) or to fix
+the noise **at the input** (PipeWire high-pass, another device, disable AGC/ALC) — **neither to be
+built speculatively.**
 
 ### ⚠️ THE LESSON — put this first when briefing any future audio/signal work
 
