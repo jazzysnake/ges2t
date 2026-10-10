@@ -23,24 +23,26 @@
 
 **Yes, whisper.cpp is a viable second provider — and it is the accuracy option.** On the user's
 25 s car recording, `medium q5_0` scores **0.062** WER against Whistle's measured **0.281** (batch)
-/ **0.391** (streaming) on the same recording (ticket 39) — roughly a 5–6× error reduction
-(the comparison is cross-harness and cross-path, so the direction, not the exact ratio, is the
-claim). `medium q5_0` has essentially one real word error (`river` → `rivers`); the rest of its
-0.062 is `4,000`/`metres` formatting. The best accuracy-per-second trade-off depends on the
-machine path:
+/ **0.391** (streaming) on the same recording (ticket 39) — roughly **4.5×** fewer errors than
+Whistle's batch path (0.281→0.0625) and **6.3×** fewer than its shipped streaming default
+(0.391→0.0625). The comparison is cross-harness and cross-path (different audio: gate-passed vs
+raw), so the direction and the model ordering are the claim, not the exact ratio. `medium q5_0`
+has essentially one real word error (`river` → `rivers`); the rest of its 0.062 is
+`4,000`/`metres` formatting. The best accuracy-per-second trade-off depends on the machine path:
 
 - **With Vulkan (GPU) — recommended, and it works here — `medium q5_0` is the clear winner:**
-  **WER 0.062, RTF 13.8 (1.72 s for the 25 s clip)**, the most accurate model in every condition
+  **WER 0.062, RTF 14.6 (1.72 s for the 25 s clip)**, the most accurate model in every condition
   tested and faster than *every* CPU model except `tiny` (which is 0.97 s but far less accurate).
 - **CPU-only, `medium q5_0` is still the accuracy leader** (WER 0.062) but costs **RTF 1.30**
   (8.5–22.4 s); the **knee is `small q5_0`** (WER 0.141, RTF 3.9, 2.5–7.8 s); `base.en q5_0` is the
   fast English option (WER 0.141, RTF 9.9) but did **not** generalise to the quiet clips.
-- **Quantisation: `q5_0` (or `q8_0`).** WER is identical across q5_0/q8_0/f16; **f16 is only slower
-  and larger** — never ship it.
+- **Quantisation: `q5_0` (or `q8_0`).** **WER is equal** across q5_0/q8_0/f16, but the transcripts
+  are **not** always byte-identical (small differs in two words, medium in punctuation — §5);
+  **f16 is only slower and larger** — never ship it.
 - **Decoding: greedy.** Beam-5 buys 0 words on `small` for 7× the cost, at most 1–2 words on
   `large-v3-turbo` — not worth it.
 - **`.en`:** a marginal, non-generalising English win; multilingual `small` is the better default.
-- **Vulkan:** **4.7–11.8× faster at byte-identical transcripts** (7/7 pairs checked). The only
+- **Vulkan:** **4.7–13.4× faster at byte-identical transcripts** (7/7 pairs checked). The only
   build-time extra is `spirv-headers` (a dev package); the CPU build needs nothing.
 - **Streaming:** whisper.cpp is batch-only; a 5 s sliding window costs almost a full 30 s decode,
   so it is **not viable on CPU** and only marginal on GPU → expose it as
@@ -104,6 +106,10 @@ Model inventory (all in scratch, never in the repo):
 | ggml-small-q5_0.bin | q5_0 | 175 209 663 | quantised from f16 |
 | ggml-medium-q5_0.bin | q5_0 | 539 212 467 | canonical |
 | ggml-large-v3-turbo-q5_0.bin | q5_0 | 574 041 195 | canonical |
+| ggml-small-q5_1.bin | q5_1 | 190 085 487 | canonical (measured in §5) |
+| ggml-base-q5_1.bin | q5_1 | 59 707 625 | canonical (measured in §5) |
+| ggml-tiny-q8_0.bin | q8_0 | 43 537 433 | quantised from f16 |
+| ggml-base-q8_0.bin | q8_0 | 81 768 585 | quantised from f16 |
 | ggml-small-q8_0.bin | q8_0 | 264 464 607 | canonical (= locally quantised) |
 | ggml-medium-q8_0.bin | q8_0 | 823 369 779 | canonical |
 | ggml-large-v3-turbo-q8_0.bin | q8_0 | 874 188 075 | canonical |
@@ -193,8 +199,8 @@ controlled A/B (§10).
 
 1. **With the Vulkan (GPU) path — which works here — `large`/`medium`-class models become
    cheap, and `medium q5_0` is the unambiguous sweet spot**: it is the *most accurate* model in
-   every condition tested (car clip **0.062 WER**, quiet clips 0.153–0.407) **and** it runs at
-   **RTF 13.8** (1.72 s for the 25 s clip) — faster than every CPU configuration except `tiny`,
+   every condition tested (car clip **0.062 std WER**, quiet clips **0.111–0.296**) **and** it runs
+   at **RTF 14.6** (1.72 s for the 25 s clip) — faster than every CPU configuration except `tiny`,
    and far more accurate than `tiny`. It Pareto-dominates the CPU choices that matter (`base`,
    `small`, CPU `medium`, `large-v3-turbo`: faster *and* at least as accurate); only CPU `tiny`
    is faster, and at 5× its error rate.
@@ -204,24 +210,27 @@ controlled A/B (§10).
 | pick | model (CPU) | car-clip std WER | median wall / RTF | peak RSS | why |
 |---|---|---|---|---|---|
 | speed / English | `base.en` q5_0 | 0.141 | 2.52 s / 9.9 | 150 MB | same car-clip WER as `small` at ~2.5× the speed, but **does not generalise** (§9) |
-| **knee, multilingual** | `small` q5_0 | 0.141 | 6.45 s / 3.9 | 333 MB | best multilingual accuracy before the cost curve steepens |
-| **accuracy** | `medium` q5_0 | **0.062** | 19.3 s / 1.30 | 825 MB | the accuracy leader everywhere; expensive on CPU only |
+| **knee, multilingual** | `small` q5_0 | 0.141 | 6.45 s / 3.9 | 336 MB | best multilingual accuracy before the cost curve steepens |
+| **accuracy** | `medium` q5_0 | **0.062** | 19.3 s / 1.30 | 828 MB | the accuracy leader everywhere; expensive on CPU only |
 
 `tiny` (0.281) and multilingual `base` (0.234) are not competitive on accuracy;
 `large-v3-turbo` (0.125) is only *marginally* more accurate than `small` (0.141) at ~2.3× the
-cost on the car clip and merely ties `medium` on the quiet clips, so it earns its keep only if a
-user wants one model for every length/language and will pay GPU prices (§8).
+cost on the car clip and ties `medium` only on `quiet-long` (on `quiet-short` it is worse, 0.333
+vs 0.296), so it earns its keep only if a user wants one model for every length/language and will
+pay GPU prices (§8).
 
 Everything else the ticket asked about resolves to a simple rule:
 
-- **Quantisation: `q5_0` (or `q8_0`).** WER is byte-for-byte identical across q5_0/q8_0/f16 at
-  both `small` and `medium`; `f16` is only *slower* and *bigger* (medium f16: 26 s vs 19 s, 1 780 MB
-  vs 828 MB). No accuracy is bought by keeping more bits.
+- **Quantisation: `q5_0` (or `q8_0`).** **WER is equal** across q5_0/q8_0/f16 at both `small` and
+  `medium`, but the transcripts are **not** always byte-identical (small differs in two words;
+  medium in punctuation only — §5); `f16` is only *slower* and *bigger* (medium f16: 26 s vs 19 s,
+  1 780 MB vs 828 MB). No accuracy is bought by keeping more bits.
 - **Decoding: greedy.** Beam-5 (`-bs 5`) buys **0 words** on `small` for a **7×** cost and at most
   **1–2 words** on `large-v3-turbo` for a ~15 % cost. Not worth it at ges2t's latency budget.
-- **`.en` vs multilingual:** `base.en` beats multilingual `base` on the car clip (0.141 vs 0.234)
-  but **not** on the quiet clips — a marginal English-only win that does not generalise, and it
-  would drop the seven languages Whistle already covers.
+- **`.en` vs multilingual:** `base.en` beats multilingual `base` on the car clip (0.141 vs 0.234),
+  but the advantage does **not** replicate on the quiet clips (they are equal on `quiet-short`,
+  and `base` is better on `quiet-long`) — a marginal English-only win that also drops the seven
+  languages Whistle already covers.
 
 The absolute WERs are **upper bounds** (§2.5): the recurring errors are number/spelling forms
 (`four thousand` → `4,000`, `metres` → `meters`) plus genuine acoustic confusions. On the car
@@ -239,9 +248,9 @@ Full tables: [`data/timings.md`](data/timings.md).
 |---|---|---|---|---|---|---|
 | tiny | 29 875 721 | 0.97 (0.67–1.83) | 25.8 | 104 | 0.312 | 0.281 |
 | base | 55 295 433 | 2.42 (1.82–5.89) | 10.3 | 151 | 0.297 | 0.234 |
-| small | 175 209 663 | 6.45 (4.84–7.79) | 3.9 | 333 | 0.141 | 0.141 |
-| medium | 539 212 467 | 19.29 (8.54–22.45) | 1.30 | 825 | **0.062** | **0.062** |
-| large-v3-turbo | 574 041 195 | 14.95 (11.82–18.54) | 1.68 | 726 | 0.141 | 0.125 |
+| small | 175 209 663 | 6.45 (4.84–7.79) | 3.9 | 336 | 0.141 | 0.141 |
+| medium | 539 212 467 | 19.29 (8.54–22.45) | 1.30 | 828 | **0.062** | **0.062** |
+| large-v3-turbo | 574 041 195 | 14.95 (11.82–18.54) | 1.68 | 733 | 0.141 | 0.125 |
 
 **`jfk.wav` (11 s, clean):** every model scores **WER 0.000** — this clip does **not**
 discriminate between models. It confirms the CLI is wired correctly, nothing more. The car clip
@@ -258,19 +267,26 @@ Car clip, greedy, CPU, median (range):
 
 | size | quant | wall s | RTF | peak RSS MB | word_diff WER | std WER |
 |---|---|---|---|---|---|---|
-| small | q5_0 | 6.45 (4.84–7.79) | 3.9 | 333 | 0.141 | 0.141 |
+| small | q5_0 | 6.45 (4.84–7.79) | 3.9 | 336 | 0.141 | 0.141 |
 | small | q8_0 | 5.86 (2.37–8.64) | 4.3 | 421 | 0.141 | 0.141 |
 | small | f16 | 8.57 (3.38–8.69) | 2.9 | 638 | 0.141 | 0.141 |
-| medium | q5_0 | 19.29 (8.54–22.45) | 1.30 | 825 | 0.062 | 0.062 |
+| medium | q5_0 | 19.29 (8.54–22.45) | 1.30 | 828 | 0.062 | 0.062 |
 | medium | q8_0 | 17.89 (8.05–21.73) | 1.40 | 1 098 | 0.062 | 0.062 |
 | medium | f16 | 26.06 (22.47–74.74) | 0.96 | 1 780 | 0.062 | 0.062 |
 
-- **Accuracy is quantisation-invariant** here: every quant of a given size produced a
-  byte-identical transcript and the same WER.
+- **WER is quantisation-invariant, but the transcripts are not always byte-identical.**
+  `small` q5_0 vs q8_0 differ in **two words** (`expects`/`expect`, `flood`/`fad`) whose
+  substitutions cancel, so their WER coincides (0.141) **by luck**; `medium` q5_0 vs q8_0 differ
+  **only in punctuation** (`Valley,`/`Valley`, `tonight,`/`tonight`). q8_0 and f16 are
+  byte-identical at both sizes. The honest statement is *equal WER*, not *equal text* — and for a
+  provider, that means q5_0 and q8_0 are **not** interchangeable at the word level.
 - **q5_0 ≈ q8_0 in speed** at both sizes (their repeat ranges overlap completely).
-- **f16 is strictly worse**: no accuracy gain, ~30–35 % slower and ~2× the RAM at `small`, and
-  ~40 % slower at `medium` (with the single outlier run at 74.7 s taken during a concurrent build,
-  so the 22–26 s range is the honest one). **There is no reason to ship f16.**
+- **f16 is strictly worse**: no accuracy gain, ~33 % slower and ~1.9× the RAM at `small`, and
+  ~35 % slower and ~2.2× the RAM at `medium`. The f16 timings were noisy — the car clip's three
+  runs were 22.5 / 26.1 / 74.7 s and `jfk`'s was 95.5 s while the Vulkan build ran concurrently;
+  the cause of the 74.7 s car-clip outlier was **not** isolated (the build's first object file is
+  timestamped 15 s *after* that run finished), so the **median 26.1 s** is the figure used here.
+  **There is no reason to ship f16.**
 - The ticket asked for `q5_0`; upstream publishes `q8_0` for every size and `q5_0` for
   `medium`/`large-v3-turbo` only. The published `q5_1` (small/base) was also run: on the car clip
   `small q5_1` scored **0.172** and `base q5_1` **0.344** (worse than q5_0's 0.141/0.297), and
@@ -328,21 +344,21 @@ Car clip, greedy, `q5_0`, CPU median vs Vulkan median (Vulkan n=3):
 
 | model | CPU wall s | CPU RTF | Vulkan wall s | Vulkan RTF | speed-up | CPU RSS | VK RSS | WER (both) |
 |---|---|---|---|---|---|---|---|---|
-| small | 6.45 | 3.9 | **0.87** | **28.9** | 7.4× | 333 MB | 95 MB | 0.141 |
-| medium | 19.29 | 1.30 | **1.72** | **14.6** | 11.2× | 825 MB | 115 MB | **0.062** |
-| large-v3-turbo | 14.95 | 1.68 | **1.47** | **17.1** | 10.2× | 726 MB | 118 MB | 0.125 |
+| small | 6.45 | 3.9 | **0.87** | **28.9** | 7.4× | 336 MB | 94 MB | 0.141 |
+| medium | 19.29 | 1.30 | **1.72** | **14.6** | 11.2× | 828 MB | 105 MB | **0.062** |
+| large-v3-turbo | 14.95 | 1.68 | **1.47** | **17.1** | 10.2× | 733 MB | 118 MB | 0.125 |
 
 Also on `jfk` and `quiet-long`: medium 7.19→1.12 s and 20.28→1.72 s; turbo 11.91→1.22 s and
-15.07→1.47 s. Speed-ups ranged **4.7–11.8×** depending on which CPU run is compared.
+15.07→1.47 s. Speed-ups ranged **4.7–13.4×** depending on which CPU run is compared.
 
 **The Vulkan transcript is byte-identical to the CPU transcript** for all seven model/clip pairs
 tested (medium, turbo, small × car, jfk, quiet-long). At this greedy/`q5_0` setting the GPU
 changes **only** the speed. Vulkan wall times were also **reproducible** (medium 1.67–1.82 s,
 small 0.866 s twice, turbo 1.469 s twice) — the GPU path does not show the CPU's 2× spread.
 
-Peak RSS on Vulkan is ~7× lower for the big models because the weights live in GPU-visible
-(unified) memory rather than the process RSS; on this iGPU that memory is the same physical RAM,
-so this is an accounting difference, not a 7× saving.
+Peak RSS on Vulkan is several times lower (≈6–8× for `medium`/`large-v3-turbo`) because the
+weights live in GPU-visible (unified) memory rather than the process RSS; on this iGPU that memory
+is the same physical RAM, so this is an accounting difference, not a real saving.
 
 ## 9. Second condition: quiet room (external validity)
 
@@ -363,11 +379,12 @@ CPU, greedy, `q5_0`, std WER (single run each):
 
 **The recommendation holds.** `medium q5_0` is the best model in **all three** conditions
 (0.062 / 0.296 / 0.111). `small` is second-tier (0.141 / 0.333 / 0.139). `large-v3-turbo` is
-**inconsistent**: much worse than medium on the car clip (0.125 vs 0.062) but *tied with medium*
-on quiet-long — its car-clip weakness is specific to that noisy/clipped clip. `base`'s
-car-clip 0.234 collapses to 0.139 on quiet-long, and `.en`'s advantage **disappears** (base.en is
-*worse* than base on both quiet clips) — the single flattering car-clip result for `.en` does not
-replicate.
+**inconsistent**: worse than medium on the car clip (0.125 vs 0.062) and on `quiet-short`
+(0.333 vs 0.296), tied with medium only on `quiet-long` (0.111) — the car-clip gap is specific to
+that noisy/clipped clip. `base`'s car-clip 0.234 collapses to 0.139 on `quiet-long`, and `.en`'s
+advantage **does not replicate**: `base.en` and `base` are **equal** on `quiet-short` (both 0.407)
+and `base` is better on `quiet-long` (0.139 vs 0.153) — the single flattering car-clip result for
+`.en` does not generalise.
 
 The **quantisation conclusion also holds**: `small q5_0` and `small q8_0` remain identical, and
 `q5_1` matches them on quiet-long. The **decode conclusion is untested** on the quiet clips (only
@@ -483,7 +500,7 @@ f16 and quantise deterministically (466 MB for `small`). `q8_0` is the pragmatic
   beyond the notice. This is a strictly cleaner position than ADR 0006's closed `libneedle3.so`:
   the whole stack is open and auditable.
 - **Added runtime artifacts:** `whisper-cli` (1 064 768 B) plus `libwhisper.so` (639 256 B) and
-  the ggml libraries (`libggml*`: ~2.5 MB) — a few MB of GPL-free C++, built from source with
+  the ggml libraries (`libggml*`: ~2.5 MB) — a few MB of MIT-licensed C++, built from source with
   `uvx cmake`. The repo gains **no** dependency; the build and models live in scratch / the data
   dir, exactly like the Whistle model download.
 - **Vulkan build** additionally needs `spirv-headers` (dev package) at build time only. It is
@@ -493,7 +510,7 @@ f16 and quantise deterministically (466 MB for `small`). `q8_0` is the pragmatic
 
 ### 11.6 Memory and the ADR 0001 latency budget
 
-Peak RSS (CPU, car clip): tiny 104 MB, base 151 MB, small 333 MB, medium 825 MB, turbo 726 MB.
+Peak RSS (CPU, car clip): tiny 104 MB, base 151 MB, small 336 MB, medium 828 MB, turbo 733 MB.
 On Vulkan the process RSS is 95–118 MB because the weights move to GPU-visible memory (same
 physical RAM on this iGPU). Whistle is 69 MB, so **`small`-class models are the RAM-comparable
 choice**; `medium` costs ~0.8 GB resident on CPU.
@@ -521,8 +538,10 @@ The budget is **met** in the batch path; the *streaming* path is where whisper.c
   recommended fix would be a number/spelling normalisation, which is **out of scope here** and not
   applied.
 - **Three clips, English only.** One noisy/clipped car clip and two quiet clips of *different text*
-  — external validity, not a controlled A/B. No other language was tested (`-l en` pinned). No
-  second recording of the car passage exists, so the car-clip errors are not shown to reproduce.
+  — external validity, not a controlled A/B. The **quiet-clip rows are n=1** per model
+  (variance unmeasured); the car-clip rows have repeats. No other language was tested (`-l en`
+  pinned). No second recording of the car passage exists, so the car-clip errors are not shown to
+  reproduce.
 - **Quiet clips are ~10 dB quieter** (RMS 0.033 vs 0.109), uncontrolled; a plausible cause of their
   high absolute WER.
 - **flash attention** (`-fa`) is on by default in this build and was not the primary variable;
@@ -538,14 +557,15 @@ The budget is **met** in the batch path; the *streaming* path is where whisper.c
 
 ## 13. What would falsify "whisper.cpp is a good fit"
 
-1. **A second condition reversing the ranking.** If `medium q5_0` were not the accuracy leader on
-   the quiet clips, the recommendation would be clip-specific. *It held (0.062/0.296/0.111).*
+1. **A second condition reversing the ranking.** If `medium q5_0` were not the best-or-tied model
+   on the quiet clips, the recommendation would be clip-specific. *It held (0.062/0.296/0.111,
+   best-or-tied — it ties `large-v3-turbo` on quiet-long).*
 2. **A GPU/CPU transcript divergence.** If Vulkan changed words, the GPU speed-up would be bought
    with accuracy and the "just faster" claim would fail. *Byte-identical on all 7 pairs.*
 3. **Vulkan not actually used.** If the speed-ups were a CPU-side fluke, the headline would be
    false. *Device line shows `Vulkan0` / Radeon 780M and is used.*
 4. **A better canonical quantisation.** If `q8_0`/`q5_1`/f16 materially beat `q5_0`, pinning
-   would change. *They did not (f16 worse, q8_0 identical).*
+   would change. *They did not (f16 worse; q8_0 equal WER).*
 5. **A faster, equally-accurate alternative provider** (e.g. faster-whisper/CTranslate2) — not
    tested here; a real comparison would be the follow-up.
 6. **The framework overhead exceeding 1 s** once an adapter exists — untested here; would fail
@@ -557,23 +577,23 @@ The budget is **met** in the batch path; the *streaming* path is where whisper.c
 
 **Yes — whisper.cpp is a viable second provider, and on this machine it is the accuracy option:**
 `medium q5_0` scores **0.062** on the car clip against Whistle's measured **0.281** (batch) /
-**0.391** (streaming) on the same recording (ticket 39) — a 5–6× reduction in errors, with
-essentially one real word error.
+**0.391** (streaming) on the same recording (ticket 39) — roughly **4.5×** (batch) and **6.3×**
+(streaming) fewer errors, with essentially one real word error.
 
 1. **Provider:** implement whisper.cpp as a second `Transcriber`, `supports_streaming = False`,
    behind the **`whisper-cli` subprocess** shape first (smallest change, open and auditable).
 2. **Default model by device:**
    - **Vulkan available (recommended here): `medium q5_0`.** Most accurate in all three conditions
-     **and** RTF 13.8 (1.7 s for 25 s) — the accuracy-per-second winner outright.
-   - **CPU-only, multilingual default: `small q5_0`/`q8_0`** (0.141 WER, RTF 3.9, 333 MB).
-   - **CPU-only, accuracy-first: `medium q5_0`** (0.062 WER, RTF 1.3, 825 MB) if the user will
+     **and** RTF 14.6 (1.7 s for 25 s) — the accuracy-per-second winner outright.
+   - **CPU-only, multilingual default: `small q5_0`/`q8_0`** (0.141 WER, RTF 3.9, 336 MB).
+   - **CPU-only, accuracy-first: `medium q5_0`** (0.062 WER, RTF 1.3, 828 MB) if the user will
      accept ~15–22 s for a 25 s utterance.
    - **CPU-only, English and speed: `base.en q5_0`** — but flag that it did not generalise to the
      quiet clips.
 3. **Quantisation: `q5_0` (or `q8_0`).** Never f16. Pin the canonical files
    (`q8_0` for `tiny`/`base`/`small`; `q5_0` for `medium`/`large-v3-turbo`) with the sha256s in §11.4.
 4. **Decoding: greedy.** Do not enable beam search.
-5. **Vulkan:** worth enabling. It is **4.7–11.8× faster at byte-identical output**, and it is what
+5. **Vulkan:** worth enabling. It is **4.7–13.4× faster at byte-identical output**, and it is what
    makes `medium` the sweet spot. The only build-time cost is `spirv-headers`
    (`sudo pacman -S spirv-headers`), unnecessary for the CPU build.
 6. **Follow-ups this discovery does not cover:** a real adapter + framework-overhead measurement;
