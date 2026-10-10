@@ -180,13 +180,127 @@ uv run ges2t setup whisper.cpp small-q5_0
 (Or, to exercise the builder alone before ticket 44 lands, the scratch
 verification command recorded in §"Verify" below.)
 
+## What was built
+
+`src/ges2t/whisper_engine.py` — the engine builder, with the Protocol seams ADR 0019
+requires (`SystemProbe`, `CommandRunner`, `EngineBuilder`), and
+`tests/test_whisper_engine.py` (58 tests, all with fakes: no real `git`, `cmake`,
+compiler or network in the suite).
+
+Public surface:
+
+- `ensure_engine(...) -> EngineBuild` — idempotency check, CPU-vs-Vulkan choice,
+  prerequisite gate, then the build. The module's composition point.
+- `check_prerequisites(variant, system) -> PrerequisiteReport`,
+  `prerequisites_for(variant)`, `inspect_vulkan(system) -> VulkanStatus`.
+- `WhisperCppBuilder` (`EngineBuilder`) — clone, configure, build the `whisper`
+  target, install the library set, write the manifest.
+- `read_build(directory)` / `verify_build(directory)` — the recorded build.
+- `engine_dir(version)` = `<data_dir>/engine/whisper-cpp/v1.9.5/`;
+  `engine.json` records tag, revision, variant and the library file names.
+
+## Real-machine prerequisite detection (this machine, 2026-10-10)
+
+```
+$ uv run python -c 'from ges2t.whisper_engine import *; s=inspect_vulkan(HostSystemProbe()); print(s.runtime, s.headers, s.spirv_headers, s.shader_compiler, s.available, s.summary())'
+vulkan runtime : /usr/lib/libvulkan.so
+vulkan headers : /usr/include/vulkan/vulkan.h
+spirv headers  : None
+shader compiler: /usr/bin/glslc
+available      : False
+summary        : CPU-only: SPIR-V headers (spirv-headers)
+engine_dir()   : /home/matee/.local/share/ges2t/engine/whisper-cpp/v1.9.5
+```
+
+That is the same verdict as the raw `pacman -Q` above (`spirv-headers` and `cmake`
+absent) — the rule picks the CPU variant here, and would pick Vulkan on a machine
+with all four pieces.
+
+`ensure_engine()` with the real probe on this machine (no builder injected; a
+throwaway directory, so it cannot touch the user's data dir):
+
+```
+PrerequisiteError:
+cannot build the whisper.cpp engine (cpu): missing cmake (cmake).
+Install the prerequisites, then re-run this command:
+    sudo pacman -S base-devel cmake
+```
+
+Nothing was cloned, compiled or installed: the check runs **before** the builder
+and the builder is never constructed.
+
+## The install step, driven over the real CMake output
+
+The scratch build's `build/bin/` was run through the module's own install step
+(`_install_libraries`) into a fake engine directory, then loaded with `ctypes`:
+
+```
+installed: ['libggml-base.so', 'libggml-base.so.0', 'libggml-base.so.0.26.0',
+            'libggml-cpu.so', 'libggml-cpu.so.0', 'libggml-cpu.so.0.26.0',
+            'libggml.so', 'libggml.so.0', 'libggml.so.0.26.0',
+            'libwhisper.so', 'libwhisper.so.1', 'libwhisper.so.1.9.5']
+symlink libwhisper.so -> libwhisper.so.1
+verify_build: True
+summary: whisper.cpp v1.9.5 (CPU-only) at .../engine
+ctypes whisper_version(): b'1.9.5-dev'
+```
+
+So the install half of the builder is verified against **real** CMake output, not
+only against the test fake's output. The scratch tree was removed afterwards.
+
+## Falsification (each watched to fail, then reverted)
+
+All four reversions were `git checkout -- src/ges2t/whisper_engine.py`; the tree
+was green again immediately after (58 passed).
+
+1. **Drop the prerequisite gate in `ensure_engine`** (the `raise` becomes `_ =
+   report`) →
+   `test_ensure_engine_fails_before_building_when_a_prerequisite_is_missing`
+   FAILED: `DID NOT RAISE PrerequisiteError`.
+2. **Drop `cmake` from `prerequisites_for(CPU)`** → three tests FAILED:
+   `test_cpu_requirement_set_is_the_base_devel_and_cmake_line`,
+   `test_missing_cmake_is_reported_with_its_package_and_command`,
+   `test_ensure_engine_fails_before_building_when_a_prerequisite_is_missing`
+   (the last with `DID NOT RAISE PrerequisiteError`). This is the ticket's
+   required "missing `cmake`" falsification.
+3. **Skip the idempotency short-circuit** (`if installed is not None:` →
+   `if False:`) →
+   `test_ensure_engine_is_idempotent_and_builds_only_once` (`assert 2 == 1`) and
+   `test_ensure_engine_keeps_an_existing_vulkan_build_without_rebuilding` FAILED.
+4. **Drop `-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH=$ORIGIN`**
+   → `test_builder_configures_a_release_library_only_origin_rpath_build` FAILED.
+
 ## Verify
 
 Run from the worktree:
 
 ```
-uv run pytest -q
-rm -rf .mypy_cache __pycache__ && uv run mypy src/ges2t tests
+$ uv run pytest -q
+981 passed in 7.15s
+
+$ rm -rf .mypy_cache __pycache__ && uv run mypy src/ges2t tests
+Success: no issues found in 57 source files
 ```
 
-_(results appended below as they are produced.)_
+Baseline before this ticket: 923 passed. This ticket adds 58 tests
+(`tests/test_whisper_engine.py`); none deleted, skipped or weakened.
+
+Final run at `in review` (after the status/README edits, tree clean):
+
+```
+$ rm -rf .mypy_cache __pycache__ && uv run mypy src/ges2t tests
+Success: no issues found in 57 source files
+$ uv run pytest -q
+981 passed in 5.40s
+```
+
+## Cleanup
+
+- Scratch build tree `~/.cache/ges2t-verify-engine-build` (clone source, CMake
+  build tree, relocated copy, install probe) removed; nothing built was ever put
+  in the repo, and `git status` is clean apart from the committed work.
+- No process was left running; `uvx`, `cmake` and `python3` probe runs all
+  exited.
+- No network was used by this ticket's work: the recipe was verified with
+  `uvx --offline cmake` against the already-present reference tree, and the
+  shipped builder's `git clone` was only ever exercised through the fake runner.
