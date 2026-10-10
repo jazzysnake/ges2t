@@ -69,8 +69,8 @@ as `1 − (output RMS / input RMS)²`):
 
 Level and clipping, read from the WAV's own int16 domain (ticket 32's convention):
 `400 698` samples, peak 1.0000, DC offset −0.010496, AC RMS 0.1084;
-**1262** samples at `|v| ≥ 32767` (0.315 %), all 1239 at −32767 and 23 at −32768 — the
-figure ticket 32 reported. The float32 buffer the engine actually sees has only **23**
+**1262** samples at `|v| ≥ 32767` (0.315 %), of which 1239 are at −32767 and 23 at
+−32768 — the figure ticket 32 reported. The float32 buffer the engine actually sees has only **23**
 samples at `|float| ≥ 1.0`, because `−32767/32768 = 0.99997`; the rest of the int16 count
 is a quantisation convention, not a sample pinned at the rail.
 
