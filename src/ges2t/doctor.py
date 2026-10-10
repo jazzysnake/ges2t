@@ -58,7 +58,7 @@ from enum import StrEnum
 from pathlib import Path
 from types import ModuleType
 
-from ges2t import model_store
+from ges2t import model_store, whisper_engine
 from ges2t.config import (
     Config,
     ConfigError,
@@ -82,6 +82,7 @@ from ges2t.injectors.layout import (
 )
 from ges2t.model_store import ArtifactPin, UnsupportedPlatformError
 from ges2t.socket_proto import default_socket_path, is_service_listening
+from ges2t.transcribers.whisper_cpp_config import WhisperCppConfigError
 from ges2t.transcribers.whistle_config import WhistleConfig, WhistleConfigError
 from ges2t.ui.status import TrayFailure
 
@@ -112,6 +113,9 @@ __all__ = [
     "check_tray_failures",
     "check_uinput",
     "check_versions",
+    "check_vulkan",
+    "check_whisper_engine",
+    "check_whisper_model",
     "check_ydotoold",
     "diagnose_config",
     "diagnose_engine_config",
@@ -136,6 +140,10 @@ PW_DUMP_BINARY: str = "pw-dump"
 PW_CLI_BINARY: str = "pw-cli"
 WL_COPY_BINARY: str = "wl-copy"
 YDOTOOL_SOCKET_NAME: str = ".ydotool_socket"
+
+#: The ``transcriber.engine`` value that turns the whisper.cpp checks on. With
+#: any other engine they report ``OK``/skipped, never a false failure (ticket 46).
+WHISPER_CPP_ENGINE: str = "whisper_cpp"
 
 #: The uinput device ``ydotool`` writes to (ADR 0003).
 UINPUT_PATH: Path = Path("/dev/uinput")
@@ -355,6 +363,8 @@ ConsoleScriptResolver = Callable[[], str | None]
 ConfigLoader = Callable[[], ConfigLoadResult]
 #: A callable returning a :class:`CheckResult`.
 Check = Callable[[], CheckResult]
+#: Resolves the installed whisper.cpp engine directory (default: the data dir).
+WhisperEngineResolver = Callable[[], Path]
 
 
 def _read_distribution_version(name: str) -> str:
@@ -551,6 +561,10 @@ class DoctorProbes:
     console_script: ConsoleScriptResolver = resolve_console_script
     listening_probe: SocketProbe = is_service_listening
     tray_failure_probe: TrayFailureProbe | None = None
+    #: Where the installed whisper.cpp engine lives; only read by the whisper checks.
+    whisper_engine_dir: WhisperEngineResolver = whisper_engine.engine_dir
+    #: The machine probe the Vulkan check uses; ``None`` means the real host probe.
+    system_probe: whisper_engine.SystemProbe | None = None
 
 
 @dataclass(frozen=True)
@@ -720,6 +734,273 @@ def check_engine_present(*, target: ArtifactTarget | None = None) -> CheckResult
         "libneedle.so",
         resolved,
         setup_fix="run 'ges2t setup' to download and verify the pinned engine",
+    )
+
+
+# --- whisper.cpp checks (ticket 46, ADR 0021 §2/§7/§8) -----------------------
+
+#: The fix line the whisper checks carry when the config is refused at startup
+#: (ticket 45, ADR 0021 §8). One constant so all three explain it identically.
+_WHISPER_STREAMING_FIX: str = (
+    "set streaming.enabled = false to run whisper.cpp batch-only, or set "
+    'transcriber.engine = "whistle" (the default) to keep live and incremental typing'
+)
+
+
+def _whisper_skipped(name: str, engine: str) -> CheckResult:
+    """The ``OK`` a whisper check reports when a different engine is selected."""
+    return _ok(
+        name,
+        f"skipped: transcriber.engine is {engine!r} (whisper.cpp not selected)",
+    )
+
+
+def _whisper_streaming_rejection(name: str) -> CheckResult:
+    """The ``FAIL`` a whisper check reports when the config will not start (ticket 45).
+
+    Reporting a healthy engine/model here would be a **healthy-but-refused** state:
+    the service refuses ``whisper_cpp`` with ``streaming.enabled = true`` before any
+    artifact loads, so every whisper check says so instead of painting green.
+    """
+    return _fail(
+        name,
+        'this config will not start: transcriber.engine = "whisper_cpp" cannot be '
+        "combined with streaming.enabled = true (whisper.cpp is batch-only, so "
+        "there would be no text until the utterance ends)",
+        _WHISPER_STREAMING_FIX,
+    )
+
+
+def _whisper_gate(name: str, config: Config) -> CheckResult | None:
+    """Return the skip/rejection result for a whisper check, or ``None`` to proceed.
+
+    With another engine selected the check is skipped, and with the documented
+    startup rejection it reports the refusal -- both before any artifact is read.
+    """
+    if config.transcriber.engine != WHISPER_CPP_ENGINE:
+        return _whisper_skipped(name, config.transcriber.engine)
+    if config.streaming.enabled:
+        return _whisper_streaming_rejection(name)
+    return None
+
+
+def check_whisper_engine(
+    config: Config, *, directory: Path | None = None
+) -> CheckResult:
+    """The built whisper.cpp engine must be present, and its variant reported (ADR 0021 §2).
+
+    The engine is the ``libwhisper.so`` entry library plus the ``libggml*.so*``
+    family, installed from the build's manifest. Presence is checked with the
+    manifest's own completeness test, so a library deleted by hand is a ``FAIL``
+    naming it, not a silent ``OK``. A missing engine is never downloaded here
+    (ADR 0017/0018): the fix names ``ges2t setup``.
+    """
+    name = "Whisper engine built"
+    gate = _whisper_gate(name, config)
+    if gate is not None:
+        return gate
+    target = directory if directory is not None else whisper_engine.engine_dir()
+    try:
+        build = whisper_engine.read_build(target)
+    except whisper_engine.EngineManifestError as exc:
+        return _fail(
+            name,
+            f"the whisper.cpp engine manifest at "
+            f"{whisper_engine.manifest_path(target)} is unreadable: {exc}",
+            "rebuild the engine with 'ges2t setup whisper.cpp <model>'",
+        )
+    if build is None:
+        return _fail(
+            name,
+            f"the whisper.cpp engine is not built at {target} "
+            f"(no {whisper_engine.MANIFEST_NAME} manifest)",
+            "run 'ges2t setup whisper.cpp <model>' to build it (it needs a C++ "
+            "toolchain and cmake, which ges2t never installs)",
+        )
+    missing = build.libraries.missing()
+    if not build.libraries.ggml or missing:
+        names = ", ".join(path.name for path in missing) or "no libggml*.so* library"
+        return _fail(
+            name,
+            f"the installed whisper.cpp engine at {target} is incomplete: "
+            f"missing {names}",
+            "rebuild the engine with 'ges2t setup whisper.cpp <model>'",
+        )
+    return _ok(
+        name,
+        f"{build.libraries.libwhisper.name} and "
+        f"{len(build.libraries.ggml)} libggml*.so* present at {target}; "
+        f"build variant: {build.variant.label}",
+    )
+
+
+def check_whisper_model(
+    config: Config,
+    *,
+    verify: bool = False,
+    system: whisper_engine.SystemProbe | None = None,
+) -> CheckResult:
+    """The configured whisper.cpp model must be present, and optionally hashed (ADR 0021 §4).
+
+    The model is the configured ``[engine.whisper_cpp] model`` or, when it was
+    omitted, the device-aware default resolved by the **same** rule the service
+    and ``ges2t setup`` use (:func:`ges2t.pipeline.resolve_whisper_cpp_config`),
+    so doctor never disagrees with what will be loaded. The exact file
+    (``ggml-<name>.bin``) and its pinned size are always named; with ``--verify``
+    the pinned sha256 is checked as well. No model-vs-GPU sizing check exists
+    (ADR 0021 §8): any configured model is accepted.
+    """
+    name = "Whisper model"
+    gate = _whisper_gate(name, config)
+    if gate is not None:
+        return gate
+    block = config.engine_blocks.get(WHISPER_CPP_ENGINE, {})
+    try:
+        # Imported lazily so importing this module stays free of the composition root.
+        from ges2t.pipeline import resolve_whisper_cpp_config
+
+        whisper_config = resolve_whisper_cpp_config(block, system=system)
+    except WhisperCppConfigError as exc:
+        return _fail(
+            name,
+            f"the [engine.whisper_cpp] block is invalid: {exc}",
+            "correct the value named above in the [engine.whisper_cpp] block",
+        )
+    model_name = whisper_config.model
+    assert model_name is not None  # resolve_whisper_cpp_config always resolves it
+    entry = model_store.whisper_model(model_name)
+    path = model_store.whisper_model_path(model_name)
+    filename = entry.file_name
+    setup_fix = (
+        f"run 'ges2t setup whisper.cpp {model_name}' to download and verify the model"
+    )
+    if not path.is_file():
+        return _fail(
+            name,
+            f"{filename} is missing at {path} (expected {entry.size_bytes} bytes)",
+            setup_fix,
+        )
+    actual_size = path.stat().st_size
+    if actual_size != entry.size_bytes:
+        return _fail(
+            name,
+            f"{filename} at {path} is {actual_size} bytes, expected "
+            f"{entry.size_bytes} bytes",
+            setup_fix,
+        )
+    if not verify:
+        return _ok(
+            name,
+            f"{filename} is present at {path} ({actual_size} bytes); pass --verify "
+            "to hash it against its pinned sha256",
+        )
+    if not model_store.verify(path, entry.pin()):
+        return _fail(
+            name,
+            f"{filename} at {path} does not match the pinned sha256 {entry.sha256}",
+            setup_fix,
+        )
+    return _ok(
+        name,
+        f"{filename} at {path} ({actual_size} bytes) matches the pinned sha256",
+    )
+
+
+def check_vulkan(
+    config: Config,
+    *,
+    system: whisper_engine.SystemProbe | None = None,
+    directory: Path | None = None,
+) -> CheckResult:
+    """Report the Vulkan path and explain the CPU-only fallback (ADR 0021 §7/§8).
+
+    Four outcomes matter to the user:
+
+    * a Vulkan build is possible and installed -> ``OK``;
+    * no Vulkan runtime at all -> ``WARN`` naming the CPU cost (``medium-q5_0``
+      ~19 s for a 25 s clip, RTF 1.30, still faster than realtime) and the
+      ``small-q8_0`` CPU default;
+    * a Vulkan runtime **is** present but a dev piece is missing -> ``WARN``
+      naming the missing package(s) via the shared
+      :func:`ges2t.whisper_engine.vulkan_dev_package_hint`, so the user learns
+      one ``pacman`` line enables the GPU path (the same fact ``setup`` surfaces);
+    * Vulkan is possible now but the installed engine is CPU-only -> ``WARN``
+      telling the user to rebuild.
+
+    A by-design ``WARN`` never changes the exit code. This check is why the two
+    by-design ``WARN``s of the untouched 22 (Hotkey bindings, Tray failures)
+    remain exactly two with the default ``whistle`` engine: the check is skipped.
+    """
+    name = "Vulkan device"
+    gate = _whisper_gate(name, config)
+    if gate is not None:
+        return gate
+    probe = system if system is not None else whisper_engine.HostSystemProbe()
+    vulkan = whisper_engine.inspect_vulkan(probe)
+    target = directory if directory is not None else whisper_engine.engine_dir()
+    build = whisper_engine.verify_build(target)
+    variant = None if build is None else build.variant
+    runtime = vulkan.runtime
+    is_vulkan = variant is whisper_engine.BuildVariant.VULKAN
+    is_cpu = variant is whisper_engine.BuildVariant.CPU
+
+    if vulkan.available:
+        if is_vulkan:
+            return _ok(
+                name,
+                f"Vulkan runtime, headers, SPIR-V headers and glslc present "
+                f"(runtime at {runtime}); the installed engine was built with Vulkan",
+            )
+        if is_cpu:
+            return _warn(
+                name,
+                f"Vulkan is available (runtime at {runtime}) but the installed "
+                "engine was built CPU-only",
+                "rebuild with 'ges2t setup whisper.cpp <model>' to use the GPU path",
+            )
+        return _ok(
+            name,
+            f"Vulkan runtime, headers, SPIR-V headers and glslc present "
+            f"(runtime at {runtime}); no engine is built yet, so "
+            "'ges2t setup whisper.cpp <model>' will build the Vulkan variant",
+        )
+
+    if runtime is not None:
+        # A GPU runtime is present; the only reason for a CPU-only build is a
+        # missing dev piece. The hint is the shared, package-naming wording.
+        hint = whisper_engine.vulkan_dev_package_hint(vulkan)
+        if is_vulkan:
+            return _ok(
+                name,
+                f"the installed engine was built with Vulkan "
+                f"(Vulkan runtime at {runtime})",
+            )
+        assert hint is not None  # a present runtime with a missing dev piece
+        return _warn(
+            name,
+            f"a Vulkan runtime is present at {runtime}, but the GPU build is "
+            f"missing {', '.join(vulkan.missing_packages)}, so the engine builds "
+            "CPU-only",
+            hint,
+        )
+
+    if is_vulkan:
+        return _warn(
+            name,
+            "the installed engine was built with Vulkan, but no Vulkan runtime is "
+            "available now, so it may fail to load",
+            "install the Vulkan runtime ('sudo pacman -S vulkan-icd-loader'), or "
+            "rebuild a CPU-only engine with 'ges2t setup whisper.cpp <model>'",
+        )
+    return _warn(
+        name,
+        "no Vulkan runtime is available: whisper.cpp runs on the CPU "
+        "(medium-q5_0 ~19 s for a 25 s clip, RTF 1.30 - still faster than "
+        "realtime), and the CPU-only default model is small-q8_0",
+        "to enable the GPU path install the Vulkan runtime and dev packages "
+        "('sudo pacman -S vulkan-icd-loader vulkan-headers spirv-headers "
+        "shaderc') and re-run 'ges2t setup whisper.cpp <model>'; the CPU-only "
+        "install works as-is",
     )
 
 
@@ -1255,6 +1536,7 @@ def build_report(config: Config, options: DoctorOptions) -> DoctorReport:
     model_target = _model_target(config)
     engine_target = _engine_target()
     console_script = probes.console_script()
+    whisper_engine_dir = probes.whisper_engine_dir()
 
     results: list[CheckResult] = [
         _guard(
@@ -1276,6 +1558,24 @@ def build_report(config: Config, options: DoctorOptions) -> DoctorReport:
         _guard(
             "Engine present",
             lambda: check_engine_present(target=engine_target),
+        ),
+        _guard(
+            "Whisper engine built",
+            lambda: check_whisper_engine(config, directory=whisper_engine_dir),
+        ),
+        _guard(
+            "Whisper model",
+            lambda: check_whisper_model(
+                config, verify=options.verify, system=probes.system_probe
+            ),
+        ),
+        _guard(
+            "Vulkan device",
+            lambda: check_vulkan(
+                config,
+                system=probes.system_probe,
+                directory=whisper_engine_dir,
+            ),
         ),
         _guard(
             "cactus-needle importable",

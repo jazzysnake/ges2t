@@ -69,6 +69,7 @@ from ges2t.whisper_engine import (
     prerequisites_for,
     read_build,
     verify_build,
+    vulkan_dev_package_hint,
 )
 
 # The fake builder writes the real manifest format with the module's own writer,
@@ -1161,3 +1162,46 @@ def test_engine_build_summary_names_the_variant_and_directory(tmp_path: Path) ->
     assert "Vulkan" in build.summary
     assert str(tmp_path) in build.summary
     assert build.backend == "Vulkan"
+
+
+# --- the GPU-path hint (shared by setup and doctor, tickets 46/47) -------------
+
+
+def test_vulkan_dev_package_hint_is_none_without_a_runtime() -> None:
+    status = VulkanStatus(
+        runtime=None, headers=None, spirv_headers=None, shader_compiler=None
+    )
+    assert status.missing_packages == (
+        PACKAGE_VULKAN_HEADERS,
+        PACKAGE_SPIRV_HEADERS,
+        PACKAGE_SHADERC,
+    )
+    assert vulkan_dev_package_hint(status) is None
+
+
+def test_vulkan_dev_package_hint_is_none_when_every_piece_is_present() -> None:
+    status = VulkanStatus(
+        runtime=Path("/usr/lib/libvulkan.so.1"),
+        headers=Path("/usr/include/vulkan/vulkan.h"),
+        spirv_headers=Path("/usr/include/spirv/unified1/spirv.h"),
+        shader_compiler=Path("/usr/bin/glslc"),
+    )
+    assert status.missing_packages == ()
+    assert vulkan_dev_package_hint(status) is None
+
+
+def test_vulkan_dev_package_hint_names_only_the_missing_packages() -> None:
+    status = VulkanStatus(
+        runtime=Path("/usr/lib/libvulkan.so.1"),
+        headers=Path("/usr/include/vulkan/vulkan.h"),
+        spirv_headers=None,
+        shader_compiler=None,
+    )
+    assert status.missing_packages == (PACKAGE_SPIRV_HEADERS, PACKAGE_SHADERC)
+    hint = vulkan_dev_package_hint(status)
+    assert hint is not None
+    assert PACKAGE_SPIRV_HEADERS in hint
+    assert PACKAGE_SHADERC in hint
+    assert PACKAGE_VULKAN_HEADERS not in hint
+    assert "pacman -S spirv-headers shaderc" in hint
+    assert "CPU-only" in hint
