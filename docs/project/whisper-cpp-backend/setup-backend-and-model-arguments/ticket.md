@@ -1,7 +1,7 @@
 # setup: backend and model arguments
 
 - **Priority:** P1
-- **Status:** to do
+- **Status:** in progress
 - **Complexity:** M
 - **Epic:** ../epic.md
 
