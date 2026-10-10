@@ -1,0 +1,41 @@
+# ges2t — systemd *user* unit (documentation only; nothing installs it for you, ADR 0015).
+#
+# ADJUST THE TWO PATHS BELOW. 'ExecStart' must be the absolute path to the 'ges2t'
+# console script that `uv sync` created inside YOUR virtualenv, and 'WorkingDirectory'
+# must be the checkout that virtualenv belongs to. The example here is the reference
+# machine's; for a checkout at ~/src/ges2t it would be:
+#
+#     ExecStart=%h/src/ges2t/.venv/bin/ges2t run
+#     WorkingDirectory=%h/src/ges2t
+#
+# (%h expands to your home directory.) Do not use `uv run` here: systemd needs one
+# executable to track, and the venv's console script is that executable.
+#
+# Install it:
+#     mkdir -p ~/.config/systemd/user
+#     cp ges2t.service ~/.config/systemd/user/ges2t.service
+#     $EDITOR ~/.config/systemd/user/ges2t.service      # fix the two paths
+#     systemctl --user daemon-reload
+#     systemctl --user enable --now ges2t.service
+#
+# See autostart.md next to this file for enabling, checking and reading the logs.
+
+[Unit]
+Description=ges2t offline dictation service
+# The tray needs the graphical session (display, DBus), and the service must not
+# start before it. It is also stopped with the session.
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/home/matee/Workspace/Personal/ges2t/.venv/bin/ges2t run
+WorkingDirectory=/home/matee/Workspace/Personal/ges2t
+# A crashed service (missing model, broken injector config, port/socket clash) is
+# restarted; a clean exit is not. The tray's 'Quit' and Ctrl+C both exit cleanly,
+# so neither fights this policy.
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target
