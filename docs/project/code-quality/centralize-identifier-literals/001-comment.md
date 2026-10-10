@@ -1,7 +1,9 @@
 # 001 — implementer's comment: centralize identifier literals (ticket 48)
 
-Status: **in progress**. Branch `feat/centralize-identifier-literals`, worktree
-`.worktrees/centralize-identifier-literals`, based on main `f7e1c90`.
+Status: **in review**. Branch `feat/centralize-identifier-literals`, worktree
+`.worktrees/centralize-identifier-literals`. Branched from main `f7e1c90`, then rebased onto
+`1b4d494` (main advanced with an agents/docs preload that touches no source) so the branch diff is
+exactly this change.
 
 ## Baseline measured before any change
 
@@ -170,3 +172,22 @@ Success: no issues found in 65 source files
 
 Baseline on main was the same `1230 passed` (measured, see top); no test was added, deleted, skipped,
 weakened, or rewritten. `tests/` was not touched.
+
+## Falsification (rule 6)
+
+The ticket adds no new test on purpose (the AST scan is a reporting step, not a committed gate), so
+there is no new guard test to falsify. The load-bearing claim that *does* need falsifying is that the
+constants are actually read by the comparison sites, not that the refactor is cosmetic. Probe: drift
+`identifiers.CLIPBOARD_BACKEND` from `"clipboard"` to `"clipboardX"` and run the suite.
+
+```
+$ sed -i 's/^CLIPBOARD_BACKEND: str = "clipboard"/CLIPBOARD_BACKEND: str = "clipboardX"/' src/ges2t/identifiers.py
+$ uv run pytest -q | tail -1
+11 failed, 1219 passed in 9.66s
+```
+
+The 11 failures are the real clipboard-behaviour tests (`test_pipeline.py`, `test_pipeline_streaming.py`,
+and the config round-trips) — a single edit in `identifiers.py` reaches every comparison site, which is
+exactly the property the ticket exists to establish. `git checkout -- src/ges2t/identifiers.py` restored
+the value; `git status` clean, `git diff --stat` empty, `1230 passed` again. Nothing was committed from
+the probe (rule 12).

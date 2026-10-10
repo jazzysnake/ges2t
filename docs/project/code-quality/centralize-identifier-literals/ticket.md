@@ -1,7 +1,7 @@
 # Centralize identifier literals into constants
 
 - **Priority:** P2
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** M
 - **Epic:** ../epic.md
 
@@ -17,24 +17,24 @@ Identifiers are compared as **bare string literals** across `src/ges2t/` — eng
 
 ## Definition of done
 
-- [ ] A **single source of truth** for the identifier strings used in comparisons. Decide the shape —
+- [x] A **single source of truth** for the identifier strings used in comparisons. Decide the shape —
       one `constants.py`, or a small set of per-domain modules — and justify it in `001-comment.md`
       (ADR 0019's flavour applies: typed, named, no bare literals in logic).
-- [ ] The scattered literals are replaced by those constants across **`src/ges2t/` only** — **tests
+- [x] The scattered literals are replaced by those constants across **`src/ges2t/` only** — **tests
       keep literal strings on purpose** (a test must assert the real value, so a wrong constant fails
       it, not its own constant). No behaviour change.
-- [ ] **Run an AST-based scan** (like the ADR 0018 network scan) over **`src/ges2t/` only** that
+- [x] **Run an AST-based scan** (like the ADR 0018 network scan) over **`src/ges2t/` only** that
       enumerates the identifier-string literals used in comparisons, and **report it in
       `001-comment.md`**: the inventory plus anything intentionally left. This is a **verification step
       in this definition of done — not a committed test, and not a hard gate**: a remaining literal (a
       legitimate exemption, or one in `tests/`, which keep literals on purpose) does **not** fail the
       ticket. The scan exists to show the refactor's coverage and make the leftovers explicit; state
       its static-scan limitation honestly (a purely dynamic lookup cannot be caught).
-- [ ] The identifier **inventory** is recorded in `001-comment.md`: each identifier, where it is
+- [x] The identifier **inventory** is recorded in `001-comment.md`: each identifier, where it is
       defined, and the sites changed.
-- [ ] `uv run pytest` green and `uv run mypy src/ges2t tests` 0 errors; report before/after counts; no
+- [x] `uv run pytest` green and `uv run mypy src/ges2t tests` 0 errors; report before/after counts; no
       test deleted, skipped or weakened.
-- [ ] No new dependency, no linter, no behaviour change.
+- [x] No new dependency, no linter, no behaviour change.
 
 ## Notes
 
