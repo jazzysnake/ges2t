@@ -1,7 +1,7 @@
 # whisper.cpp engine build
 
 - **Priority:** P1
-- **Status:** to do
+- **Status:** in progress
 - **Complexity:** M
 - **Epic:** ../epic.md
 
