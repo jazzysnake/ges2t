@@ -1,7 +1,7 @@
 # setup guidance: one engine spelling, the config line, and the GPU dev-package hint
 
 - **Priority:** P1
-- **Status:** in review
+- **Status:** done
 - **Complexity:** S
 - **Epic:** ../epic.md
 
