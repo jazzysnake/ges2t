@@ -59,12 +59,13 @@ incrementally) and **whisper.cpp** (opt-in, batch-only, notably more accurate). 
 | GPU | **AMD Radeon 780M (RDNA3)**, Vulkan working (`RADV`); dev packages `vulkan-headers`, `spirv-headers`, `shaderc`, `cmake` **all installed** |
 | **The user's config** | `~/.config/ges2t/config.toml`: `injection.backend = "ydotool"`, `[streaming] enabled = false`, **`transcriber.engine = "whisper_cpp"`** |
 | Whisper data | engine `~/.local/share/ges2t/engine/whisper-cpp/v1.9.5/` (**`variant: vulkan`**); models `~/.local/share/ges2t/models/whisper-cpp/<name>/` (`medium-q5_0` acquired, 539 MB) |
+| Git remote | **`origin` = `git@github.com:jazzysnake/ges2t.git`** (ssh). The repo is **public** (set 2026-10-10); `main` tracks `origin/main`. **The merger agent never pushes** (no network, by design) — the orchestrator pushes after a verified merge (§10). No `LICENSE` yet. |
 | Baselines on `main` | **`uv run pytest` → 1230 passed**; **`uv run mypy src/ges2t tests` → 0 errors (65 files)**; `doctor` exit 0 |
 
 ## 4. Board state — 4 epics, 22 ADRs (0000–0021)
 
-**`main` is at `8b4b72c`. One worktree (`main`), no branches.** All of Epics 1–3 and Epic 4's ticket 48
-are **done**.
+**`main` is the only branch and the only worktree** (check `git log -1` for the current tip — do not trust a
+SHA written here). All of Epics 1–3 and Epic 4's ticket 48 are **done**.
 
 **Open tickets (the whole remaining board):**
 
@@ -170,6 +171,8 @@ written incrementally and implementers commit per step.
    grep -c '^<<<<<<<'` = 0 and `git rev-list --parents -n1 <merge>` shows **2 parents**. Then re-verify
    `main`: `uv run pytest -q`, `mypy src/ges2t tests`, the docs link check, `git status`.
    **Never put `git add`/`git commit` in the same tool block as an `edit`.**
+7. **Push**: `git push origin main` (and push the bookkeeping commit). The **merger agent is forbidden to
+   push** — the orchestrator pushes **after** the merge is verified, so `origin/main` never leads `main`.
 
 **Link check** (after any docs change; must report 0 — the negative lookbehind also excludes `.` so an
 ellipsis in prose is not flagged):
