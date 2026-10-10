@@ -48,21 +48,30 @@ structural, not a tuning problem:
    real-device recording; at the 6 s cut `medium` rendered "…across the **north of the country**"
    instead of "…across the northern valley", and the flush committed it; the next window then
    added "Valley and crews", giving "…across the north of the country valley and crews…".
-   `large-v3-turbo` commits **`thank you thank you` on 10 s of digital silence** (medium and small
-   correctly emit whisper's `[BLANK_AUDIO]` marker and commit nothing), which is the `thank you`
-   class the project already fears — and turbo is one of the models a streaming path would use.
 
-4. **Accuracy drops 2.3–4.8×** on the real-device car clip against the same human reference and
+4. **All three models hallucinate on digital silence, and the two-pass rule commits it.** Under
+   the primary `-nt` decode, `medium`, `small` **and** `large-v3-turbo` all emit `you` on every
+   pass of a 10 s digital-silence control, so consecutive passes agree and the rule commits
+   **`you you`** for each (reproduced here; two words each). Under the `-ojf` decode the control
+   was first run with, `large-v3-turbo` emits `Thank you.` and commits **`thank you thank you`**,
+   while `medium`/`small` emit whisper's `[BLANK_AUDIO]` marker and commit nothing — so the
+   behaviour is decode-specific, but **either decode puts a `you`/`thank you` hallucination in the
+   committed text**. Applying §2.3's `-nt` finding to this control strengthens, not weakens, the
+   conclusion.
+
+5. **Accuracy drops 2.3–4.8×** on the real-device car clip against the same human reference and
    the same `word_diff`: streaming `medium` W=10/2 = **0.141**, W=5/2 = **0.297**, versus the
    merged report's one-shot batch **0.062**. On `jfk` the batch path is perfect (0.0) and streaming
-   is 0.045–0.136; on `quiet-long` streaming is 0.15–0.21 vs batch 0.153.
+   is 0.045–0.136; on `quiet-long` streaming is 0.15–0.26 vs batch 0.153.
 
 **Speed is not the blocker; it is only marginal.** On the `-nt` decode (the merged report's), the
 Vulkan duty cycle (total whisper-cli wall ÷ audio seconds, model load included) is **< 1 at
-W=5/H=2 for all three models** — small 0.24–0.26, medium 0.62–0.70, turbo 0.75–0.84 — and at
-W=10/H=2 too (small 0.26, medium 0.65–0.68, turbo 0.76–0.81). At **H=1 only `small` fits** (0.44–0.48);
-medium (1.19–1.24) and turbo (1.49–1.53) fall behind real time. The `medium q5_0` **CPU** reference
-at W=5/H=2 is duty **5.87** — unusable, as the merged report predicted.
+W=5/H=2 for all three models** — small 0.24–0.25, medium 0.61–0.70, turbo 0.75–0.84 — and at
+W=10/H=2 too (small 0.26–0.27, medium 0.65–0.68, turbo 0.76–0.84). At **H=1 only `small` fits**
+(0.44–0.48); medium (1.19–1.24) and turbo (1.49–1.53) fall behind real time. The `medium q5_0`
+**CPU** reference at W=5/H=2 is duty **5.87** — unusable, as the merged report predicted. The
+`< 1` margin is thin and load-sensitive: an independent reproduction on this same worktree (load
+average ~2.9) measured `medium` car W=5/H=2 duty **0.918**, not 0.646 (see §5).
 
 **Recommendation:** keep whisper.cpp on the **batch** path (`supports_streaming = False`). Do not
 ship a whisper.cpp streaming path. If streaming is revisited it needs a resident model (to fix
@@ -98,7 +107,9 @@ grows to W and resets.
 
 - **`cap` (primary — the ges2t mirror).** A buffer starts empty at a reset point, grows by `H`
   seconds per pass, and when the audio fed since the reset reaches `W`, `flush()` commits the whole
-  tail and resets the stream — exactly `streaming.drive()`. Consecutive passes see the **same
+  tail and resets the stream — exactly `streaming.drive()`. In this scheme `H` plays the role of the
+  shipped adapter's `chunk_seconds` and `W` that of `window_seconds` (the review notes H is both the
+  pass size and the `process()` chunk size, not only a hop). Consecutive passes see the **same
   growing buffer**, so their transcripts are prefix-comparable and agreement is the plain longest
   common prefix (no alignment assumption).
 - **`slide` (the literal "last W seconds").** A fixed window `[t-W, t]` advancing by `H`. A fixed
@@ -159,7 +170,8 @@ report's best model) and summarised for the others.
 
 ### 3.1 Primary — cap scheme, `-nt` decode, `medium q5_0` Vulkan
 
-`latency` is the timestamped twin's real median audio lag (§3.2); all other columns are `-nt`.
+`latency` is the timestamped (`-ojf`) twin's real median audio lag for the same config (§3.2);
+all other columns are `-nt`.
 
 | W/H | clip | passes | windows | duty | first commit (s) | latency (s) | prefix agree | regressed | rewritten | dup words | WER (stream) | WER (batch) |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -169,12 +181,12 @@ report's best model) and summarised for the others.
 | 5/1 | car | 26 | 6 | 1.242 | 3 | 1.13 | 0.698 | 4 | 19 | 0 | 0.281 | **0.062** |
 | 5/2 | car | 13 | 5 | 0.646 | 4 | 1.66 | **0.288** | 2 | 8 | 1 | **0.297** | **0.062** |
 | 10/2 | car | 13 | 3 | 0.671 | 4 | 2.92 | 0.45 | 1 | 9 | 0 | **0.141** | **0.062** |
-| 5/1 | jfk | 11 | 3 | 1.191 | 2 | 0.357 | 0.933 | 2 | 6 | 1 | 0.045 | 0.0 |
-| 5/2 | jfk | 6 | 2 | 0.696 | 4 | 0.65 | 0.552 | 1 | 4 | 1 | 0.136 | 0.0 |
-| 10/2 | jfk | 6 | 2 | 0.675 | 4 | 1 | 1.0 | 0 | 4 | 1 | 0.045 | 0.0 |
-| 5/1 | clip30 | 30 | 6 | 1.240 | 2 | 0.833 | 0.868 | 12 | 17 | 0 | — | n/a |
-| 5/2 | clip30 | 15 | 5 | 0.606 | 4 | 0.625 | 0.961 | 0 | 6 | 0 | — | n/a |
-| 10/2 | clip30 | 15 | 3 | 0.649 | 4 | 1.721 | 0.875 | 6 | 10 | 0 | — | n/a |
+| 5/1 | jfk | 11 | 3 | 1.191 | 2 | 0.995 | 0.933 | 2 | 6 | 1 | 0.045 | 0.0 |
+| 5/2 | jfk | 6 | 2 | 0.696 | 4 | 1.67 | 0.552 | 1 | 4 | 1 | 0.136 | 0.0 |
+| 10/2 | jfk | 6 | 2 | 0.675 | 4 | 2.03 | 1.0 | 0 | 4 | 1 | 0.045 | 0.0 |
+| 5/1 | clip30 | 30 | 6 | 1.240 | 2 | 1.315 | 0.868 | 12 | 17 | 0 | — | n/a |
+| 5/2 | clip30 | 15 | 5 | 0.606 | 4 | 2.23 | 0.961 | 0 | 6 | 0 | — | n/a |
+| 10/2 | clip30 | 15 | 3 | 0.649 | 4 | 2.23 | 0.875 | 6 | 10 | 0 | — | n/a |
 
 Definitions: **duty** = total whisper-cli wall ÷ audio seconds (includes per-invocation model
 load; < 1 is the real-time condition). **first commit** = source-audio time of the first
@@ -243,10 +255,15 @@ passes showing successive windows disagreeing completely on the shared audio:
          cur : reading correct do low lying roads remain                      agreed 0/5
 ```
 
-**(d) Hallucination.** On 10 s of digital silence, `large-v3-turbo q5_0` emits `Thank you.` in
-every pass, so the two passes agree and the rule **commits it**: the committed text is
-`thank you thank you` (8 commits). `medium` and `small` emit `[BLANK_AUDIO]` and commit nothing.
-The `[BLANK_AUDIO]`/`[MUSIC]` markers are dropped by the harness as non-speech (verified).
+**(d) Hallucination — on the primary `-nt` decode all three models.** On 10 s of digital silence
+the `-nt` decode makes `medium`, `small` and `large-v3-turbo` all emit `you` on every pass, so the
+two passes agree and the rule commits **`you you`** for each (two words, reproduced here). The
+`-ojf` decode behaves differently: `large-v3-turbo` emits `Thank you.` and commits
+**`thank you thank you`** (four words, i.e. two count-based commits — the raw `commits` field in
+`data/` is a legacy pass counter and reads 8), while `medium`/`small` emit `[BLANK_AUDIO]` and
+commit nothing. The `[BLANK_AUDIO]`/`[MUSIC]` markers are dropped by the harness as non-speech
+(verified). This is the one control whose *only* committed data is `-ojf`; the `-nt` result is a
+reproduction run to `/tmp`, not a `data/` row (see `002-comment.md`).
 
 ### 3.4 The two-pass rule vs the flush
 
@@ -279,10 +296,10 @@ is rewritten every hop: on `jfk` W5/2 the committed text is
 | transcript model | append-only committed deltas | append-only in the harness |
 | restatements/duplication at seams | **0** (no word duplicated or dropped across 6 `stop()` seams) | boundary word committed twice; adjacent duplicates in most car/jfk runs |
 | median gap between commits | 1.00 s source audio | ≈ 1 hop (H), by construction |
-| pending persistence | median 1.00 s | H + disagreement delay (latency 0.2–3.5 s median) |
+| pending persistence | median 1.00 s | H + disagreement delay (latency 0.27–3.0 s median) |
 | median per-chunk / duty | 148 ms, 0.19× realtime | 0.24–1.53 duty depending on model/H |
 | accuracy vs batch | WER 0.176 vs 0.191 (no degradation) | car 0.141–0.344 vs batch 0.062 (2.3–5.5×) |
-| hallucination on silence | `Thank you.` appeared in `pending` twice, **never committed** | turbo commits `thank you thank you` |
+| hallucination on silence | `Thank you.` appeared in `pending` twice, **never committed** | all three models commit `you you` on the primary `-nt` decode (turbo `thank you thank you` on `-ojf`) |
 
 Whistle's engine commits the two-pass-agreed words and its `stop()` seams were clean; whisper.cpp
 re-transcribes hard-cut windows, so its seams are not. The commit *cadence* threshold is met but
@@ -290,9 +307,18 @@ the *text* is not.
 
 ## 5. Confounds and limits
 
-- **Load.** Duty is an upper bound (load average ~1.4–3.5 during the runs). On an idle machine the
-  merged report measured 0.97 s for a `medium` Vulkan 5 s window; the same call here was 1.4–1.9 s
-  on the `-ojf` path and ~1.2 s on `-nt`. `small` has ~4× headroom at W5/2 regardless.
+- **Load — and the whole `< 1` margin is load-sensitive.** Duty is an upper bound (load average
+  ~1.4–3.5 during the runs). On an idle machine the merged report measured 0.97 s for a `medium`
+  Vulkan 5 s window; the same call here was 1.4–1.9 s on the `-ojf` path and ~1.2 s on `-nt`. The
+  independent review re-ran the harness under load average ~2.9 and measured `medium` car W=5/H=2
+  duty **0.918** and `jfk` **0.933**, against 0.646 / 0.696 here. The `< 1` real-time margin at
+  H=2 is therefore small and machine-load dependent and must not be read as a guarantee; only
+  `small` (duty ~0.24–0.25 here, ~0.4–0.5 in the review) has robust headroom.
+- **Pass-bookkeeping provenance.** `data/passes*/`'s per-pass `committed_new`/`committed_total_words`
+  were written by an earlier time-watermark rule; the count-based `measure_streaming.py` and
+  `recompute_summary.py` supersede them, and `recompute_summary.py` rebuilds `summary.jsonl`
+  byte-identically from the raw `transcript`/`overlap_*`/`agreed`/`flushed` fields. All numbers in
+  this report come from that count-based rebuild, not from the legacy per-pass counters.
 - **Decode.** Primary numbers use `-nt`, matching the merged report; `-ojf` differs (batch car
   0.062 vs 0.156) and is used only for latency and the slide scheme. The WER comparison is
   therefore apples-to-apples, but it is a **greedy `q5_0`** result; beam search was not tested
@@ -344,7 +370,7 @@ user wants whisper.cpp streaming anyway:
 - use `small q5_0` Vulkan at W=5/H=2 (duty 0.25, the only config with real headroom at H=1 too),
   accepting the worst accuracy;
 - or `medium q5_0` Vulkan at W=10/H=2 (best accuracy among streaming configs, duty 0.67, but
-  latency ≈ 2–3.5 s and a 2.3× WER penalty);
+  latency ≈ 2–3 s and a 2.3× WER penalty);
 - and budget for a seam de-duplication step and a resident-model integration, because the current
   protocol's `stop()` seam is where the errors land.
 
