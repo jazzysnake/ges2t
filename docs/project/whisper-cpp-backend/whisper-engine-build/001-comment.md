@@ -91,6 +91,60 @@ and pointed at with `-DCMAKE_PREFIX_PATH=.../spirv-headers-prefix`. In the
 shipped builder the package is a **prerequisite** (`spirv-headers`) and is found
 through CMake's normal system paths — no prefix trick, no staged tree.
 
+### Relocatability: the one addition to the research's flags
+
+The research only ever ran `whisper-cli` **from `build/bin/`**, where the libs are
+found through CMake's absolute build-tree `RUNPATH` (`.../build/bin/`). Copying
+that set anywhere else leaves `libwhisper.so` unable to find `libggml.so.0`. The
+shipped builder therefore configures with
+
+```
+-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH=$ORIGIN
+```
+
+which bakes a `$ORIGIN` `RUNPATH` into the produced libraries, so the installed
+set is self-contained and loads by absolute path with `ctypes` and no
+`LD_LIBRARY_PATH`. **Verified in scratch** with `uvx cmake` 4.4.4 (offline):
+
+```
+$ readelf -d build/bin/libwhisper.so.1.9.5 | grep -E 'RUNPATH|NEEDED.*ggml'
+ 0x0000000000000001 (NEEDED)  Shared library: [libggml.so.0]
+ 0x0000000000000001 (NEEDED)  Shared library: [libggml-cpu.so.0]
+ 0x0000000000000001 (NEEDED)  Shared library: [libggml-base.so.0]
+ 0x000000000000001d (RUNPATH) Library runpath: [$ORIGIN]
+
+$ cp -a build/bin/lib{whisper,ggml}*.so* <other dir>   # relocated, build dir still exists
+$ python3 -c 'import ctypes;l=ctypes.CDLL("<other dir>/libwhisper.so");l.whisper_version.restype=ctypes.c_char_p;print(l.whisper_version())'
+whisper_version: b'1.9.5-dev'
+```
+
+The scratch build ran against the **already-present reference tree** as `-S`
+(no clone, no network); the shipped builder clones the pinned tag instead. The
+scratch build tree and the relocated copy were both removed afterwards
+(`~/.cache/ges2t-verify-engine-build`).
+
+Exact scratch configure/build commands (both exited 0):
+
+```
+uvx --offline cmake -S <ref-tree> -B build -DCMAKE_BUILD_TYPE=Release \
+    -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=OFF \
+    -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH='$ORIGIN'
+uvx --offline cmake --build build --target whisper -j 16
+```
+
+Produced in `build/bin/` (CPU variant, every entry either a real file or a
+symlink to one in the same directory):
+
+```
+libwhisper.so -> libwhisper.so.1 -> libwhisper.so.1.9.5
+libggml.so -> libggml.so.0 -> libggml.so.0.26.0
+libggml-base.so -> libggml-base.so.0 -> libggml-base.so.0.26.0
+libggml-cpu.so  -> libggml-cpu.so.0  -> libggml-cpu.so.0.26.0
+```
+
+`whisper-cli` is **not** built (the `whisper` target does not depend on it) and
+is **not** installed — the integration is in-process `ctypes` (ADR 0021).
+
 ## CPU-vs-Vulkan detection rule (ADR 0021)
 
 A Vulkan build is chosen **only when all four** are detected, otherwise the build
