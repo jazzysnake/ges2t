@@ -60,7 +60,7 @@ process. `Type=simple` is correct here: the service does not signal readiness, s
 Check the actual service state through ges2t itself:
 
 ```bash
-ges2t status        # expected: idle
+uv run ges2t status        # expected: idle
 ```
 
 The tray icon appears when the graphical session is up and `ui.tray = true`. The reference
@@ -73,10 +73,15 @@ systemd but works from a terminal, compare those variables:
 systemctl --user show-environment | grep -E 'WAYLAND_DISPLAY|XDG_CURRENT_DESKTOP|DBUS'
 ```
 
-If they are missing, import them through the session's startup scripts (KDE:
-`~/.config/plasma-workspace/env/*.sh`) or restart the systemd user manager within a fresh
-login session. *(This document did not enable or run the unit itself, so the unit running
-under systemd is unverified — see the ticket's `001-comment.md`.)*
+If they are missing, import them from a terminal **inside** the session:
+
+```bash
+systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP DBUS_SESSION_BUS_ADDRESS
+```
+
+or export them from whatever runs at session start. *(This document did not enable or run the
+unit itself, so the unit running under systemd is unverified — see the ticket's
+`001-comment.md`.)*
 
 ## 4. Read its logs
 

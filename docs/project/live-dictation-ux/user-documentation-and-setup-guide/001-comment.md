@@ -235,7 +235,14 @@ XDG_CURRENT_DESKTOP=KDE
 
 $ systemctl --user is-active graphical-session.target
 active
+
+$ systemctl --user show | grep -i DefaultStartLimit
+DefaultStartLimitIntervalUSec=10s
+DefaultStartLimitBurst=5
 ```
+
+The start-rate limit quoted in `autostart.md` ("5 starts in 10 s") is those two values, read
+from the running user manager rather than from documentation.
 
 ### Repo checks (the ticket's quality bar)
 
