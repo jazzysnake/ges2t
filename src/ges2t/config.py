@@ -431,7 +431,7 @@ def load_config(path: Path | None = None) -> ConfigLoadResult:
         injection=InjectionConfig(
             backend=_read_str(
                 injection_table,
-                "backend",
+                CONFIG_KEY_BACKEND,
                 default=INJECTION_DEFAULT_BACKEND,
                 path=resolved,
                 section="injection",

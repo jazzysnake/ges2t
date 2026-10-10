@@ -71,3 +71,102 @@ proves nothing"). The AST scan therefore covers `src/ges2t/` only.
   and character-level parsing literals (`""`, `"0"`/`"1"`/`"9"`, quotes/backslashes).
 
 (Scan results, the commands run, and the leftovers are appended below as the work proceeds.)
+
+## AST scan (DoD item 3)
+
+Script: `/tmp/scan_identifiers.py` (not committed — the ticket calls this a verification step, not a
+committed gate). It walks the AST of `src/ges2t/**/*.py` and reports every string literal in a
+**comparison position**: either side of `==`/`!=`/`in`/`not in`, a `match` pattern, the key argument
+of `.get(<literal>, ...)`, or an `if`/`while` test that is not (only) a `Compare`. Duplicate
+line+literal hits are deduped.
+
+**Static limitation (stated honestly).** The scan sees literals written in those syntactic positions.
+It **cannot** see: a literal used as a dict-literal key (e.g. `{"whistle": builder}`), a key chosen
+dynamically, a value assembled from parts, or a literal inside a helper/container built elsewhere. It
+is a coverage report, not a proof. Two real cases it therefore misses and this ticket nonetheless
+fixed by hand are `pipeline._TRANSCRIBER_BUILDERS`/`_INJECTOR_BUILDERS` (dict-literal keys) and
+`setup_command.SetupBackend` (enum member values) — both are verified by the grep in the inventory
+section, not by the scan.
+
+### Before (main `f7e1c90`)
+
+```
+$ uv run python /tmp/scan_identifiers.py src/ges2t | tail -1
+# distinct literal sites in comparison positions: 56
+```
+
+### After (this branch)
+
+```
+$ uv run python /tmp/scan_identifiers.py src/ges2t | tail -1
+# distinct literal sites in comparison positions: 41
+```
+
+### Removed — every identifier literal the ticket names, gone from comparisons
+
+```
+config.py      [compare] 'backend'
+doctor.py      [compare] 'clipboard'   (x2), 'whistle', 'ydotool' (x2)
+doctor.py      [get-key] 'ydotool'
+pipeline.py    [compare] 'clipboard', 'whisper_cpp', 'whistle'
+pipeline.py    [get-key] 'clipboard', 'whisper_cpp' (x2), 'ydotool'
+socket_proto.py [compare] 'wake'
+```
+
+(`whisper.cpp`, `needle`, `medium-q5_0`, `small-q8_0`, `ptt`, `toggle` were already single definitions
+at enum/constant sites and so never appeared as bare comparison literals — they are now *sourced* from
+`identifiers.py` too, verified by the inventory grep.)
+
+### Remaining 41 sites — all intentionally left, with the exemption for each
+
+The scan reports the *literal text*; a remaining literal is not a failure (the ticket says so
+explicitly). Categorised:
+
+| Leftover | Sites | Why it is not this ticket's scope |
+|---|---|---|
+| Empty-string / control-char validity checks (`''`, `'\x00'`, `'\n'`, `'\r'`) | `doctor.py:275,1079,1081`, `injectors/clipboard.py:521`, `injectors/layout.py:351,431,662`, `injectors/ydotool.py:236,424` | Emptiness/whitespace validation, not an identifier. Naming `""` is noise, not de-duplication. |
+| XDG / environment variable names | `config.py:253` `XDG_CONFIG_HOME`, `doctor.py:411` `YDOTOOL_SOCKET`, `doctor.py:414`/`socket_proto.py:147` `XDG_RUNTIME_DIR`, `model_store.py:494` `XDG_DATA_HOME`, `whisper_engine.py:578` `XDG_CACHE_HOME` | Keys owned by the XDG spec / ydotool, not by ges2t. Epic out-of-scope: "identifiers owned by other projects". |
+| Third-party protocol / reply keys | `doctor.py:479-490` `id`/`info`/`props`/`object.serial` (KWin D-Bus), `injectors/layout.py:293,319` `a(sss)`/`u` (D-Bus signatures), `model_store.py:812` `Content-Length` (HTTP), `transcribers/whistle.py:317-341` `language`/`ttft_ms`/`decode_tps` (cactus-needle JSON) | Upstream vocabulary ges2t does not own. |
+| ges2t's own manifest / wire-protocol field names | `whisper_engine.py:943` `vulkan` (engine.json), `socket_proto.py:164-189` `cmd`/`ok`/`state`/`error`/`message` (one-module NDJSON schema) | Not in the ticket's identifier sets; each schema is built and read in one module and covered by round-trip tests, so there is no cross-module drift to remove here. Listed as a candidate follow-up. |
+| Character-level parsing | `injectors/layout.py:254,271,273` `"`/`\\`, `injectors/clipboard.py:573,575` `1`/`9`/`0` (evdev digit row) | Individual characters in a parser, not identifiers. |
+| Binary / path / native-artifact names | `whisper_engine.py:1154` `git`, `whisper_engine.py:1239` `libggml-vulkan` (native lib prefix), `injectors/ydotool.py:88` `YDOTOOL_BINARY = "ydotool"` | These are executable / file names, a different identifier family (binary names), and `libggml-vulkan` is a third-party artifact prefix. Not in the ticket's sets. |
+| stdlib value | `audio/pw_record.py:194` `sys.byteorder == "big"` | A value of the standard library, not ours. |
+
+Also intentionally left, outside the scan's reach: argparse subcommand names in `cli.py`
+(`"toggle"`, `"ptt-start"`, … as `add_parser` names, `_THIN_CLIENT_COMMANDS`/`_HANDLERS` keys,
+`"backend"` as an argument name) and the `"toggle"` spelling in `service.Command` / `_BINDABLE_COMMANDS`.
+Those are the user-facing CLI surface, each already backed by `service.Command`; they are the
+**command-verb** family, which the ticket does not list, and the bounded-first-pass rule says to leave
+them rather than widen this sweep.
+
+## No behaviour change (DoD item 6)
+
+Every replacement is the same string value. Confirmed by importing the wired modules and printing the
+live values, plus a byte-level grep of all `src/` string literals (no value edited):
+
+```
+config.WHISTLE_ENGINE whistle
+config.INJECTION_DEFAULT_BACKEND ydotool
+ENGINE_ALIASES {'whisper.cpp': 'whisper_cpp'}
+KNOWN_HOTKEY_MODES ('ptt', 'toggle')
+setup tokens ['needle', 'whisper.cpp']
+whistle BLOCK_NAME engine.whistle
+whisper BLOCK_NAME engine.whisper_cpp
+needle default whistle
+whisper defaults medium-q5_0 small-q8_0
+```
+
+`git diff` shows only identifier *sources* changed: no message text, no threshold, no control flow.
+
+## Verification commands (real output)
+
+```
+$ uv run pytest -q
+1230 passed in 9.85s
+
+$ rm -rf .mypy_cache __pycache__ && uv run mypy src/ges2t tests
+Success: no issues found in 65 source files
+```
+
+Baseline on main was the same `1230 passed` (measured, see top); no test was added, deleted, skipped,
+weakened, or rewritten. `tests/` was not touched.
