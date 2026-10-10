@@ -1,7 +1,7 @@
 # Accuracy levers: measure before building a filter
 
 - **Priority:** P1 (the user's stated reason for hesitating to daily-drive it)
-- **Status:** in review
+- **Status:** done
 - **Complexity:** M
 - **Epic:** ../../live-dictation-ux/epic.md
 
