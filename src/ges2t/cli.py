@@ -316,8 +316,11 @@ def build_parser() -> argparse.ArgumentParser:
             "small-q8_0 on CPU only. On success this prints the exact\n"
             "transcriber.engine line to add to your config, which ges2t never\n"
             "edits for you. This is the only ges2t command that uses the\n"
-            "network; everything afterwards runs offline. Safe to re-run: valid\n"
-            "artifacts are left alone."
+            "network; everything afterwards runs offline. Safe to re-run: a\n"
+            "valid engine is left alone, unless the GPU build has become\n"
+            "possible (install the Vulkan dev packages and re-run) and\n"
+            "[engine.whisper_cpp] gpu is not 'cpu', in which case it is\n"
+            "rebuilt as Vulkan; --rebuild forces a rebuild either way."
         ),
     )
     setup.add_argument(
@@ -335,6 +338,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "model to acquire (needle: 'whistle' by default; whisper.cpp: a "
             "<size>-<quant> name such as medium-q5_0)"
+        ),
+    )
+    setup.add_argument(
+        "--rebuild",
+        action="store_true",
+        default=False,
+        help=(
+            "rebuild the whisper.cpp engine even when the installed build is "
+            "already the best available"
         ),
     )
     doctor = subparsers.add_parser(
@@ -536,6 +548,11 @@ def _handle_setup(args: argparse.Namespace) -> int:
     handler stays thin. No package is installed and no build tooling is fetched:
     a missing prerequisite is reported by the engine build's own gate, whose
     exact ``pacman`` line is printed verbatim (never duplicated here).
+
+    The configuration is loaded so the whisper.cpp engine build respects
+    ``[engine.whisper_cpp] gpu`` (ticket 49); a missing file is normal and means
+    the default preference. A rebuild that the variant-aware policy runs prints
+    its one-line reason through the ``notice`` sink.
     """
     from ges2t import model_store
     from ges2t.config import resolve_config_path
@@ -547,9 +564,12 @@ def _handle_setup(args: argparse.Namespace) -> int:
     )
     from ges2t.whisper_engine import WhisperEngineError, cpu_only_build_hint
 
+    config = _load_config(args)
     try:
         plan = plan_setup(
-            getattr(args, "backend", None), getattr(args, "model", None)
+            getattr(args, "backend", None),
+            getattr(args, "model", None),
+            config=config,
         )
     except (SetupError, model_store.ModelStoreError) as exc:
         raise CliError(
@@ -563,7 +583,12 @@ def _handle_setup(args: argparse.Namespace) -> int:
     # the actionable error can appear above the banner that names the plan.
     sys.stdout.flush()
     try:
-        outcome = run_setup(plan, progress=lambda label: _ProgressPrinter(label))
+        outcome = run_setup(
+            plan,
+            progress=lambda label: _ProgressPrinter(label),
+            rebuild=bool(getattr(args, "rebuild", False)),
+            notice=lambda message: print(message),
+        )
     except (SetupError, model_store.ModelStoreError, WhisperEngineError, OSError) as exc:
         raise CliError(
             f"setup failed: {exc}",

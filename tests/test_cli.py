@@ -31,6 +31,7 @@ from ges2t.console_script import resolve_console_script
 from ges2t.model_store import ArtifactPin, Fetcher, ProgressCallback
 from ges2t.service import CommandResponse, ServiceState
 from ges2t.setup_command import SetupDependencies
+from ges2t.transcribers.whisper_cpp_config import GpuPreference
 from ges2t.whisper_engine import (
     SHADER_COMPILER_NAME,
     VULKAN_HEADER_PATH,
@@ -797,6 +798,60 @@ def test_setup_needle_prints_no_cpu_only_hint(
     out = capsys.readouterr().out
     assert "CPU-only" not in out
     assert "pacman" not in out
+
+
+# -- setup: variant-aware rebuild (ticket 49) -----------------------------
+
+
+def test_setup_rebuild_flag_forces_the_engine_build(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fakes = make_fakes(tmp_path)
+    monkeypatch.setattr(
+        setup_command, "default_dependencies", _returns(fakes.dependencies)
+    )
+
+    assert main(["setup", "whisper.cpp", "tiny-q8_0", "--rebuild"]) == EXIT_SUCCESS
+
+    assert fakes.whisper_engine.forces == [True]
+
+
+def test_setup_reads_the_gpu_preference_from_the_config_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fakes = make_fakes(tmp_path)
+    monkeypatch.setattr(
+        setup_command, "default_dependencies", _returns(fakes.dependencies)
+    )
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('[engine.whisper_cpp]\ngpu = "cpu"\n', encoding="utf-8")
+
+    assert (
+        main(["setup", "whisper.cpp", "tiny-q8_0", "--config", str(config_path)])
+        == EXIT_SUCCESS
+    )
+
+    assert fakes.whisper_engine.preferences == [GpuPreference.CPU]
+
+
+def test_setup_prints_the_rebuild_reason_notice(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fakes = make_fakes(tmp_path)
+    monkeypatch.setattr(
+        setup_command, "default_dependencies", _returns(fakes.dependencies)
+    )
+    fakes.whisper_engine.notice_message = (
+        "rebuilding: the Vulkan development packages are now available "
+        "(was CPU-only)"
+    )
+
+    assert main(["setup", "whisper.cpp", "tiny-q8_0"]) == EXIT_SUCCESS
+
+    out = capsys.readouterr().out
+    assert "rebuilding: the Vulkan development packages" in out
 
 
 # -- models ---------------------------------------------------------------
