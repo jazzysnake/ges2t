@@ -53,6 +53,12 @@ inflates replaced blocks); the **model-vs-model ordering on identical audio** is
 result and is stable across all three clips. Full numbers in §3–§10 and
 [`data/timings.md`](data/timings.md); raw runs in [`data/runs.jsonl`](data/runs.jsonl).
 
+> **Addendum (`-nt` caveat, added 2026-10-10):** the `0.062` headline is specific to passing
+> `whisper-cli -nt`, which changes the **decode**, not just the output format. With the CLI's
+> default flags `medium q5_0` scores **0.1562** — still better than Whistle's 0.281, but ~1.8×
+> rather than ~4.5×. A `whisper_cpp` adapter must pin `-nt` deliberately. See
+> [`004-addendum-nt-decode.md`](004-addendum-nt-decode.md).
+
 ## 2. What was measured, and how
 
 ### 2.1 Build
