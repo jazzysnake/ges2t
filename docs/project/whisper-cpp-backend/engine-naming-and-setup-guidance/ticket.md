@@ -1,4 +1,4 @@
-# whisper engine naming: one spelling, and setup tells you what to configure
+# setup guidance: one engine spelling, the config line, and the GPU dev-package hint
 
 - **Priority:** P1
 - **Status:** to do
@@ -22,6 +22,10 @@ they typed is a CLI token, not an engine name, or that `setup` does not (and can
 their config. **One thing, two spellings is the defect.** It is the direct motivation for
 `../../code-quality/epic.md` (ticket 48).
 
+**Second gap, from the same run.** The user has an **AMD GPU and a working Vulkan runtime**, but was
+missing `spirv-headers`, so the engine built **CPU-only with no hint** that one package would give the
+GPU path (the manifest records `"variant": "cpu"`, `"spirv_headers": null`). `setup` should tell them.
+
 ## Definition of done
 
 - [ ] **One canonical engine value, plus a forgiving alias.** `whisper_cpp` is canonical (TOML block
@@ -40,8 +44,13 @@ their config. **One thing, two spellings is the defect.** It is the direct motiv
 - [ ] Tests: the alias normalises in both the CLI and the config value; the block resolves; setup prints
       the line; the rejection names the valid set. **Falsify each** — remove the normalisation, watch a
       test fail, revert.
+- [ ] **When a Vulkan runtime/GPU is present but a Vulkan dev piece is missing**, `ges2t setup`
+      prints a hint **naming the missing package** (e.g. `spirv-headers`) and the consequence
+      (**CPU-only build**), with the exact `pacman` line — a **diagnostic, not an error**: the CPU-only
+      build still succeeds. Distinguish "no GPU at all" (no hint) from "GPU present, dev packages
+      missing" (hint), using the pieces `inspect_vulkan`/`engine.json` already detect.
 - [ ] `uv run pytest` and `uv run mypy src/ges2t tests` green; report counts; no behaviour change beyond
-      the alias and the message.
+      the alias, the messages and the hint.
 
 ## Notes
 
