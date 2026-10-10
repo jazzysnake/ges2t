@@ -432,8 +432,9 @@ recording is `word_diff` 0.281 batch / 0.391 streaming.
 
 **`whisper_cpp` (opt-in)** is whisper.cpp, loaded in-process once at service start. It is much
 more accurate — `medium-q5_0` scores `word_diff` **0.062** on the same recording, roughly **4.5×
-fewer errors** than Whistle — at the cost of latency: **~1.7–3 s per 25 s utterance** on the
-reference Radeon 780M via Vulkan, and about **6× real time** on CPU-only machines. It is
+fewer errors** than Whistle — at the cost of latency: on that 25 s clip it runs in **~1.7 s** on the
+reference Radeon 780M via Vulkan, and on CPU-only machines it is still **faster than realtime**
+(`medium-q5_0` ~19 s, the CPU default `small-q8_0` ~6 s). It is
 **batch-only**: there is **no text until the utterance ends** (whisper's partial-window output
 was measured unstable). Because `streaming.enabled` defaults to `true`, selecting whisper
 requires turning streaming off — otherwise **the service refuses to start**:

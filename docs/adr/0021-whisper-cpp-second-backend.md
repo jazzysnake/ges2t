@@ -45,11 +45,18 @@ See [streaming REPORT](../project/research/whisper-cpp-streaming/REPORT.md).
 ### Why **`medium q5_0` on GPU, `small q8_0` on CPU-only**
 The size sweep found `medium q5_0` the **most accurate model in every condition tested** (car 0.062,
 quiet-short 0.296, quiet-long 0.111) and, on Vulkan, the best accuracy-per-second — 1.72 s for the
-25 s clip, Pareto-dominating every CPU configuration except `tiny`. **CPU, however, is ~6× real time**
-(medium ~24 s for a 30 s clip), so on a CPU-only machine the sensible default is the cheaper
-`small q8_0` (WER 0.141, still better than Whistle's 0.281; upstream publishes **no** `q5_0` for `small`, and `q8_0` scored identically). Quantisation is accuracy-invariant between
+25 s clip, Pareto-dominating every CPU configuration except `tiny`. **CPU is slower than Vulkan but
+still faster than realtime in batch**: on that same 25 s clip `medium q5_0` costs **RTF 1.30**
+(~19.3 s, ≈0.77× realtime) and the cheaper `small q8_0` **RTF 4.3** (~5.9 s, ≈0.23× realtime)
+(`RTF = audio_seconds / wall_seconds`;
+[provider REPORT §8](../project/research/whisper-cpp-provider/REPORT.md)). So on a CPU-only machine the
+sensible default is the **lower-latency** `small q8_0` — not because `medium` is unusable — and it is
+still better than Whistle's 0.281 (WER 0.141; upstream publishes **no** `q5_0` for `small`, and
+`q8_0` scored identically). Quantisation is accuracy-invariant between
 `q5_0`/`q8_0` and **`f16` is never better** (only slower and larger), so `q5_0` is chosen for size.
-See [provider REPORT §3, §4, §8, §9](../project/research/whisper-cpp-provider/REPORT.md).
+(The "~6× real time" figure seen elsewhere is whisper's **streaming** CPU duty, a regime this ADR's
+batch-only decision excludes.) See
+[provider REPORT §3, §4, §8, §9](../project/research/whisper-cpp-provider/REPORT.md).
 
 ### Why **`-nt` is pinned**
 `-nt` is a **decode** switch, not an output-format switch: the same model on the same clip scores

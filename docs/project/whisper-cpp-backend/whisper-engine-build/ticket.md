@@ -10,7 +10,8 @@
 The in-process shape (ADR 0021) needs `libwhisper.so` plus the `libggml*.so` libraries, built for
 **this machine**. The provider research built them by hand from source and verified the result:
 whisper.cpp `v1.9.5`, a CPU build and a `-DGGML_VULKAN=ON` build, both used successfully. The GPU
-build is what makes `medium-q5_0` ~2 s instead of ~6× real time.
+build is what makes `medium-q5_0` run in ~1.7 s for the 25 s clip instead of ~19 s on CPU
+(RTF 14.6 vs 1.30; a CPU build is still faster than realtime, just ~11× slower than Vulkan).
 
 Per the user's decision, `ges2t setup` **builds** this, but **never installs packages**: it checks its
 prerequisites and fails with the exact command. It also **never fetches build tooling**.
