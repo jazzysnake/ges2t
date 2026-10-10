@@ -34,7 +34,10 @@ from ges2t.config import (
 )
 from ges2t.pipeline import PipelineError
 from ges2t.transcribers.whisper_cpp import WhisperCppTranscriber
-from ges2t.transcribers.whisper_cpp_config import WhisperCppConfigError
+from ges2t.transcribers.whisper_cpp_config import (
+    WhisperCppConfig,
+    WhisperCppConfigError,
+)
 from ges2t.ui.status import NullStatusUI
 from ges2t.whisper_engine import (
     ENTRY_LIBRARY_NAME,
@@ -98,24 +101,74 @@ def test_config_rejects_an_unknown_engine_naming_whisper_cpp(tmp_path: Path) -> 
     assert "whisper_cpp" in str(excinfo.value)
 
 
-def test_the_generic_parse_never_probes_the_machine_for_a_model(
+def test_the_generic_parse_never_probes_the_machine(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    # The device-aware default is applied at build time, not while parsing: a pure
-    # ADR 0009 parse must stay side-effect-free (ticket 45). If `load_config`
-    # called the rule, this would raise.
-    def _boom(system: object = None) -> str:
-        raise AssertionError("config parse must not probe the machine")
+    """A pure ADR 0009 parse must touch **no** hardware probe (ticket 45, review T1).
 
-    monkeypatch.setattr(whisper_engine, "default_whisper_model", _boom)
+    Every probe entry point reachable from the engine module is instrumented --
+    ``HostSystemProbe``, ``inspect_vulkan``, ``default_whisper_model``,
+    ``shutil.which`` and ``Path.is_file`` -- so this fails if ``load_config``
+    reaches for the machine by *any* of them, not only through the shared rule.
+    The guard is proved live before it is trusted, so the test cannot pass for a
+    reason other than "``load_config`` probed nothing".
+    """
+    probes: list[str] = []
+
+    class _RecordingProbe:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            probes.append("HostSystemProbe")
+
+        def executable(self, name: str) -> None:
+            probes.append("executable")
+
+        def header(self, relative_path: str) -> None:
+            probes.append("header")
+
+        def library(self, name: str) -> None:
+            probes.append("library")
+
+    def _recording_inspect(system: object) -> whisper_engine.VulkanStatus:
+        probes.append("inspect_vulkan")
+        return whisper_engine.VulkanStatus(
+            runtime=None, headers=None, spirv_headers=None, shader_compiler=None
+        )
+
+    def _recording_default(system: object = None) -> str:
+        probes.append("default_whisper_model")
+        return "small-q8_0"
+
+    def _recording_which(name: str, path: str | None = None) -> None:
+        probes.append("shutil.which")
+
+    real_is_file = Path.is_file
+
+    def _recording_is_file(self: Path) -> bool:
+        probes.append("Path.is_file")
+        return real_is_file(self)
+
+    monkeypatch.setattr(whisper_engine, "HostSystemProbe", _RecordingProbe)
+    monkeypatch.setattr(whisper_engine, "inspect_vulkan", _recording_inspect)
+    monkeypatch.setattr(whisper_engine, "default_whisper_model", _recording_default)
+    monkeypatch.setattr(whisper_engine.shutil, "which", _recording_which)
+    monkeypatch.setattr(Path, "is_file", _recording_is_file)
+
+    # The guard is live: the reviewer's mutation -- a *direct* engine probe -- is
+    # recorded, so a parse that reached the machine by this path would fail below.
+    whisper_engine.inspect_vulkan(whisper_engine.HostSystemProbe())
+    assert probes == ["HostSystemProbe", "inspect_vulkan"]
+    probes.clear()
+
     path = tmp_path / "config.toml"
     path.write_text(
         '[transcriber]\nengine = "whisper_cpp"\n\n[engine.whisper_cpp]\nlanguage = "en"\n',
         encoding="utf-8",
     )
     result = load_config(path)
-    # The block crosses the boundary verbatim: the generic layer never inspects it.
+
+    # The block crosses the boundary verbatim, and a pure parse probed nothing.
     assert result.config.engine_blocks["whisper_cpp"] == {"language": "en"}
+    assert probes == []
 
 
 # --- the device-aware default model -------------------------------------------
@@ -169,6 +222,31 @@ def test_build_transcriber_resolves_an_omitted_whisper_model(
     )
     assert isinstance(transcriber, WhisperCppTranscriber)
     assert transcriber.config.model == "tiny-q8_0"
+
+
+def test_a_directly_constructed_adapter_resolves_the_default_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The adapter's safety net resolves an omitted model once, at load time (ticket 45).
+
+    The composition root normally resolves it, so this pins the fallback for a
+    directly-constructed ``WhisperCppTranscriber(WhisperCppConfig())``: without it
+    ``model_store.whisper_model_path(None)`` would fail. It is resolved once and
+    cached.
+    """
+    calls: list[str] = []
+
+    def _recording_default(system: object = None) -> str:
+        calls.append("default_whisper_model")
+        return "tiny-q8_0"
+
+    monkeypatch.setattr(whisper_engine, "default_whisper_model", _recording_default)
+    adapter = WhisperCppTranscriber(WhisperCppConfig())
+    assert adapter.config.model is None  # the raw config stays unresolved
+    assert adapter._model_name() == "tiny-q8_0"  # noqa: SLF001
+    assert adapter._model_name() == "tiny-q8_0"  # noqa: SLF001 - cached
+    assert calls == ["default_whisper_model"]
+    assert adapter._model_path() == model_store.whisper_model_path("tiny-q8_0")  # noqa: SLF001
 
 
 def test_build_transcriber_still_validates_every_whisper_value() -> None:
