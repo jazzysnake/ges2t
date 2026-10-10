@@ -1,7 +1,7 @@
 # A batch-only engine must not require an explicit `streaming.enabled = false`
 
 - **Priority:** P1
-- **Status:** to do
+- **Status:** in progress
 - **Complexity:** S
 - **Epic:** ../epic.md
 

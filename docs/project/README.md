@@ -103,7 +103,7 @@ utterance on the Radeon 780M. Evidence:
 | 46 | [whisper-doctor](whisper-cpp-backend/whisper-doctor/ticket.md) — engine library / model / Vulkan checks | S | done | 41, 42, 43 | feat/whisper-doctor (merged 4b798bf) |
 | 47 | [engine-naming-and-setup-guidance](whisper-cpp-backend/engine-naming-and-setup-guidance/ticket.md) — one canonical engine spelling + a `whisper.cpp` alias; `setup` prints the config line, and names a missing Vulkan dev package when a GPU is present | S | done | 45 | feat/engine-naming-and-setup-guidance (merged 05603a2) |
 | 49 | [whisper-engine-variant-rebuild](whisper-cpp-backend/whisper-engine-variant-rebuild/ticket.md) — re-running `setup` upgrades a CPU-only build to Vulkan once the dev package is installed (variant-aware idempotency) | S | to do | 42 | — |
-| 50 | [streaming-default-for-batch-engines](whisper-cpp-backend/streaming-default-for-batch-engines/ticket.md) — selecting a batch-only engine must not require an explicit `streaming.enabled = false`; only an explicit `true` errors | S | to do | 45 | — |
+| 50 | [streaming-default-for-batch-engines](whisper-cpp-backend/streaming-default-for-batch-engines/ticket.md) — selecting a batch-only engine must not require an explicit `streaming.enabled = false`; only an explicit `true` errors | S | in progress | 45 | feat/streaming-default-for-batch-engines |
 
 ---
 
