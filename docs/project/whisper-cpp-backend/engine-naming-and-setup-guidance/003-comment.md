@@ -70,3 +70,27 @@ doctor fix    : a Vulkan runtime is present, but the GPU build is missing spirv-
 doctor fix == shared sentence: True
 cpu_only_build_hint(cpu_build, probe) == vulkan_dev_package_hint(inspect_vulkan(probe)): True
 ```
+
+## Verification (real output)
+
+```
+$ uv run pytest -q
+1194 passed in 8.37s
+
+$ rm -rf .mypy_cache __pycache__ && uv run mypy src/ges2t tests
+Success: no issues found in 64 source files
+```
+
+`1188` immediately after the merge (ticket 46 added 29 tests to the 1159 baseline); the dedupe
+adds 6 net test cases. No test was removed or weakened:
+`git diff -- tests/ | grep '^-def test_'` is empty on this branch.
+
+## Falsification (single-source pin, each reverted)
+
+| # | What was reworded | Command | Result |
+|---|---|---|---|
+| D1 | `setup`'s wrapper returns the shared sentence plus `" (reworded)"` | `pytest tests/test_whisper_engine.py tests/test_setup_command.py tests/test_cli.py -k "cpu_only or shared or hint"` | `3 failed, 15 passed` |
+| D2 | `doctor`'s fix built its own string instead of the shared helper | `pytest tests/test_doctor.py -k "shared or same_sentence or missing_dev_package or only_spirv"` | `3 failed, 118 deselected` |
+
+Both reverted with `git checkout -- <file>`; `git diff --stat` was empty before the final run
+and the tree is clean.
