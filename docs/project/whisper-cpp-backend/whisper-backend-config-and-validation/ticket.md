@@ -1,7 +1,7 @@
 # whisper backend config and startup validation
 
 - **Priority:** P1
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** S
 - **Epic:** ../epic.md
 

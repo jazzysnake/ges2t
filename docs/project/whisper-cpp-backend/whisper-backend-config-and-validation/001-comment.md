@@ -3,7 +3,17 @@
 - **Ticket:** `docs/project/whisper-cpp-backend/whisper-backend-config-and-validation/ticket.md`
 - **Branch:** `feat/whisper-backend-config-and-validation`
 - **Worktree:** `.worktrees/whisper-backend-config-and-validation`
-- **Status:** in progress
+- **Status:** in review
+
+## Final verification (re-run on the final commit)
+
+```
+$ uv run pytest -q
+1128 passed in 7.96s
+
+$ rm -rf .mypy_cache __pycache__ && uv run mypy src/ges2t tests
+Success: no issues found in 64 source files
+```
 
 ## Scope read first
 
