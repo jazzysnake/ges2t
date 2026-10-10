@@ -172,4 +172,8 @@ worktree's venv has `gi`. The check runs no microphone, clipboard, keystroke, wi
   is an accurate statement about doctor's own wiring.
 - All probes are read-only (`inspect_vulkan`, `read_build`, `is_file`, `stat`); doctor still does no
   network I/O, writes nothing and touches no device.
+- `main` advanced with two planning-only commits (tickets 49, 50) after this branch was cut; `main`
+  was merged in at the end (README row conflict resolved by keeping main's rows 47/49/50 and this
+  ticket's row 46) so `git diff main` shows only this ticket's changes. The merge touched no code;
+  pytest/mypy above are the post-merge run.
 
