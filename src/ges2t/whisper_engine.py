@@ -108,6 +108,7 @@ __all__ = [
     "prerequisites_for",
     "read_build",
     "verify_build",
+    "vulkan_dev_package_hint",
 ]
 
 # --- The pinned engine (ADR 0021) --------------------------------------------
@@ -373,6 +374,24 @@ class VulkanStatus:
         if self.shader_compiler is None:
             names.append("shader compiler (shaderc)")
         return tuple(names)
+
+    @property
+    def missing_packages(self) -> tuple[str, ...]:
+        """The Arch packages for the **dev** pieces that were not found.
+
+        The Vulkan runtime is deliberately excluded: its absence selects the
+        CPU-only build (ADR 0021 §7) and no installable dev package is implied.
+        This is the list :func:`vulkan_dev_package_hint` names, so the GPU-path
+        hint is a package list, not a prose list.
+        """
+        packages: list[str] = []
+        if self.headers is None:
+            packages.append(PACKAGE_VULKAN_HEADERS)
+        if self.spirv_headers is None:
+            packages.append(PACKAGE_SPIRV_HEADERS)
+        if self.shader_compiler is None:
+            packages.append(PACKAGE_SHADERC)
+        return tuple(packages)
 
     def summary(self) -> str:
         """One line naming the detected device libraries or what is missing."""
@@ -789,6 +808,31 @@ def default_whisper_model(system: SystemProbe | None = None) -> str:
     if inspect_vulkan(probe).available:
         return DEFAULT_WHISPER_MODEL_GPU
     return DEFAULT_WHISPER_MODEL_CPU
+
+
+def vulkan_dev_package_hint(status: VulkanStatus) -> str | None:
+    """Explain a CPU-only build when a GPU runtime is present but dev pieces are missing.
+
+    This is the one wording for the fact both ``ges2t setup`` (ticket 47) and
+    ``ges2t doctor`` (ticket 46) surface: a machine with a Vulkan **runtime** but
+    a missing **dev** package (``spirv-headers`` and friends) silently builds
+    CPU-only, and one ``pacman`` line would instead enable the GPU path. Keeping
+    it here, next to :func:`inspect_vulkan`, means the two commands cannot drift.
+
+    Returns ``None`` in the two cases where there is nothing to say: no Vulkan
+    runtime at all (a GPU is not simply one package away) and every dev piece
+    already present. The returned sentence already names the package(s) and the
+    exact ``pacman`` line, so a caller can print it verbatim as a hint or a fix.
+    """
+    if status.runtime is None or status.available:
+        return None
+    packages = status.missing_packages
+    return (
+        "a Vulkan runtime is present, but the GPU build is missing "
+        f"{', '.join(packages)}, so the engine builds CPU-only; install them with "
+        f"'{PACMAN_PREFIX} {' '.join(packages)}' and rebuild with "
+        "'ges2t setup whisper.cpp <model>' to enable the GPU path"
+    )
 
 
 # --- Manifest ------------------------------------------------------------------

@@ -23,8 +23,15 @@ from pathlib import Path
 
 import pytest
 
-from ges2t import cli, doctor, model_store
-from ges2t.config import Config, ConfigError, ConfigLoadResult, default_config
+from ges2t import cli, doctor, model_store, whisper_engine
+from ges2t.config import (
+    Config,
+    ConfigError,
+    ConfigLoadResult,
+    StreamingConfig,
+    TranscriberConfig,
+    default_config,
+)
 from ges2t.doctor import (
     EXIT_FAILURE,
     EXIT_SUCCESS,
@@ -52,6 +59,9 @@ from ges2t.doctor import (
     check_tray_failures,
     check_uinput,
     check_versions,
+    check_vulkan,
+    check_whisper_engine,
+    check_whisper_model,
     check_ydotoold,
     diagnose_config,
     diagnose_engine_config,
@@ -70,9 +80,10 @@ from ges2t.injectors.layout import (
     ResolvedLayout,
     YdotoolConfig,
 )
-from ges2t.model_store import ArtifactPin
+from ges2t.model_store import ArtifactPin, WhisperModel, WhisperModelName
 from ges2t.transcribers.whistle_config import WhistleConfigError
 from ges2t.ui.status import TrayFailure
+from tests.test_setup_command import FakeSystemProbe
 
 # -- helpers ---------------------------------------------------------------
 
@@ -366,6 +377,347 @@ def test_engine_present_fail_when_no_pin_exists(tmp_path: Path) -> None:
 
     assert result.status is CheckStatus.FAIL
     assert result.fix is not None and "linux-x86_64" in result.fix
+
+
+# -- whisper.cpp checks (ticket 46) ----------------------------------------
+
+#: A Vulkan dev piece that is *missing* on the reference machine (ticket 47).
+_RUNTIME_ONLY_PROBE = FakeSystemProbe(libraries=(whisper_engine.VULKAN_LIBRARY_NAME,))
+
+#: The reference machine's shape: runtime, headers and ``glslc`` present, ``spirv-headers``
+#: missing (ticket 47's user report: an AMD GPU, a working runtime, no ``spirv-headers``).
+_MISSING_SPIRV_PROBE = FakeSystemProbe(
+    executables=(whisper_engine.SHADER_COMPILER_NAME,),
+    headers=(whisper_engine.VULKAN_HEADER_PATH,),
+    libraries=(whisper_engine.VULKAN_LIBRARY_NAME,),
+)
+
+
+def _vulkan_probe() -> FakeSystemProbe:
+    """A machine whose Vulkan runtime, headers and ``glslc`` are all present."""
+    return FakeSystemProbe(
+        executables=(whisper_engine.SHADER_COMPILER_NAME,),
+        headers=(whisper_engine.VULKAN_HEADER_PATH, whisper_engine.SPIRV_HEADER_PATH),
+        libraries=(whisper_engine.VULKAN_LIBRARY_NAME,),
+    )
+
+
+def _cpu_probe() -> FakeSystemProbe:
+    """A machine with no Vulkan at all."""
+    return FakeSystemProbe()
+
+
+def _write_whisper_engine(
+    directory: Path,
+    *,
+    variant: str = "cpu",
+    libraries: tuple[str, ...] = ("libggml.so",),
+    entry: str = "libwhisper.so",
+) -> Path:
+    """Write a manifest-bearing whisper.cpp install (empty library files)."""
+    directory.mkdir(parents=True, exist_ok=True)
+    for name in (entry, *libraries):
+        (directory / name).write_bytes(b"lib")
+    manifest = {
+        "version": whisper_engine.WHISPER_CPP_VERSION,
+        "tag": whisper_engine.WHISPER_CPP_TAG,
+        "revision": whisper_engine.WHISPER_CPP_REVISION,
+        "variant": variant,
+        "entry_library": entry,
+        "libraries": list(libraries),
+        "built_at": "2026-10-10T00:00:00+00:00",
+        "vulkan": {
+            "runtime": None,
+            "headers": None,
+            "spirv_headers": None,
+            "shader_compiler": None,
+        },
+    }
+    (directory / whisper_engine.MANIFEST_NAME).write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    return directory
+
+
+def _whisper_config(
+    *, streaming: bool = False, block: dict[str, object] | None = None
+) -> Config:
+    """A config selecting whisper.cpp, with an explicit model by default."""
+    return Config(
+        transcriber=TranscriberConfig(engine="whisper_cpp"),
+        streaming=StreamingConfig(enabled=streaming),
+        engine_blocks={"whisper_cpp": block or {"model": "tiny-q8_0"}},
+    )
+
+
+def _sparse_file(path: Path, size: int) -> None:
+    """Create ``path`` (and parents) as a sparse file of exactly ``size`` bytes."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as handle:
+        handle.truncate(size)
+
+
+# skip: a whistle selection is OK/skipped, never a false failure --------------
+
+@pytest.mark.parametrize(
+    "check", [check_whisper_engine, check_whisper_model, check_vulkan]
+)
+def test_whisper_checks_are_skipped_for_another_engine(
+    check: object,
+) -> None:
+    result = check(default_config())  # type: ignore[operator]
+
+    assert result.status is CheckStatus.OK
+    assert "skipped" in result.summary
+    assert "'whistle'" in result.summary
+
+
+# engine built ----------------------------------------------------------------
+
+def test_whisper_engine_fails_when_not_built(tmp_path: Path) -> None:
+    result = check_whisper_engine(_whisper_config(), directory=tmp_path / "absent")
+
+    assert result.status is CheckStatus.FAIL
+    assert "not built" in result.summary
+    assert result.fix is not None and "ges2t setup whisper.cpp" in result.fix
+
+
+def test_whisper_engine_ok_reports_the_cpu_variant(tmp_path: Path) -> None:
+    directory = _write_whisper_engine(tmp_path / "engine", variant="cpu")
+
+    result = check_whisper_engine(_whisper_config(), directory=directory)
+
+    assert result.status is CheckStatus.OK
+    assert "libwhisper.so" in result.summary
+    assert "CPU-only" in result.summary
+
+
+def test_whisper_engine_ok_reports_the_vulkan_variant(tmp_path: Path) -> None:
+    directory = _write_whisper_engine(tmp_path / "engine", variant="vulkan")
+
+    result = check_whisper_engine(_whisper_config(), directory=directory)
+
+    assert result.status is CheckStatus.OK
+    assert "Vulkan (GPU)" in result.summary
+
+
+def test_whisper_engine_fails_when_a_library_is_renamed(tmp_path: Path) -> None:
+    directory = _write_whisper_engine(tmp_path / "engine")
+    (directory / "libwhisper.so").rename(directory / "libwhisper.so.bak")
+
+    result = check_whisper_engine(_whisper_config(), directory=directory)
+
+    assert result.status is CheckStatus.FAIL
+    assert "libwhisper.so" in result.summary
+    assert result.fix is not None and "ges2t setup whisper.cpp" in result.fix
+
+
+def test_whisper_engine_fails_when_the_manifest_is_unreadable(tmp_path: Path) -> None:
+    directory = _write_whisper_engine(tmp_path / "engine")
+    (directory / whisper_engine.MANIFEST_NAME).write_text("{not json", encoding="utf-8")
+
+    result = check_whisper_engine(_whisper_config(), directory=directory)
+
+    assert result.status is CheckStatus.FAIL
+    assert "unreadable" in result.summary
+
+
+# model -----------------------------------------------------------------------
+
+def test_whisper_model_fails_when_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(model_store, "default_data_dir", lambda: tmp_path)
+
+    result = check_whisper_model(_whisper_config(), system=_cpu_probe())
+
+    assert result.status is CheckStatus.FAIL
+    assert "ggml-tiny-q8_0.bin" in result.summary
+    assert str(model_store.whisper_model("tiny-q8_0").size_bytes) in result.summary
+    assert result.fix is not None and "setup whisper.cpp tiny-q8_0" in result.fix
+
+
+def test_whisper_model_ok_when_present_at_the_pinned_size(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(model_store, "default_data_dir", lambda: tmp_path)
+    entry = model_store.whisper_model("tiny-q8_0")
+    _sparse_file(model_store.whisper_model_path("tiny-q8_0"), entry.size_bytes)
+
+    result = check_whisper_model(_whisper_config(), system=_cpu_probe())
+
+    assert result.status is CheckStatus.OK
+    assert "ggml-tiny-q8_0.bin" in result.summary
+    assert "--verify" in result.summary
+
+
+def test_whisper_model_fails_on_the_wrong_size(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(model_store, "default_data_dir", lambda: tmp_path)
+    _sparse_file(model_store.whisper_model_path("tiny-q8_0"), 10)
+
+    result = check_whisper_model(_whisper_config(), system=_cpu_probe())
+
+    assert result.status is CheckStatus.FAIL
+    assert "10 bytes" in result.summary
+
+
+def test_whisper_model_verified_fails_on_a_corrupt_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(model_store, "default_data_dir", lambda: tmp_path)
+    entry = model_store.whisper_model("tiny-q8_0")
+    # The right size but the wrong bytes: a truncated/bit-rotted download.
+    _sparse_file(model_store.whisper_model_path("tiny-q8_0"), entry.size_bytes)
+
+    result = check_whisper_model(_whisper_config(), verify=True, system=_cpu_probe())
+
+    assert result.status is CheckStatus.FAIL
+    assert "pinned sha256" in result.summary
+    assert entry.sha256 in result.summary
+
+
+def test_whisper_model_verified_ok_when_the_sha256_matches(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(model_store, "default_data_dir", lambda: tmp_path)
+    payload = b"tiny-model-bytes"
+    fake = WhisperModel(
+        model=WhisperModelName(size="tiny", quant="q8_0"),
+        url="https://example.invalid/ggml-tiny-q8_0.bin",
+        sha256=hashlib.sha256(payload).hexdigest(),
+        size_bytes=len(payload),
+    )
+    monkeypatch.setattr(model_store, "whisper_model", lambda name: fake)
+    _write_payload(model_store.whisper_model_path("tiny-q8_0"), payload)
+
+    result = check_whisper_model(_whisper_config(), verify=True, system=_cpu_probe())
+
+    assert result.status is CheckStatus.OK
+    assert "matches the pinned sha256" in result.summary
+
+
+def test_whisper_model_uses_the_configured_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(model_store, "default_data_dir", lambda: tmp_path)
+    config = _whisper_config(block={"model": "medium-q5_0"})
+
+    result = check_whisper_model(config, system=_cpu_probe())
+
+    assert result.status is CheckStatus.FAIL
+    assert "ggml-medium-q5_0.bin" in result.summary
+
+
+def test_whisper_model_fails_on_an_invalid_block(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(model_store, "default_data_dir", lambda: tmp_path)
+
+    result = check_whisper_model(
+        _whisper_config(block={"model": "small-q5_0"}), system=_cpu_probe()
+    )
+
+    assert result.status is CheckStatus.FAIL
+    assert "engine.whisper_cpp" in result.summary
+
+
+# vulkan ----------------------------------------------------------------------
+
+def test_vulkan_warns_without_a_runtime_and_names_the_cpu_cost(
+    tmp_path: Path,
+) -> None:
+    result = check_vulkan(
+        _whisper_config(), system=_cpu_probe(), directory=tmp_path / "absent"
+    )
+
+    assert result.status is CheckStatus.WARN
+    assert "RTF 1.30" in result.summary
+    assert "small-q8_0" in result.summary
+    assert result.fix is not None and "sudo pacman -S" in result.fix
+
+
+def test_vulkan_warns_with_the_missing_dev_package_when_a_gpu_is_present(
+    tmp_path: Path,
+) -> None:
+    result = check_vulkan(
+        _whisper_config(),
+        system=_RUNTIME_ONLY_PROBE,
+        directory=tmp_path / "absent",
+    )
+
+    assert result.status is CheckStatus.WARN
+    assert "spirv-headers" in result.summary
+    assert "CPU-only" in result.summary
+    assert result.fix is not None
+    assert "spirv-headers" in result.fix and "pacman" in result.fix
+
+
+def test_vulkan_names_only_spirv_headers_when_that_is_the_missing_piece(
+    tmp_path: Path,
+) -> None:
+    # The reference machine's exact shape (ticket 47): GPU + runtime present, one
+    # dev package missing. Only that package may be named -- one package enables
+    # the GPU path.
+    result = check_vulkan(
+        _whisper_config(),
+        system=_MISSING_SPIRV_PROBE,
+        directory=tmp_path / "absent",
+    )
+
+    assert result.status is CheckStatus.WARN
+    assert "spirv-headers" in result.summary
+    assert "vulkan-headers" not in result.summary
+    assert "shaderc" not in result.summary
+    assert result.fix is not None
+    assert "sudo pacman -S spirv-headers" in result.fix
+
+
+def test_vulkan_ok_with_a_vulkan_engine(tmp_path: Path) -> None:
+    directory = _write_whisper_engine(tmp_path / "engine", variant="vulkan")
+
+    result = check_vulkan(_whisper_config(), system=_vulkan_probe(), directory=directory)
+
+    assert result.status is CheckStatus.OK
+    assert "built with Vulkan" in result.summary
+
+
+def test_vulkan_ok_without_an_engine_when_vulkan_is_available(tmp_path: Path) -> None:
+    result = check_vulkan(
+        _whisper_config(), system=_vulkan_probe(), directory=tmp_path / "absent"
+    )
+
+    assert result.status is CheckStatus.OK
+    assert "will build the Vulkan variant" in result.summary
+
+
+def test_vulkan_warns_when_vulkan_is_available_but_the_engine_is_cpu_only(
+    tmp_path: Path,
+) -> None:
+    directory = _write_whisper_engine(tmp_path / "engine", variant="cpu")
+
+    result = check_vulkan(_whisper_config(), system=_vulkan_probe(), directory=directory)
+
+    assert result.status is CheckStatus.WARN
+    assert "built CPU-only" in result.summary
+    assert result.fix is not None and "rebuild" in result.fix
+
+
+# startup rejection -----------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "check", [check_whisper_engine, check_whisper_model, check_vulkan]
+)
+def test_whisper_checks_explain_the_startup_rejection(check: object) -> None:
+    config = _whisper_config(streaming=True)
+
+    result = check(config)  # type: ignore[operator]
+
+    assert result.status is CheckStatus.FAIL
+    assert "will not start" in result.summary
+    assert "streaming.enabled = true" in result.summary
+    assert result.fix is not None and "streaming.enabled = false" in result.fix
 
 
 # -- cactus-needle importable ----------------------------------------------
@@ -939,6 +1291,68 @@ def test_build_report_runs_every_check_and_merges_block_warnings(tmp_path: Path)
     warnings_line = next(r for r in report.results if r.name == "Config warnings")
     assert warnings_line.status is CheckStatus.WARN
     assert "bogus_key" in warnings_line.summary
+
+
+def test_build_report_adds_the_whisper_checks_and_keeps_two_by_design_warnings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _stub_model_dir(monkeypatch, tmp_path)
+
+    report = build_report(
+        default_config(),
+        DoctorOptions(config_path=tmp_path / "missing.toml", probes=_PASSING_PROBES),
+    )
+
+    names = [result.name for result in report.results]
+    assert names[:8] == [
+        "Package imports",
+        "Architecture",
+        "Model present",
+        "Model verified",
+        "Engine present",
+        "Whisper engine built",
+        "Whisper model",
+        "Vulkan device",
+    ]
+    # With the default whistle engine the three whisper checks are OK/skipped, not
+    # false failures; the two by-design WARNs (Hotkey bindings, Tray failures) hold.
+    assert {result.name for result in report.warnings} == {
+        "Hotkey bindings",
+        "Tray failures",
+    }
+    skipped = [
+        result
+        for result in report.results
+        if result.name in {"Whisper engine built", "Whisper model", "Vulkan device"}
+    ]
+    assert all(result.status is CheckStatus.OK for result in skipped)
+    assert all("skipped" in result.summary for result in skipped)
+    assert report.exit_code == EXIT_SUCCESS
+
+
+def test_build_report_runs_the_whisper_checks_for_a_whisper_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _stub_model_dir(monkeypatch, tmp_path)
+    engine_dir = _write_whisper_engine(tmp_path / "engine")
+    entry = model_store.whisper_model("tiny-q8_0")
+    _sparse_file(model_store.whisper_model_path("tiny-q8_0"), entry.size_bytes)
+    probes = replace(
+        _PASSING_PROBES,
+        whisper_engine_dir=lambda: engine_dir,
+        system_probe=_cpu_probe(),
+    )
+
+    report = build_report(
+        _whisper_config(),
+        DoctorOptions(config_path=tmp_path / "missing.toml", probes=probes),
+    )
+
+    by_name = {result.name: result for result in report.results}
+    assert by_name["Whisper engine built"].status is CheckStatus.OK
+    assert by_name["Whisper model"].status is CheckStatus.OK
+    assert by_name["Vulkan device"].status is CheckStatus.WARN
+    assert report.exit_code == EXIT_SUCCESS
 
 
 def test_build_report_carries_the_resolved_console_script_into_the_bindings(
