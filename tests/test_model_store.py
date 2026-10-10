@@ -140,9 +140,23 @@ def data_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]
 
 @pytest.fixture()
 def fake_pins(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Replace the real pins with small synthetic ones (no network, fast)."""
+    """Replace the real pins with small synthetic ones (no network, fast).
+
+    The acquisition reads the needle catalogue, so the synthetic pin replaces the
+    default entry's ``NeedleModel`` (not just the ``MODEL_PIN`` constant).
+    """
     monkeypatch.setattr(model_store, "MODEL_PIN", MODEL_TEST_PIN)
     monkeypatch.setattr(model_store, "ENGINE_PIN", ENGINE_TEST_PIN)
+    synthetic = model_store.NeedleModel(
+        name=model_store.DEFAULT_NEEDLE_MODEL,
+        version=model_store.MODEL_VERSION,
+        pin=MODEL_TEST_PIN,
+    )
+    monkeypatch.setattr(
+        model_store,
+        "NEEDLE_CATALOGUE",
+        MappingProxyType({synthetic.name: synthetic}),
+    )
 
 
 # --- pins and platform --------------------------------------------------------

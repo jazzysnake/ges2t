@@ -57,6 +57,12 @@ __all__ = [
     "MODEL_SIZE",
     "MODEL_URL",
     "MODEL_VERSION",
+    "DEFAULT_NEEDLE_MODEL",
+    "NEEDLE_CATALOGUE",
+    "NEEDLE_MODELS",
+    "NeedleModel",
+    "NeedleModelNameError",
+    "needle_model",
     "PINNED_CACTUS_NEEDLE_VERSION",
     "PLATFORM_KEY",
     "SUPPORTED_ENGINE_PLATFORMS",
@@ -190,6 +196,29 @@ class ArtifactPin:
 
 
 @dataclass(frozen=True)
+class NeedleModel:
+    """A selectable needle/Whistle model: its name, version directory and pin.
+
+    The needle model argument is **data, not a hardcoded literal** (ADR 0021 §10):
+    the catalogue below is the single source of truth for which needle model
+    names ``ges2t setup needle <model>`` accepts, and each entry owns the
+    :class:`ArtifactPin` and destination path for its ``.cact`` file. Today the
+    catalogue has exactly one upstream-published entry (``whistle``); a future
+    needle release adds one here without touching the setup command.
+    """
+
+    name: str
+    version: str
+    pin: ArtifactPin
+
+    def path(self) -> Path:
+        """Return ``<data_dir>/models/<name>/<version>/<file>``."""
+        return (
+            default_data_dir() / "models" / self.name / self.version / self.pin.name
+        )
+
+
+@dataclass(frozen=True)
 class WhisperModelName:
     """A parsed whisper.cpp model name: a size and a quantisation.
 
@@ -265,6 +294,22 @@ MODEL_PIN: ArtifactPin = ArtifactPin(
     sha256=MODEL_SHA256,
     size=MODEL_SIZE,
 )
+
+#: The needle/Whistle model catalogue. `whistle` is the only upstream-published
+#: ``.cact`` ges2t pins today, and the default needle model; the catalogue exists
+#: so ``ges2t setup needle <model>`` validates the name against data rather than
+#: a hardcoded literal (ADR 0021 §10).
+NEEDLE_MODELS: tuple[NeedleModel, ...] = (
+    NeedleModel(name="whistle", version=MODEL_VERSION, pin=MODEL_PIN),
+)
+
+#: The needle catalogue keyed by name, for O(1) lookup and printing.
+NEEDLE_CATALOGUE: Mapping[str, NeedleModel] = MappingProxyType(
+    {model.name: model for model in NEEDLE_MODELS}
+)
+
+#: The needle model ``ges2t setup`` acquires when no model is named (ADR 0017).
+DEFAULT_NEEDLE_MODEL: str = NEEDLE_MODELS[0].name
 
 #: The Needle 3 engine pin (x86-64 manylinux).
 ENGINE_PIN: ArtifactPin = ArtifactPin(
@@ -419,6 +464,22 @@ class WhisperModelNameError(ModelStoreError):
         )
 
 
+class NeedleModelNameError(ModelStoreError):
+    """A needle/Whistle model name is not one ges2t pins.
+
+    Carries the offending ``name`` and the valid catalogue names so ``ges2t setup
+    needle <model>`` can print an actionable error before any download starts
+    (ADR 0021 §10).
+    """
+
+    def __init__(self, name: str, valid: Sequence[str]) -> None:
+        self.name = name
+        self.valid = tuple(valid)
+        super().__init__(
+            f"unknown needle model {name!r}; valid models: {', '.join(self.valid)}"
+        )
+
+
 # --- Locations ----------------------------------------------------------------
 
 
@@ -434,8 +495,14 @@ def default_data_dir() -> Path:
 
 
 def model_path(version: str = MODEL_VERSION) -> Path:
-    """Return ``<data_dir>/models/whistle/<version>/whistle.cact``."""
-    return default_data_dir() / "models" / "whistle" / version / "whistle.cact"
+    """Return ``<data_dir>/models/whistle/<version>/whistle.cact``.
+
+    This is the default needle model's path. A version override is honoured so
+    the Whistle pin can be bumped without a code change; a *non-default* needle
+    model's path comes from :meth:`NeedleModel.path`.
+    """
+    entry = NEEDLE_CATALOGUE[DEFAULT_NEEDLE_MODEL]
+    return default_data_dir() / "models" / entry.name / version / entry.pin.name
 
 
 def engine_path(version: str = ENGINE_VERSION) -> Path:
@@ -496,6 +563,19 @@ def whisper_model(name: str) -> WhisperModel:
     return WHISPER_CPP_CATALOGUE[parsed.name]
 
 
+def needle_model(name: str) -> NeedleModel:
+    """Return the needle/Whistle catalogue entry for ``name``, or raise.
+
+    Like :func:`whisper_model`, this validates the name against the catalogue
+    *before* any path is built or any download starts, raising
+    :class:`NeedleModelNameError` (naming the valid set) for an unknown name.
+    """
+    entry = NEEDLE_CATALOGUE.get(name)
+    if entry is None:
+        raise NeedleModelNameError(name, tuple(NEEDLE_CATALOGUE))
+    return entry
+
+
 def engine_pin() -> ArtifactPin:
     """Return the engine pin for this platform, or raise :class:`UnsupportedPlatformError`."""
     if PLATFORM_KEY not in SUPPORTED_ENGINE_PLATFORMS:
@@ -542,21 +622,24 @@ def verify(path: Path, expected: ArtifactPin) -> bool:
 
 
 def ensure_model(
+    name: str = DEFAULT_NEEDLE_MODEL,
     *,
     fetcher: Fetcher | None = None,
     progress: ProgressCallback | None = None,
 ) -> Path:
-    """Ensure the pinned Whistle weights exist locally and return their path.
+    """Ensure the named needle/Whistle model exists locally and return its path.
 
     Returns immediately when a file of the pinned byte size already exists (no
     download, no hash — ADR 0017). Otherwise downloads atomically, verifies, and
-    installs. ``fetcher`` is the test seam; ``progress`` receives the completed
-    fraction in ``[0.0, 1.0]`` (see :data:`ProgressCallback`).
+    installs. ``name`` is validated against the needle catalogue first, so an
+    unknown model fails before any network I/O (ADR 0021 §10). ``fetcher`` is the
+    test seam; ``progress`` receives the completed fraction in ``[0.0, 1.0]``.
     """
+    entry = needle_model(name)
     _require_supported_platform()
     return _ensure(
-        MODEL_PIN,
-        model_path(MODEL_VERSION),
+        entry.pin,
+        entry.path(),
         fetcher=fetcher,
         progress=progress,
     )

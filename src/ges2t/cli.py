@@ -301,15 +301,37 @@ def build_parser() -> argparse.ArgumentParser:
         help="print the service state (idle, recording, transcribing or error)",
         description="Print the service's current state to stdout and exit 0.",
     )
-    subparsers.add_parser(
+    setup = subparsers.add_parser(
         "setup",
         parents=[common],
-        help="download and verify the pinned model and engine (the only network use)",
+        help="set up a backend and its model (the only network command)",
         description=(
-            "Acquire and verify the pinned Whistle weights and Needle 3 engine\n"
-            "(ADR 0017). This is the only ges2t command that uses the network;\n"
-            "everything afterwards runs offline. Safe to re-run: valid artifacts\n"
-            "are left alone."
+            "Acquire and verify the artifacts a backend needs (ADR 0017, ADR 0021).\n"
+            "With no arguments this sets up the default 'needle' backend and its\n"
+            "default model, 'whistle'. Name a backend to choose another: 'needle'\n"
+            "or 'whisper.cpp'. The model argument is accepted for either backend.\n"
+            "For whisper.cpp a model is a <size>-<quant> ggml name such as\n"
+            "medium-q5_0; omitting it picks medium-q5_0 on a Vulkan machine and\n"
+            "small-q8_0 on CPU only. This is the only ges2t command that uses the\n"
+            "network; everything afterwards runs offline. Safe to re-run: valid\n"
+            "artifacts are left alone."
+        ),
+    )
+    setup.add_argument(
+        "backend",
+        nargs="?",
+        default=None,
+        metavar="BACKEND",
+        help="backend to set up: 'needle' (default) or 'whisper.cpp'",
+    )
+    setup.add_argument(
+        "model",
+        nargs="?",
+        default=None,
+        metavar="MODEL",
+        help=(
+            "model to acquire (needle: 'whistle' by default; whisper.cpp: a "
+            "<size>-<quant> name such as medium-q5_0)"
         ),
     )
     doctor = subparsers.add_parser(
@@ -502,27 +524,48 @@ def _handle_status(args: argparse.Namespace) -> int:
 
 
 def _handle_setup(args: argparse.Namespace) -> int:
-    """Acquire and verify the pinned model and engine (ADR 0017)."""
-    from ges2t import model_store
+    """Set up a backend and its model (ADR 0017, ADR 0021 §6).
 
-    print("Acquiring the pinned Whistle weights and Needle 3 engine.")
+    The backend and model names are validated by
+    :func:`ges2t.setup_command.plan_setup` **before** any build or download
+    starts; a bad name is a typed, actionable error, never a half-finished
+    acquisition. The orchestration lives in :mod:`ges2t.setup_command` so this
+    handler stays thin. No package is installed and no build tooling is fetched:
+    a missing prerequisite is reported by the engine build's own gate, whose
+    exact ``pacman`` line is printed verbatim (never duplicated here).
+    """
+    from ges2t import model_store
+    from ges2t.setup_command import SetupError, plan_setup, run_setup
+    from ges2t.whisper_engine import WhisperEngineError
+
+    try:
+        plan = plan_setup(
+            getattr(args, "backend", None), getattr(args, "model", None)
+        )
+    except (SetupError, model_store.ModelStoreError) as exc:
+        raise CliError(
+            f"setup: {exc}",
+            hint="run 'ges2t setup --help' to list the accepted backends and models",
+        ) from exc
+
+    print(f"Setting up the {plan.backend.value} backend and model {plan.model}.")
     print("This is the only ges2t command that uses the network; the rest runs offline.")
     try:
-        model = model_store.ensure_model(
-            progress=_ProgressPrinter(model_store.MODEL_PIN.name)
-        )
-        engine = model_store.ensure_engine(
-            progress=_ProgressPrinter(model_store.ENGINE_PIN.name)
-        )
-    except (model_store.ModelStoreError, OSError) as exc:
+        outcome = run_setup(plan, progress=lambda label: _ProgressPrinter(label))
+    except (SetupError, model_store.ModelStoreError, WhisperEngineError, OSError) as exc:
         raise CliError(
             f"setup failed: {exc}",
-            hint=(
-                "check your network connection and the paths above, then re-run 'ges2t setup'"
-            ),
+            hint="check the message above, then re-run 'ges2t setup'",
         ) from exc
-    print(f"Model:  {model}")
-    print(f"Engine: {engine}")
+
+    if outcome.needle_model_path is not None:
+        print(f"Model:  {outcome.needle_model_path}")
+    if outcome.needle_engine_path is not None:
+        print(f"Engine: {outcome.needle_engine_path}")
+    if outcome.whisper_engine is not None:
+        print(f"Engine: {outcome.whisper_engine.summary}")
+    if outcome.whisper_model_path is not None:
+        print(f"Model:  {outcome.whisper_model_path}")
     print("Setup complete.")
     return EXIT_SUCCESS
 

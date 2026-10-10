@@ -88,20 +88,27 @@ class FixedPath:
 
 
 class FakeEnsure:
-    """A replacement for ``model_store.ensure_*`` that records its progress callback."""
+    """A replacement for ``model_store.ensure_*`` that records its progress callback.
+
+    The needle model's ``ensure_model`` takes a model name and the engines do not,
+    so ``name`` is optional: it is recorded when supplied and ignored otherwise.
+    """
 
     def __init__(self, path: Path) -> None:
         self.path = path
         self.calls = 0
+        self.names: list[str | None] = []
         self.progress_callbacks: list[ProgressCallback | None] = []
 
     def __call__(
         self,
+        name: str | None = None,
         *,
         fetcher: Fetcher | None = None,
         progress: ProgressCallback | None = None,
     ) -> Path:
         self.calls += 1
+        self.names.append(name)
         self.progress_callbacks.append(progress)
         if progress is not None:
             progress(1.0)
@@ -116,6 +123,7 @@ class FailingEnsure:
 
     def __call__(
         self,
+        name: str | None = None,
         *,
         fetcher: Fetcher | None = None,
         progress: ProgressCallback | None = None,
