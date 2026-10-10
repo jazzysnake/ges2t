@@ -3,7 +3,7 @@
 - **Branch:** `feat/whisper-engine-build`
 - **Worktree:** `.worktrees/whisper-engine-build`
 - **Date:** 2026-10-10
-- **Status of this write-up:** in progress (written incrementally)
+- **Status of this write-up:** final (ticket `in review`; the end-to-end build remains user-owned)
 
 ## Pinned engine revision
 
@@ -26,7 +26,7 @@ d1be6fde11ac6e0407606b4e42fe72d34add8037  (grafted, HEAD -> master, tag: v1.9.5,
 v1.9.5
 ```
 
-## Prerequisite package list (Arch, all verified in the repos 2026-10-10)
+## Prerequisite package list (Arch `core`/`extra`; the ticket records them verified 2026-10-10)
 
 ```
 sudo pacman -S base-devel cmake vulkan-headers spirv-headers shaderc
@@ -65,9 +65,14 @@ builds the `whisper` CMake target (which pulls the `ggml` libraries with it):
 
 ```
 git clone --depth 1 --branch v1.9.5 https://github.com/ggml-org/whisper.cpp.git <src>
-cmake -S <src> -B <build> -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF
+cmake -S <src> -B <build> -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF \
+      -DWHISPER_BUILD_EXAMPLES=OFF -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+      -DCMAKE_INSTALL_RPATH='$ORIGIN'          # [+ -DGGML_VULKAN=ON] for the GPU build
 cmake --build <build> --target whisper -j <jobs>
 ```
+
+The `$ORIGIN` flags are this ticket's one addition to the research's configure
+line; why they are needed is below.
 
 Produced by that target, in `<build>/bin/`:
 
@@ -158,8 +163,9 @@ is CPU-only and no error is raised:
 | shader compiler | `glslc` on `PATH` | `shaderc` |
 
 The chosen variant is written into the installed directory as a small
-`engine.json` manifest (revision, tag, variant, library names, timestamp) so
-`doctor` and the user can see what was built without re-deriving it.
+`engine.json` manifest (revision, tag, variant, library file names, timestamp,
+and the detected Vulkan pieces) so `doctor` and the user can see what was built —
+and *why that variant* — without re-probing the machine.
 
 ## User-owned steps (left unticked — `cmake` may not be installed here)
 
@@ -171,21 +177,27 @@ from running. The end-to-end build/full `setup` verification is therefore
 sudo pacman -S base-devel cmake vulkan-headers spirv-headers shaderc
 ```
 
-then, once the ticket's `ensure_engine()` is wired into `ges2t setup` (ticket 44):
+then, once the ticket's `ensure_engine()` is wired into `ges2t setup` (ticket 44 owns
+that wiring, so `ges2t setup` does not build the engine yet):
 
 ```
 uv run ges2t setup whisper.cpp small-q5_0
 ```
 
-(Or, to exercise the builder alone before ticket 44 lands, the scratch
-verification command recorded in §"Verify" below.)
+To exercise the builder alone before ticket 44 lands (network: the pinned clone;
+writes only under `~/.local/share/ges2t/` and `~/.cache/ges2t/`):
+
+```
+uv run python -c 'from ges2t.whisper_engine import ensure_engine; print(ensure_engine().summary)'
+```
 
 ## What was built
 
 `src/ges2t/whisper_engine.py` — the engine builder, with the Protocol seams ADR 0019
 requires (`SystemProbe`, `CommandRunner`, `EngineBuilder`), and
-`tests/test_whisper_engine.py` (58 tests, all with fakes: no real `git`, `cmake`,
-compiler or network in the suite).
+`tests/test_whisper_engine.py` (63 tests, all with fakes for the build path: no
+real `git`/`cmake`/compiler and no network in the suite; four tests drive the real
+`SubprocessRunner` with a trivial bounded `python -c` to pin its failure modes).
 
 Public surface:
 
@@ -201,8 +213,21 @@ Public surface:
 
 ## Real-machine prerequisite detection (this machine, 2026-10-10)
 
+A probe script against the real machine (`ensure_engine` uses exactly this, since
+it defaults every seam to the real implementation) prints:
+
 ```
-$ uv run python -c 'from ges2t.whisper_engine import *; s=inspect_vulkan(HostSystemProbe()); print(s.runtime, s.headers, s.spirv_headers, s.shader_compiler, s.available, s.summary())'
+$ uv run python - <<'PY'
+from ges2t.whisper_engine import HostSystemProbe, engine_dir, inspect_vulkan
+status = inspect_vulkan(HostSystemProbe())
+print("vulkan runtime :", status.runtime)
+print("vulkan headers :", status.headers)
+print("spirv headers  :", status.spirv_headers)
+print("shader compiler:", status.shader_compiler)
+print("available      :", status.available)
+print("summary        :", status.summary())
+print("engine_dir()   :", engine_dir())
+PY
 vulkan runtime : /usr/lib/libvulkan.so
 vulkan headers : /usr/include/vulkan/vulkan.h
 spirv headers  : None
@@ -248,10 +273,22 @@ ctypes whisper_version(): b'1.9.5-dev'
 So the install half of the builder is verified against **real** CMake output, not
 only against the test fake's output. The scratch tree was removed afterwards.
 
+Failure modes are typed, never raw: `SubprocessRunner` turns a non-zero exit into
+`BuildFailedError` naming the command and the tail of its stderr, a timeout into
+one naming the budget, and a missing executable into one naming it (tests:
+`test_subprocess_runner_wraps_*`). `git` is **not** in the prerequisite report —
+the ticket fixes that report's package list to the toolchain, `cmake` and the
+Vulkan dev packages, and `base-devel` does not ship `git` — so a missing `git` is
+caught in `WhisperCppBuilder._clone` with its own actionable message
+(`sudo pacman -S git`), deliberately rather than by widening the ADR's package
+line.
+
 ## Falsification (each watched to fail, then reverted)
 
-All four reversions were `git checkout -- src/ges2t/whisper_engine.py`; the tree
-was green again immediately after (58 passed).
+All six reversions were `git checkout -- src/ges2t/whisper_engine.py`, run with
+everything committed first so the revert was exact; the tree was green again
+immediately after each (`63 passed`, `git status` clean), and all six were
+re-run against the final committed code.
 
 1. **Drop the prerequisite gate in `ensure_engine`** (the `raise` becomes `_ =
    report`) →
@@ -269,30 +306,28 @@ was green again immediately after (58 passed).
    `test_ensure_engine_keeps_an_existing_vulkan_build_without_rebuilding` FAILED.
 4. **Drop `-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH=$ORIGIN`**
    → `test_builder_configures_a_release_library_only_origin_rpath_build` FAILED.
+5. **Drop the `git` guard in `_clone`** →
+   `test_builder_raises_a_typed_error_when_git_is_absent` FAILED:
+   `DID NOT RAISE BuildFailedError`.
+6. **Neuter `SubprocessRunner`'s `CalledProcessError` wrapping** (re-raise the
+   raw error) → `test_subprocess_runner_wraps_a_nonzero_exit_with_stderr` FAILED
+   with the untyped `CalledProcessError` escaping.
 
 ## Verify
 
-Run from the worktree:
-
-```
-$ uv run pytest -q
-981 passed in 7.15s
-
-$ rm -rf .mypy_cache __pycache__ && uv run mypy src/ges2t tests
-Success: no issues found in 57 source files
-```
-
-Baseline before this ticket: 923 passed. This ticket adds 58 tests
-(`tests/test_whisper_engine.py`); none deleted, skipped or weakened.
-
-Final run at `in review` (after the status/README edits, tree clean):
+Run from the worktree (`986 = 923 baseline + 63 new`):
 
 ```
 $ rm -rf .mypy_cache __pycache__ && uv run mypy src/ges2t tests
 Success: no issues found in 57 source files
 $ uv run pytest -q
-981 passed in 5.40s
+986 passed in 6.42s
 ```
+
+Baseline before this ticket: 923 passed. This ticket adds 63 tests
+(`tests/test_whisper_engine.py`); none deleted, skipped or weakened. The two
+commands were re-run after every edit above and after the status/README/comment
+updates, with the same result and a clean `git status`.
 
 ## Cleanup
 
