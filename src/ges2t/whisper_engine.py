@@ -33,8 +33,11 @@ the verified ``readelf``/``ctypes`` evidence.
 
 The module imports only the standard library (plus
 :func:`ges2t.model_store.default_data_dir`, so the ``ges2t`` data directory is
-defined in exactly one place). It never imports a backend package, the config
-layer, or the CLI.
+defined in exactly one place, and
+:class:`ges2t.transcribers.whisper_cpp_config.GpuPreference`, so the ``gpu``
+preference has exactly one definition). It never imports the generic config
+layer or the CLI, and it never opens a file for configuration: the preference
+crosses in as a parameter (:func:`ensure_engine`).
 """
 
 from __future__ import annotations
@@ -53,6 +56,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from ges2t.model_store import default_data_dir
+from ges2t.transcribers.whisper_cpp_config import GpuPreference
 
 __all__ = [
     "BUILD_TARGET",
@@ -87,6 +91,7 @@ __all__ = [
     "EngineLibraries",
     "EngineManifestError",
     "HostSystemProbe",
+    "NoticeCallback",
     "Prerequisite",
     "PrerequisiteError",
     "PrerequisiteKind",
@@ -237,6 +242,12 @@ DEFAULT_LIBRARY_DIRECTORIES: tuple[Path, ...] = (
 #: :class:`ges2t.interfaces.ProgressCallback`: the completed fraction in
 #: ``[0.0, 1.0]``.
 ProgressCallback = Callable[[float], None]
+
+#: A sink for a one-line explanation a command should print (a *notice*, not an
+#: error). Used by :func:`ensure_engine` to say **why** it rebuilt an existing
+#: build (ticket 49); :func:`ges2t.setup_command.run_setup` forwards it to
+#: ``ges2t setup``.
+NoticeCallback = Callable[[str], None]
 
 
 # --- Errors -------------------------------------------------------------------
@@ -1025,9 +1036,11 @@ class WhisperCppBuilder:
     """Clones the pinned revision, builds the library target, installs the libraries.
 
     The scratch tree (clone + CMake build) lives under
-    :func:`default_build_root` and is removed on **every** exit path; only the
-    final library set and the manifest land in the install directory, atomically
-    enough that a failed build leaves either the previous engine or nothing.
+    :func:`default_build_root` and is removed on **every** exit path. The new
+    library set and its manifest are assembled in a **staging directory beside**
+    the install directory and swapped into place only once complete, so a failed
+    rebuild leaves the previous engine exactly as it was and a half-written tree
+    is never where :func:`verify_build` looks (ticket 49).
     """
 
     def __init__(
@@ -1055,54 +1068,73 @@ class WhisperCppBuilder:
                 check_prerequisites(request.variant, self._system)
             )
 
-        request.directory.mkdir(parents=True, exist_ok=True)
+        destination = request.directory
+        destination.parent.mkdir(parents=True, exist_ok=True)
         root = self._build_root or default_build_root(request.version)
         root.mkdir(parents=True, exist_ok=True)
         _report(progress, 0.0)
 
-        with tempfile.TemporaryDirectory(prefix="build-", dir=root) as scratch_text:
-            scratch = Path(scratch_text)
-            source = scratch / "whisper.cpp"
-            build_tree = scratch / "build"
+        staging = _staging_directory(destination)
+        try:
+            with tempfile.TemporaryDirectory(
+                prefix="build-", dir=root
+            ) as scratch_text:
+                scratch = Path(scratch_text)
+                source = scratch / "whisper.cpp"
+                build_tree = scratch / "build"
 
-            self._clone(request, source)
-            _report(progress, 0.2)
+                self._clone(request, source)
+                _report(progress, 0.2)
 
-            self._configure(cmake, request, source, build_tree)
-            _report(progress, 0.3)
+                self._configure(cmake, request, source, build_tree)
+                _report(progress, 0.3)
 
-            self._runner.run(
-                [
-                    str(cmake),
-                    "--build",
-                    str(build_tree),
-                    "--target",
-                    BUILD_TARGET,
-                    "-j",
-                    str(request.jobs),
-                ],
-                cwd=None,
-                timeout_seconds=WHISPER_CPP_BUILD_TIMEOUT_SECONDS,
+                self._runner.run(
+                    [
+                        str(cmake),
+                        "--build",
+                        str(build_tree),
+                        "--target",
+                        BUILD_TARGET,
+                        "-j",
+                        str(request.jobs),
+                    ],
+                    cwd=None,
+                    timeout_seconds=WHISPER_CPP_BUILD_TIMEOUT_SECONDS,
+                )
+                _report(progress, 0.9)
+
+                libraries = _install_libraries(
+                    build_tree / "bin", staging, request.variant
+                )
+
+            staged = EngineBuild(
+                version=request.version,
+                tag=request.tag,
+                revision=request.revision,
+                variant=request.variant,
+                directory=staging,
+                libraries=libraries,
+                vulkan=inspect_vulkan(self._system),
+                built_at=self._clock(),
             )
-            _report(progress, 0.9)
+            _write_manifest(staged)
+            if verify_build(staging) is None:
+                raise BuildFailedError(
+                    f"the staged whisper.cpp engine at {staging} is incomplete"
+                )
+            _replace_directory(staging, destination)
+        except BaseException:
+            _remove_tree(staging)
+            raise
 
-            libraries = _install_libraries(
-                build_tree / "bin", request.directory, request.variant
+        installed = verify_build(destination)
+        if installed is None:
+            raise BuildFailedError(
+                f"the installed whisper.cpp engine at {destination} is incomplete"
             )
-
-        build = EngineBuild(
-            version=request.version,
-            tag=request.tag,
-            revision=request.revision,
-            variant=request.variant,
-            directory=request.directory,
-            libraries=libraries,
-            vulkan=inspect_vulkan(self._system),
-            built_at=self._clock(),
-        )
-        _write_manifest(build)
         _report(progress, 1.0)
-        return build
+        return installed
 
     def _clone(self, request: BuildRequest, source: Path) -> None:
         """Shallow-clone the pinned tag and verify the commit against the pin.
@@ -1194,6 +1226,14 @@ def _install_libraries(
             f"the {BUILD_TARGET} target produced no {entry_name} in {build_bin} "
             f"(found: {found})"
         )
+    # Checked before anything is copied, so a Vulkan build that produced no
+    # libggml-vulkan fails without touching the destination (ticket 49).
+    if variant is BuildVariant.VULKAN and not any(
+        name.startswith("libggml-vulkan") for name in names
+    ):
+        raise BuildFailedError(
+            f"a Vulkan build produced no libggml-vulkan.so in {build_bin}"
+        )
 
     destination.mkdir(parents=True, exist_ok=True)
     for name in names:
@@ -1209,12 +1249,6 @@ def _install_libraries(
     ggml = tuple(
         destination / name for name in names if name.startswith("libggml")
     )
-    if variant is BuildVariant.VULKAN and not any(
-        path.name.startswith("libggml-vulkan") for path in ggml
-    ):
-        raise BuildFailedError(
-            f"a Vulkan build produced no libggml-vulkan.so in {build_bin}"
-        )
     return EngineLibraries(libwhisper=destination / entry_name, ggml=ggml)
 
 
@@ -1243,6 +1277,107 @@ def _remove(path: Path) -> None:
         pass
 
 
+def _remove_tree(path: Path) -> None:
+    """Delete the directory tree at ``path``, ignoring an absent one."""
+    shutil.rmtree(path, ignore_errors=True)
+
+
+def _staging_directory(destination: Path) -> Path:
+    """Create and return a fresh staging directory **beside** ``destination``.
+
+    A sibling (same parent, hence the same filesystem) is what makes the final
+    :func:`os.rename` into place cheap and atomic, and keeps a transient,
+    half-built tree out of the install path entirely (ticket 49).
+    """
+    return Path(
+        tempfile.mkdtemp(
+            prefix=f".{destination.name}.staging-",
+            dir=destination.parent,
+        )
+    )
+
+
+def _replace_directory(source: Path, destination: Path) -> None:
+    """Move ``source`` onto ``destination``, restoring the old tree on failure.
+
+    ``os.rename`` cannot replace a non-empty directory, so the previous install
+    is moved aside first and removed only once the new one is in place. If the
+    new tree cannot be moved in, the previous one is restored, so a failed
+    rebuild leaves the engine exactly as it was and never a mixed tree the
+    manifest would describe (ticket 49).
+    """
+    backup = destination.with_name(f".{destination.name}.old")
+    _remove_tree(backup)
+    moved_backup = False
+    if destination.exists() or destination.is_symlink():
+        os.rename(destination, backup)
+        moved_backup = True
+    try:
+        os.rename(source, destination)
+    except BaseException:
+        if moved_backup:
+            _remove_tree(destination)
+            os.rename(backup, destination)
+        raise
+    _remove_tree(backup)
+
+
+# --- The build policy (ticket 49) ---------------------------------------------
+#
+# The variant is chosen from the prerequisites present **now**, and an existing
+# build is only a no-op when it is already as good as what could be built now.
+# This is what turns "re-run setup" into the fix for a CPU-only build made before
+# ``spirv-headers`` was installed.
+
+
+def _desired_variant(
+    preference: GpuPreference, vulkan: VulkanStatus
+) -> BuildVariant:
+    """The variant a build should have, given the preference and the machine.
+
+    ``auto`` follows the machine (Vulkan when possible, CPU otherwise); ``cpu``
+    pins CPU; ``vulkan`` pins Vulkan. The caller turns an unsatisfiable ``vulkan``
+    preference into a typed error, never a silent CPU build (ADR 0020).
+    """
+    if preference is GpuPreference.CPU:
+        return BuildVariant.CPU
+    if preference is GpuPreference.VULKAN:
+        return BuildVariant.VULKAN
+    return BuildVariant.VULKAN if vulkan.available else BuildVariant.CPU
+
+
+def _satisfies(installed: BuildVariant, desired: BuildVariant) -> bool:
+    """Whether ``installed`` is already as good as ``desired``.
+
+    ``VULKAN`` satisfies every target: a CPU preference or a CPU-only machine must
+    **never** downgrade a working GPU build (it is simply unused on the CPU
+    path). CPU satisfies only a CPU target.
+    """
+    return installed is BuildVariant.VULKAN or installed is desired
+
+
+def _rebuild_reason(installed: EngineBuild, desired: BuildVariant) -> str:
+    """One line saying why an existing build is being replaced."""
+    if (
+        desired is BuildVariant.VULKAN
+        and installed.variant is BuildVariant.CPU
+    ):
+        return (
+            "rebuilding: the Vulkan development packages are now available "
+            "(was CPU-only)"
+        )
+    return f"rebuilding: {installed.variant.label} -> {desired.label}"
+
+
+def _notify(notice: NoticeCallback | None, message: str) -> None:
+    """Forward a one-line notice, swallowing a broken sink (same rule as progress)."""
+    if notice is not None:
+        try:
+            notice(message)
+        except Exception:
+            pass
+
+
 def ensure_engine(
     *,
     version: str = WHISPER_CPP_VERSION,
@@ -1253,6 +1388,9 @@ def ensure_engine(
     progress: ProgressCallback | None = None,
     system: SystemProbe | None = None,
     builder: EngineBuilder | None = None,
+    preference: GpuPreference = GpuPreference.AUTO,
+    force: bool = False,
+    notice: NoticeCallback | None = None,
 ) -> EngineBuild:
     """Ensure a whisper.cpp engine is built and return it (ADR 0021 §7).
 
@@ -1262,28 +1400,43 @@ def ensure_engine(
 
     Order of operations, each one deliberate:
 
-    1. **Idempotency first.** A complete installed engine is returned untouched —
-       no clone, no ``cmake``, no network.
-    2. **Variant.** Vulkan only when the runtime, dev headers and shader compiler
-       are all present; otherwise CPU-only, with no error.
+    1. **Variant-aware idempotency.** A complete installed engine is a no-op
+       **only when it is already as good as the machine can now build** for the
+       configured ``preference``: a CPU build is kept for ``auto`` on a CPU-only
+       machine, and is rebuilt as Vulkan once the Vulkan dev pieces appear (a
+       notice says why). A better installed build is never downgraded.
+    2. **Variant.** ``auto`` follows the machine; ``cpu`` pins the CPU; ``vulkan``
+       pins Vulkan. A ``vulkan`` preference that cannot be satisfied is a
+       reported :class:`PrerequisiteError`, never a silent CPU build (ADR 0020).
     3. **Prerequisites.** Checked before anything is fetched or compiled; a
        missing one raises :class:`PrerequisiteError` naming the exact
        ``pacman`` line. Nothing is installed (ADR 0021 §7).
     4. **Build.** The only network access is the pinned clone inside the builder
-       (ADR 0018).
+       (ADR 0018). ``force`` bypasses the no-op for an already-best build (the
+       ``--rebuild`` escape hatch), while still honouring the preference and the
+       prerequisite gate.
     """
     probe = system if system is not None else HostSystemProbe()
     target = directory if directory is not None else engine_dir(version)
 
-    installed = verify_build(target)
-    if installed is not None:
+    vulkan = inspect_vulkan(probe)
+    desired = _desired_variant(preference, vulkan)
+
+    installed = None if force else verify_build(target)
+    if installed is not None and _satisfies(installed.variant, desired):
         _report(progress, 1.0)
         return installed
 
-    variant = (
-        BuildVariant.VULKAN if inspect_vulkan(probe).available else BuildVariant.CPU
-    )
-    report = check_prerequisites(variant, probe)
+    # A Vulkan preference that cannot be built is an error, even over an existing
+    # CPU build: never a silent CPU run (ADR 0020). The prerequisite report is the
+    # actionable one -- it names the missing pieces and the exact ``pacman`` line.
+    if preference is GpuPreference.VULKAN and not vulkan.available:
+        raise PrerequisiteError(check_prerequisites(BuildVariant.VULKAN, probe))
+
+    if installed is not None:
+        _notify(notice, _rebuild_reason(installed, desired))
+
+    report = check_prerequisites(desired, probe)
     if not report.satisfied:
         raise PrerequisiteError(report)
 
@@ -1292,7 +1445,7 @@ def ensure_engine(
         tag=tag,
         revision=revision,
         url=WHISPER_CPP_URL,
-        variant=variant,
+        variant=desired,
         directory=target,
         jobs=jobs if jobs is not None else default_jobs(),
     )

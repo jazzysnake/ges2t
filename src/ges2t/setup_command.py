@@ -27,6 +27,13 @@ machine with no Vulkan runtime at all gets no hint (there is no GPU path to
 lose). The wording has one definition, in
 :mod:`ges2t.whisper_engine`, so ``ges2t setup`` and ``ges2t doctor`` cannot drift.
 
+The **device preference** (``[engine.whisper_cpp] gpu``) crosses here: the CLI
+loads the configuration, :func:`plan_setup` reads the preference through the
+backend's own validator, and :func:`run_setup` hands it to the engine build.
+Re-running ``setup`` therefore upgrades a CPU-only build to Vulkan for
+``gpu = "auto"``, leaves it alone for ``gpu = "cpu"``, and reports an error for
+``gpu = "vulkan"`` when the GPU cannot be built (ticket 49).
+
 Two properties the ticket makes load-bearing:
 
 * **Validation precedes work.** :func:`plan_setup` resolves and validates the
@@ -58,6 +65,7 @@ from ges2t import model_store
 from ges2t.config import (
     DEFAULT_ENGINE,
     WHISPER_CPP_ENGINE,
+    Config,
     default_config_path,
     suggest_engine,
 )
@@ -66,10 +74,18 @@ from ges2t.model_store import (
     ModelStoreError,
     ProgressCallback,
 )
+from ges2t.transcribers.whisper_cpp_config import (
+    BLOCK_NAME,
+    DEFAULT_GPU,
+    GpuPreference,
+    WhisperCppConfig,
+    WhisperCppConfigError,
+)
 from ges2t.whisper_engine import (
     DEFAULT_WHISPER_MODEL_CPU,
     DEFAULT_WHISPER_MODEL_GPU,
     EngineBuild,
+    NoticeCallback,
     SystemProbe,
     default_whisper_model,
     ensure_engine,
@@ -81,6 +97,7 @@ __all__ = [
     "DEFAULT_SETUP_BACKEND",
     "DEFAULT_WHISPER_MODEL_CPU",
     "DEFAULT_WHISPER_MODEL_GPU",
+    "GpuPreference",
     "NeedleEngineInstaller",
     "NeedleModelInstaller",
     "PartialSetupError",
@@ -203,15 +220,19 @@ DEFAULT_SETUP_BACKEND: SetupBackend = SetupBackend.NEEDLE
 
 @dataclass(frozen=True)
 class SetupPlan:
-    """A validated setup request: which backend, and which model name.
+    """A validated setup request: which backend, which model, and the device preference.
 
     ``model`` is always a canonical, catalogue-validated name, so
     :func:`run_setup` never has to re-validate it and no acquisition starts on an
-    unknown name.
+    unknown name. ``preference`` is the ``[engine.whisper_cpp] gpu`` value resolved
+    from the configuration at plan time (``auto`` when no config was supplied);
+    it crosses into :func:`ges2t.whisper_engine.ensure_engine` so re-running
+    ``setup`` never upgrades a build the user pinned to the CPU (ticket 49).
     """
 
     backend: SetupBackend
     model: str
+    preference: GpuPreference = DEFAULT_GPU
 
 
 @dataclass(frozen=True)
@@ -255,7 +276,14 @@ class NeedleEngineInstaller(Protocol):
 class WhisperEngineInstaller(Protocol):
     """Builds the whisper.cpp engine; :func:`ges2t.whisper_engine.ensure_engine`."""
 
-    def __call__(self, *, progress: ProgressCallback | None = None) -> EngineBuild:
+    def __call__(
+        self,
+        *,
+        preference: GpuPreference = DEFAULT_GPU,
+        force: bool = False,
+        progress: ProgressCallback | None = None,
+        notice: NoticeCallback | None = None,
+    ) -> EngineBuild:
         """Build or verify the engine and return the installed build."""
         ...
 
@@ -338,6 +366,7 @@ def plan_setup(
     model: str | None,
     *,
     system: SystemProbe | None = None,
+    config: Config | None = None,
 ) -> SetupPlan:
     """Validate the ``setup`` arguments and resolve the model default.
 
@@ -345,6 +374,12 @@ def plan_setup(
     download anything: an unknown backend raises :class:`UnknownBackendError`, an
     unknown needle model or an unpublished whisper quant raises the model store's
     typed :class:`~ges2t.model_store.ModelStoreError` subclasses.
+
+    For the whisper.cpp backend the ``[engine.whisper_cpp] gpu`` preference is
+    read from ``config`` (through the same validator the service uses) and carried
+    on the plan, so ``setup`` respects a CPU pin. ``config`` is ``None`` in unit
+    tests and in a build with no configuration file, and then the default
+    (``auto``) applies; the needle backend does not read it (ticket 49).
     """
     selected = _parse_backend(backend)
     if selected is SetupBackend.NEEDLE:
@@ -353,11 +388,34 @@ def plan_setup(
             if model is not None
             else DEFAULT_NEEDLE_MODEL
         )
-    elif model is not None:
+        return SetupPlan(backend=selected, model=resolved)
+    if model is not None:
         resolved = model_store.parse_whisper_model_name(model).name
     else:
         resolved = default_whisper_model(system)
-    return SetupPlan(backend=selected, model=resolved)
+    return SetupPlan(
+        backend=selected,
+        model=resolved,
+        preference=_gpu_preference(config),
+    )
+
+
+def _gpu_preference(config: Config | None) -> GpuPreference:
+    """Read ``[engine.whisper_cpp] gpu`` from ``config``; ``auto`` when absent.
+
+    The block is read with the backend's own validator
+    (:meth:`WhisperCppConfig.from_mapping`), so an invalid ``gpu`` value fails with
+    the same message the service and ``doctor`` would print. A missing block is
+    normal and means the default preference (ADR 0009); no config at all is the
+    test / no-file case.
+    """
+    if config is None:
+        return DEFAULT_GPU
+    block = config.engine_blocks.get(WHISPER_CPP_ENGINE, {})
+    try:
+        return WhisperCppConfig.from_mapping(block).config.gpu
+    except WhisperCppConfigError as exc:
+        raise SetupError(f"the [{BLOCK_NAME}] block is invalid: {exc}") from exc
 
 
 # --- Post-setup guidance (ticket 47) -------------------------------------------
@@ -410,6 +468,8 @@ def run_setup(
     *,
     progress: ProgressFactory | None = None,
     dependencies: SetupDependencies | None = None,
+    rebuild: bool = False,
+    notice: NoticeCallback | None = None,
 ) -> SetupOutcome:
     """Carry out a validated plan, leaving a consistent state on partial failure.
 
@@ -417,12 +477,14 @@ def run_setup(
     its exact ``pacman`` line) fires before ~0.5 GB is downloaded, and a model
     failure leaves a complete, diagnosable engine rather than a half-finished
     tree. The needle order is unchanged from the pre-ticket behaviour (model,
-    then engine).
+    then engine). The whisper engine build receives the plan's device
+    ``preference`` (so a CPU pin is honoured), ``rebuild`` (the ``--rebuild``
+    escape hatch) and ``notice`` (the one-line "why it rebuilt" sink).
     """
     deps = dependencies if dependencies is not None else default_dependencies()
     factory = progress if progress is not None else _silent_progress
     if plan.backend is SetupBackend.WHISPER_CPP:
-        return _run_whisper(plan, deps, factory)
+        return _run_whisper(plan, deps, factory, rebuild, notice)
     return _run_needle(plan, deps, factory)
 
 
@@ -447,6 +509,8 @@ def _run_whisper(
     plan: SetupPlan,
     deps: SetupDependencies,
     factory: ProgressFactory,
+    rebuild: bool,
+    notice: NoticeCallback | None,
 ) -> SetupOutcome:
     """Build the whisper.cpp engine, then acquire the model.
 
@@ -454,7 +518,12 @@ def _run_whisper(
     (and its exact package line) is what the user sees. A **model** failure is
     wrapped in :class:`PartialSetupError` because the engine is already installed.
     """
-    build = deps.whisper_engine(progress=factory("whisper.cpp engine"))
+    build = deps.whisper_engine(
+        preference=plan.preference,
+        force=rebuild,
+        progress=factory("whisper.cpp engine"),
+        notice=notice,
+    )
     try:
         model_path = deps.whisper_model(
             plan.model, progress=factory(f"model {plan.model}")

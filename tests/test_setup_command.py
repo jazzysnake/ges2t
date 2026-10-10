@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from ges2t.config import Config
 from ges2t.model_store import (
     ModelStoreError,
     NeedleModelNameError,
@@ -28,6 +29,7 @@ from ges2t.setup_command import (
     PartialSetupError,
     SetupBackend,
     SetupDependencies,
+    SetupError,
     SetupPlan,
     UnknownBackendError,
     config_guidance,
@@ -35,6 +37,7 @@ from ges2t.setup_command import (
     plan_setup,
     run_setup,
 )
+from ges2t.transcribers.whisper_cpp_config import DEFAULT_GPU, GpuPreference
 from ges2t.whisper_engine import (
     SHADER_COMPILER_NAME,
     SPIRV_HEADER_PATH,
@@ -43,6 +46,7 @@ from ges2t.whisper_engine import (
     BuildVariant,
     EngineBuild,
     EngineLibraries,
+    NoticeCallback,
     VulkanStatus,
     WhisperEngineError,
     cpu_only_build_hint,
@@ -148,12 +152,28 @@ class FakeWhisperEngineInstaller:
         self.log = log
         self.calls = 0
         self.error: Exception | None = None
+        self.preferences: list[GpuPreference] = []
+        self.forces: list[bool] = []
+        self.notices: list[NoticeCallback | None] = []
+        self.notice_message: str | None = None
 
-    def __call__(self, *, progress: ProgressCallback | None = None) -> EngineBuild:
+    def __call__(
+        self,
+        *,
+        preference: GpuPreference = DEFAULT_GPU,
+        force: bool = False,
+        progress: ProgressCallback | None = None,
+        notice: NoticeCallback | None = None,
+    ) -> EngineBuild:
         self.log.append("whisper-engine")
         self.calls += 1
+        self.preferences.append(preference)
+        self.forces.append(force)
+        self.notices.append(notice)
         if self.error is not None:
             raise self.error
+        if self.notice_message is not None and notice is not None:
+            notice(self.notice_message)
         return self.build
 
 
@@ -541,3 +561,65 @@ def test_cpu_only_hint_is_silent_when_nothing_dev_is_missing(tmp_path: Path) -> 
     # "install X" advice would now be wrong, so it is not printed.
     build = _build_with(tmp_path, variant=BuildVariant.CPU, vulkan=_GPU_WITHOUT_SPIRV)
     assert cpu_only_build_hint(build, system=_vulkan_probe()) is None
+
+
+# --- the device preference crossing into the engine build (ticket 49) ----------
+
+
+def test_plan_setup_reads_the_gpu_preference_from_the_config() -> None:
+    config = Config(engine_blocks={"whisper_cpp": {"gpu": "cpu"}})
+    plan = plan_setup("whisper.cpp", "tiny-q8_0", config=config)
+    assert plan.preference is GpuPreference.CPU
+
+
+def test_plan_setup_defaults_the_preference_to_auto_without_a_config() -> None:
+    assert plan_setup("whisper.cpp", "tiny-q8_0").preference is GpuPreference.AUTO
+    assert (
+        SetupPlan(SetupBackend.WHISPER_CPP, "tiny-q8_0").preference
+        is GpuPreference.AUTO
+    )
+
+
+def test_plan_setup_leaves_the_needle_backend_free_of_the_whisper_block() -> None:
+    # A broken whisper block must not break `ges2t setup needle` (it is not read).
+    config = Config(engine_blocks={"whisper_cpp": {"gpu": "cuda"}})
+    plan = plan_setup("needle", None, config=config)
+    assert plan.preference is GpuPreference.AUTO
+
+
+def test_an_invalid_gpu_preference_is_a_setup_error() -> None:
+    config = Config(engine_blocks={"whisper_cpp": {"gpu": "cuda"}})
+    with pytest.raises(SetupError) as excinfo:
+        plan_setup("whisper.cpp", "tiny-q8_0", config=config)
+    assert "gpu" in str(excinfo.value)
+
+
+def test_run_setup_passes_the_preference_rebuild_and_notice_to_the_build(
+    tmp_path: Path,
+) -> None:
+    fakes = make_fakes(tmp_path)
+    messages: list[str] = []
+
+    def notice(message: str) -> None:
+        messages.append(message)
+
+    run_setup(
+        SetupPlan(SetupBackend.WHISPER_CPP, "tiny-q8_0", GpuPreference.CPU),
+        dependencies=fakes.dependencies,
+        rebuild=True,
+        notice=notice,
+    )
+    assert fakes.whisper_engine.preferences == [GpuPreference.CPU]
+    assert fakes.whisper_engine.forces == [True]
+    assert fakes.whisper_engine.notices == [notice]
+
+
+def test_run_setup_defaults_the_build_to_auto_and_no_force(tmp_path: Path) -> None:
+    fakes = make_fakes(tmp_path)
+    run_setup(
+        SetupPlan(SetupBackend.WHISPER_CPP, "tiny-q8_0"),
+        dependencies=fakes.dependencies,
+    )
+    assert fakes.whisper_engine.preferences == [GpuPreference.AUTO]
+    assert fakes.whisper_engine.forces == [False]
+    assert fakes.whisper_engine.notices == [None]

@@ -25,6 +25,7 @@ from pathlib import Path
 
 import pytest
 
+from ges2t.transcribers.whisper_cpp_config import GpuPreference
 from ges2t.whisper_engine import (
     BUILD_TARGET,
     CLONE_TIMEOUT_SECONDS,
@@ -52,6 +53,7 @@ from ges2t.whisper_engine import (
     EngineLibraries,
     EngineManifestError,
     HostSystemProbe,
+    NoticeCallback,
     PrerequisiteError,
     PrerequisiteKind,
     PrerequisiteReport,
@@ -649,6 +651,208 @@ def test_ensure_engine_keeps_an_existing_vulkan_build_without_rebuilding(
     assert second == first
 
 
+# --- ensure_engine: the variant-aware rebuild policy (ticket 49) ---------------
+#
+# The user's bug: a CPU build made before ``spirv-headers`` was installed stayed
+# CPU forever because a valid build short-circuited. The policy now rebuilds only
+# when the installed build is worse than what the machine can build for the
+# configured preference. Each test below is one arm of that matrix.
+
+
+def _notices() -> tuple[list[str], NoticeCallback]:
+    """A notice sink recording every message, plus the sink itself."""
+    messages: list[str] = []
+
+    def sink(message: str) -> None:
+        messages.append(message)
+
+    return messages, sink
+
+
+def test_ensure_engine_upgrades_a_cpu_build_when_vulkan_becomes_available(
+    tmp_path: Path,
+) -> None:
+    # The user's exact sequence: built CPU, then installed the GPU dev packages.
+    builder = RecordingBuilder()
+    first = ensure_engine(
+        directory=tmp_path / "engine", system=_cpu_probe(), builder=builder
+    )
+    assert first.variant is BuildVariant.CPU
+
+    messages, notice = _notices()
+    second = ensure_engine(
+        directory=tmp_path / "engine",
+        system=_vulkan_probe(),
+        builder=builder,
+        notice=notice,
+    )
+    assert builder.builds == 2
+    assert builder.requests[1].variant is BuildVariant.VULKAN
+    assert second.variant is BuildVariant.VULKAN
+    # ...and says why, once, in one line.
+    assert messages == [
+        "rebuilding: the Vulkan development packages are now available "
+        "(was CPU-only)"
+    ]
+
+
+def test_ensure_engine_keeps_a_cpu_build_when_only_cpu_is_available(
+    tmp_path: Path,
+) -> None:
+    builder = RecordingBuilder()
+    ensure_engine(directory=tmp_path / "engine", system=_cpu_probe(), builder=builder)
+    messages, notice = _notices()
+    ensure_engine(
+        directory=tmp_path / "engine",
+        system=_cpu_probe(),
+        builder=builder,
+        notice=notice,
+    )
+    assert builder.builds == 1
+    assert messages == []
+
+
+def test_ensure_engine_keeps_a_vulkan_build_when_vulkan_is_available(
+    tmp_path: Path,
+) -> None:
+    builder = RecordingBuilder()
+    first = ensure_engine(
+        directory=tmp_path / "engine", system=_vulkan_probe(), builder=builder
+    )
+    second = ensure_engine(
+        directory=tmp_path / "engine", system=_vulkan_probe(), builder=builder
+    )
+    assert builder.builds == 1
+    assert second == first
+
+
+def test_ensure_engine_does_not_upgrade_a_cpu_build_when_the_preference_is_cpu(
+    tmp_path: Path,
+) -> None:
+    # ``gpu = "cpu"``: the GPU dev packages appear, and setup must still not move
+    # the user off the CPU (ADR 0020's no-silent-substitution applied to devices).
+    builder = RecordingBuilder()
+    ensure_engine(
+        directory=tmp_path / "engine",
+        system=_cpu_probe(),
+        builder=builder,
+        preference=GpuPreference.CPU,
+    )
+    messages, notice = _notices()
+    second = ensure_engine(
+        directory=tmp_path / "engine",
+        system=_vulkan_probe(),
+        builder=builder,
+        preference=GpuPreference.CPU,
+        notice=notice,
+    )
+    assert builder.builds == 1
+    assert second.variant is BuildVariant.CPU
+    assert messages == []
+
+
+def test_ensure_engine_builds_cpu_for_a_cpu_preference_even_with_vulkan_available(
+    tmp_path: Path,
+) -> None:
+    builder = RecordingBuilder()
+    build = ensure_engine(
+        directory=tmp_path / "engine",
+        system=_vulkan_probe(),
+        builder=builder,
+        preference=GpuPreference.CPU,
+    )
+    assert build.variant is BuildVariant.CPU
+    assert builder.requests[0].variant is BuildVariant.CPU
+
+
+def test_ensure_engine_does_not_downgrade_a_vulkan_build_under_a_cpu_preference(
+    tmp_path: Path,
+) -> None:
+    # A GPU build under ``gpu = "cpu"`` is unused on the CPU path, never deleted.
+    builder = RecordingBuilder()
+    first = ensure_engine(
+        directory=tmp_path / "engine",
+        system=_vulkan_probe(),
+        builder=builder,
+    )
+    assert first.variant is BuildVariant.VULKAN
+    second = ensure_engine(
+        directory=tmp_path / "engine",
+        system=_vulkan_probe(),
+        builder=builder,
+        preference=GpuPreference.CPU,
+    )
+    assert builder.builds == 1
+    assert second == first
+
+
+def test_ensure_engine_builds_vulkan_for_a_vulkan_preference_when_available(
+    tmp_path: Path,
+) -> None:
+    builder = RecordingBuilder()
+    build = ensure_engine(
+        directory=tmp_path / "engine",
+        system=_vulkan_probe(),
+        builder=builder,
+        preference=GpuPreference.VULKAN,
+    )
+    assert build.variant is BuildVariant.VULKAN
+
+
+def test_ensure_engine_vulkan_preference_without_vulkan_is_a_reported_error(
+    tmp_path: Path,
+) -> None:
+    # ``gpu = "vulkan"`` that cannot be built is a typed error naming the exact
+    # package line -- never a silent CPU run -- even on a fresh install.
+    builder = RecordingBuilder()
+    with pytest.raises(PrerequisiteError) as caught:
+        ensure_engine(
+            directory=tmp_path / "engine",
+            system=_cpu_probe(),
+            builder=builder,
+            preference=GpuPreference.VULKAN,
+        )
+    assert "spirv-headers" in str(caught.value)
+    assert "sudo pacman -S" in str(caught.value)
+    assert builder.builds == 0
+
+
+def test_ensure_engine_vulkan_preference_over_an_existing_cpu_build_errors(
+    tmp_path: Path,
+) -> None:
+    builder = RecordingBuilder()
+    ensure_engine(directory=tmp_path / "engine", system=_cpu_probe(), builder=builder)
+    with pytest.raises(PrerequisiteError):
+        ensure_engine(
+            directory=tmp_path / "engine",
+            system=_cpu_probe(),
+            builder=builder,
+            preference=GpuPreference.VULKAN,
+        )
+    # The existing CPU engine is left exactly as it was; nothing is silently run.
+    assert builder.builds == 1
+    installed = verify_build(tmp_path / "engine")
+    assert installed is not None
+    assert installed.variant is BuildVariant.CPU
+
+
+def test_ensure_engine_force_rebuilds_an_already_best_build(tmp_path: Path) -> None:
+    # The ``--rebuild`` escape hatch: the old manual workaround was to delete the
+    # install directory by hand.
+    builder = RecordingBuilder()
+    ensure_engine(directory=tmp_path / "engine", system=_cpu_probe(), builder=builder)
+    ensure_engine(directory=tmp_path / "engine", system=_cpu_probe(), builder=builder)
+    assert builder.builds == 1
+    ensure_engine(
+        directory=tmp_path / "engine",
+        system=_cpu_probe(),
+        builder=builder,
+        force=True,
+    )
+    assert builder.builds == 2
+    assert builder.requests[1].variant is BuildVariant.CPU
+
+
 # --- The real builder, driven by a fake runner --------------------------------
 
 
@@ -818,6 +1022,62 @@ def test_builder_raises_when_a_vulkan_build_produced_no_vulkan_library(
             _request(BuildVariant.VULKAN, tmp_path / "engine")
         )
     assert "libggml-vulkan" in str(caught.value)
+
+
+def test_a_successful_vulkan_rebuild_replaces_the_manifest_and_adds_the_library(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "engine"
+    _builder(tmp_path, FakeCommandRunner(), _cpu_probe()).build(
+        _request(BuildVariant.CPU, destination)
+    )
+    build = _builder(
+        tmp_path, FakeCommandRunner(vulkan_library=True), _vulkan_probe()
+    ).build(_request(BuildVariant.VULKAN, destination))
+    assert build.variant is BuildVariant.VULKAN
+    rebuilt = read_build(destination)
+    assert rebuilt is not None
+    assert rebuilt.variant is BuildVariant.VULKAN
+    assert (destination / "libggml-vulkan.so.0.26.0").is_file()
+
+
+def test_a_failed_rebuild_leaves_the_previous_build_intact(tmp_path: Path) -> None:
+    # A Vulkan rebuild that produces no libggml-vulkan must not touch the working
+    # CPU install: verifying the destination must still yield the old CPU build.
+    destination = tmp_path / "engine"
+    original = _builder(tmp_path, FakeCommandRunner(), _cpu_probe()).build(
+        _request(BuildVariant.CPU, destination)
+    )
+    # A sentinel of the old install's identity: a direct install would have
+    # overwritten this file (a new inode) before failing.
+    before_inode = (destination / "libwhisper.so.1.9.5").stat().st_ino
+    failing = _builder(
+        tmp_path, FakeCommandRunner(vulkan_library=False), _vulkan_probe()
+    )
+    with pytest.raises(BuildFailedError):
+        failing.build(_request(BuildVariant.VULKAN, destination))
+    assert verify_build(destination) == original
+    previous = read_build(destination)
+    assert previous is not None
+    assert previous.variant is BuildVariant.CPU
+    assert (destination / "libwhisper.so.1.9.5").stat().st_ino == before_inode
+    # The staging directory is gone, so nothing transient is left behind.
+    assert list(tmp_path.glob(".engine.staging-*")) == []
+    assert list(tmp_path.glob(".engine.old")) == []
+
+
+def test_a_failed_fresh_build_leaves_no_engine_verify_build_accepts(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "engine"
+    failing = WhisperCppBuilder(
+        runner=FakeCommandRunner(produce_libraries=False),
+        system=_cpu_probe(),
+        build_root=tmp_path / "scratch",
+    )
+    with pytest.raises(BuildFailedError):
+        failing.build(_request(BuildVariant.CPU, destination))
+    assert verify_build(destination) is None
 
 
 def test_builder_raises_prerequisite_error_when_cmake_is_absent(
