@@ -25,7 +25,8 @@ selection reports `OK`/skipped rather than a false failure:
    against its pinned sha256.
 3. **Vulkan device** — whether a Vulkan runtime is present; a `WARN` when absent naming the CPU
    cost and the `small-q8_0` default; and, when a GPU runtime *is* present but the built engine
-   is CPU-only, the WHY (the missing dev package(s), from the same probe `setup` will use).
+   is CPU-only, the WHY (the missing dev package(s), from the shared `inspect_vulkan` probe the
+   engine build uses).
 
 The existing 22 checks stay untouched and the two by-design `WARN`s (Hotkey bindings, Tray
 failures) still hold, because with the default `whistle` engine all three new checks are skipped.
@@ -36,9 +37,11 @@ _(evidence appended below as work lands)_
 
 - `src/ges2t/whisper_engine.py` — one shared helper, `vulkan_dev_package_hint(status)`, plus
   `VulkanStatus.missing_packages` (the Arch package names of the missing **dev** pieces; the
-  runtime is deliberately excluded). This is the single wording for "a GPU runtime is present but
-  a dev package is missing, so the build is CPU-only" — ticket 47's `setup` hint and this ticket's
-  doctor check both read it, so they cannot drift. Returns `None` when there is no runtime at all
+  runtime is deliberately excluded). This is the **intended** single source for "a GPU runtime is
+  present but a dev package is missing, so the build is CPU-only": ticket 47's `setup` hint must be
+  moved onto it. It is **not shared yet** — 47's branch builds its own `cpu_only_build_advice` /
+  `cpu_only_build_hint` in `setup_command.py`, so until that dedupe lands the wording and the fix
+  line can still drift. Returns `None` when there is no runtime at all
   (a GPU is not one package away) or when every piece is present.
 - `src/ges2t/doctor.py` — three new checks (`check_whisper_engine`, `check_whisper_model`,
   `check_vulkan`), the `WHISPER_CPP_ENGINE` constant, a `_whisper_gate` shared by all three, two new
@@ -162,9 +165,10 @@ worktree's venv has `gi`. The check runs no microphone, clipboard, keystroke, wi
   inserted after "Engine present". With the default `whistle` engine they are `OK`/skipped, so the
   two by-design `WARN`s (Hotkey bindings, Tray failures) remain exactly two and the exit code is
   unchanged. `test_build_report_adds_the_whisper_checks_and_keeps_two_by_design_warnings` pins this.
-- **Shared, not duplicated.** The GPU-present-but-CPU-only wording lives in
-  `whisper_engine.vulkan_dev_package_hint`; ticket 47's `setup` hint should call it rather than
-  re-word it.
+- **Shared, not duplicated (intended, not yet true).** The GPU-present-but-CPU-only wording lives in
+  `whisper_engine.vulkan_dev_package_hint`; ticket 47's `setup` hint **must be moved onto it** rather
+  than re-worded — 47's branch currently has its own `cpu_only_build_advice`, so the two can drift
+  until that dedupe lands.
 - **No model-vs-GPU sizing check** (ADR 0021 §8): any configured model is accepted.
 - The whisper block is validated by the new model check (catching `WhisperCppConfigError`), not by
   the existing "Engine config valid" check, which this ticket deliberately left untouched; that
