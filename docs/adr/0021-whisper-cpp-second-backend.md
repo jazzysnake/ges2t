@@ -67,7 +67,8 @@ the model is loaded **once at service start**.
 ## Decision
 
 1. **whisper.cpp is a second backend**, selected by `transcriber.engine = "whisper_cpp"`; the
-   **default backend remains `needle`**, so the shipped live/incremental typing is unchanged.
+   **default backend remains `whistle`** (the Whistle model on the Needle 3 engine), so the
+   shipped live/incremental typing is unchanged.
 2. **In-process integration**: `ctypes` over `libwhisper.so` and the `libggml*.so` libraries, with the
    model **loaded once at service start and kept resident**. No per-utterance subprocess, no reload.
 3. **Batch-only**: `supports_streaming = False`. Selecting whisper trades away live/incremental typing
@@ -89,8 +90,8 @@ the model is loaded **once at service start**.
    at startup when `streaming.enabled = true`, when the configured model is not acquired, or when the
    whisper library is not built. **Model-vs-GPU sizing is deliberately not checked.**
 9. **Licence**: whisper.cpp and the Whisper weights are MIT.
-10. **The needle/Whistle model is selectable too**, with `whistle` as its default; the **needle
-    backend remains the shipped default** because it keeps live/incremental typing, which whisper
+10. **The needle/Whistle model is selectable too**, with `whistle` as its default; the **`whistle`
+    engine remains the shipped default** because it keeps live/incremental typing, which whisper
     cannot.
 
 ## Consequences
@@ -110,4 +111,4 @@ the model is loaded **once at service start**.
 ## Escape hatch
 
 Unchanged and still open: if whisper.cpp disappoints, the backend is one config value away from
-`needle`, and the whole integration sits behind the ADR 0010 `Transcriber` Protocol.
+`whistle`, and the whole integration sits behind the ADR 0010 `Transcriber` Protocol.

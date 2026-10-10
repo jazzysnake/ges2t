@@ -4,7 +4,9 @@
 
 ges2t is a minimal, fully offline dictation tool for Linux. You press a key, speak, and the
 text is typed into whatever window currently has focus. Transcription runs entirely on your
-machine with Cactus Compute's 16 MB **Whistle** model on the **Needle 3** engine: there is no
+machine with Cactus Compute's 16 MB **Whistle** model on the **Needle 3** engine (with
+**whisper.cpp** available as an opt-in, more accurate second engine — see
+[§10](#10-configuration)): there is no
 cloud, no account, and no text leaves the computer. A long-lived background service
 (`ges2t run`) owns the warm model, the microphone, the tray icon and a Unix socket; the key
 you bind in KDE sends one short command to that service over the socket.
@@ -370,6 +372,12 @@ language       = ""      # "" = engine auto-detect
 window_seconds = 5       # streaming commit-window cap, seconds (ADR 0011)
 chunk_seconds  = 1       # streaming feed granularity, seconds (ADR 0011)
 
+[engine.whisper_cpp]     # active only while transcriber.engine == "whisper_cpp"
+# model    = "medium-q5_0"  # omitted = the GPU/CPU default rule (see below)
+language   = ""          # "" = whisper auto-detect
+threads    = 4           # omitted = this machine's core count
+gpu        = "auto"      # "auto" | "cpu" | "vulkan"
+
 # ---- injector-specific: owned by the selected injection backend ----
 
 [injection.ydotool]      # active only while injection.backend == "ydotool"
@@ -385,7 +393,7 @@ paste_keys = ["ctrl+shift+v"]
 
 | Key | Default | Meaning |
 |---|---|---|
-| `transcriber.engine` | `"whistle"` | engine selector; `whistle` is the only engine in v1 |
+| `transcriber.engine` | `"whistle"` | engine selector: `"whistle"` (default) or `"whisper_cpp"` |
 | `transcriber.model_path` | `""` | `""` = the pinned artifact under `$XDG_DATA_HOME/ges2t` |
 | `hotkey.mode` | `"ptt"` | accepted values `"ptt"` and `"toggle"`; **does not bind anything** |
 | `hotkey.key` | `""` | documentation only |
@@ -398,6 +406,10 @@ paste_keys = ["ctrl+shift+v"]
 | `engine.whistle.language` | `""` | `""` = auto-detect; any string is passed to the engine |
 | `engine.whistle.window_seconds` | `5` | streaming commit window, must be ≤ 30 |
 | `engine.whistle.chunk_seconds` | `1` | feed granularity, must be ≥ 0.25 and < `window_seconds` |
+| `engine.whisper_cpp.model` | device rule | `"medium-q5_0"` on a Vulkan build, `"small-q8_0"` otherwise; overridable |
+| `engine.whisper_cpp.language` | `""` | `""` = whisper auto-detect |
+| `engine.whisper_cpp.threads` | core count | decoder threads; omitted uses every core |
+| `engine.whisper_cpp.gpu` | `"auto"` | `"auto"` (Vulkan if the build has it, else CPU), `"cpu"`, or `"vulkan"` |
 | `injection.ydotool.layout` | `"auto"` | `"auto"` = live compositor keymap; otherwise e.g. `"hu"` |
 | `injection.ydotool.variant` | `""` | used with an explicit `layout` |
 | `injection.ydotool.key_delay_ms` | `0` | inter-key delay passed to `ydotool key` |
@@ -407,6 +419,46 @@ The **window and chunk sizes live in `[engine.whistle]`**, not in `[streaming]`,
 are properties of *this* engine's re-transcription behaviour and mean nothing to an engine
 that streams properly. `[streaming].enabled` is the only streaming key the app itself
 understands.
+
+### Engines: `whistle` (default) and `whisper_cpp` (opt-in)
+
+`transcriber.engine` selects the engine. There is **no automatic fallback** between them: a
+configured engine is never silently substituted (ADR 0020).
+
+**`whistle` (the default)** is Cactus Compute's 16 MB model on the Needle 3 engine. It is the
+only engine that **streams**: with `streaming.enabled = true` (default) the words it commits
+are typed as you speak, so text appears mid-utterance. Its measured accuracy on the reference
+recording is `word_diff` 0.281 batch / 0.391 streaming.
+
+**`whisper_cpp` (opt-in)** is whisper.cpp, loaded in-process once at service start. It is much
+more accurate — `medium-q5_0` scores `word_diff` **0.062** on the same recording, roughly **4.5×
+fewer errors** than Whistle — at the cost of latency: **~1.7–3 s per 25 s utterance** on the
+reference Radeon 780M via Vulkan, and about **6× real time** on CPU-only machines. It is
+**batch-only**: there is **no text until the utterance ends** (whisper's partial-window output
+was measured unstable). Because `streaming.enabled` defaults to `true`, selecting whisper
+requires turning streaming off — otherwise **the service refuses to start**:
+
+```toml
+[transcriber]
+engine = "whisper_cpp"
+
+[streaming]
+enabled = false            # required: whisper.cpp is batch-only
+
+[engine.whisper_cpp]
+# model    = "medium-q5_0"  # omit for the GPU/CPU default below
+# language = ""            # "" = auto-detect
+gpu        = "auto"        # "auto" | "cpu" | "vulkan"
+```
+
+Build and download it once with `ges2t setup whisper.cpp [model]` (the only networked command,
+ADR 0018). When `model` is omitted, the default follows the machine: **`medium-q5_0` when a
+Vulkan build is possible, `small-q8_0` otherwise** (upstream publishes no `small-q5_0`), the
+same rule `ges2t setup` uses. **Never `f16`** (larger, slower, never more accurate).
+
+At startup with `transcriber.engine = "whisper_cpp"` the service **refuses to start** — rather
+than degrading — when `streaming.enabled = true`, when the model above is not acquired, or when
+the whisper library is not built. **Model-vs-GPU sizing is deliberately not checked.**
 
 ### Behaviours the configuration controls, and their traps
 
