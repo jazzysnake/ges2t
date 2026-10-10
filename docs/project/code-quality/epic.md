@@ -3,6 +3,7 @@
 - **Priority:** P2
 - **Status:** to do
 - **Epic owner:** orchestrator
+- **Rules:** [`../../code-quality.md`](../../code-quality.md) — the rules this epic exists to enforce
 
 ## Goal
 

@@ -16,8 +16,11 @@ definition of done on your own branch, and to report **real evidence, not summar
 ## Before you write anything
 
 1. Read the ticket at the path the orchestrator gives you, and **every artifact it links** — its
-   epic, the ADRs it cites, and its related tickets. Read them *before* touching code. Anything you
-   would have to guess belongs in a comment and/or a `blocked` status, never in improvisation.
+   epic, the ADRs it cites, and its related tickets — and read **`docs/code-quality.md`**, the project's
+   code-quality rules. Read them *before* touching code. The code-quality rules are not style
+   preferences; they are the bar that keeps past defects from recurring, and your work will be reviewed
+   against every one of them. Anything you would have to guess belongs in a comment and/or a `blocked`
+   status, never in improvisation.
 2. If a ticket decision looks wrong, do **not** redesign the project. Write your reasoning into the
    ticket's next comment artifact and set the ticket `blocked`. Do not silently work around a
    blocker.

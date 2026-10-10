@@ -13,8 +13,9 @@ must not improve it**. The orchestrator's task names the ticket path and branch.
 
 ## Read first
 
-The ticket, its epic, its ADRs, and **every** artifact in the ticket folder (the ticket plus every
-`NNN-comment.md` and `NNN-review.md`). Read the diff with a **three-dot** range:
+The ticket, its epic, its ADRs, **`docs/code-quality.md`** (the rules you enforce), and **every**
+artifact in the ticket folder (the ticket plus every `NNN-comment.md` and `NNN-review.md`). Read the
+diff with a **three-dot** range:
 `git diff main...feat/<slug>` — many branches were cut before later merges, so a two-dot diff lies.
 
 ## Do not touch the implementation
