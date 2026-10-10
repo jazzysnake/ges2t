@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import hashlib
 import io
+import re
 import sys
 import zipfile
 from collections.abc import Iterator
 from pathlib import Path
+from types import MappingProxyType
 from typing import Literal
 
 import pytest
@@ -28,17 +30,29 @@ from ges2t.model_store import (
     MODEL_SIZE,
     MODEL_URL,
     PLATFORM_KEY,
+    WHISPER_CPP_CATALOGUE,
+    WHISPER_CPP_MODELS,
+    WHISPER_CPP_MODELS_URL,
+    WHISPER_CPP_QUANTS,
+    WHISPER_CPP_SIZES,
     ArtifactPin,
     ArtifactVerificationError,
     ModelStoreError,
     UnsupportedPlatformError,
+    WhisperModel,
+    WhisperModelName,
+    WhisperModelNameError,
     default_data_dir,
     engine_path,
     ensure_engine,
     ensure_model,
+    ensure_whisper_model,
     env_overrides,
     model_path,
+    parse_whisper_model_name,
     verify,
+    whisper_model,
+    whisper_model_path,
 )
 
 MODEL_BYTES: bytes = b"whistle-weights-payload" * 3
@@ -491,3 +505,303 @@ def test_verify_rejects_tampered_content(data_home: Path, fake_pins: None) -> No
 
 def test_verify_rejects_a_missing_file(data_home: Path, fake_pins: None) -> None:
     assert verify(model_path(), MODEL_TEST_PIN) is False
+
+
+# --- whisper.cpp: catalogue ---------------------------------------------------
+
+#: The live-verified pins, restated as data so a silent edit to the catalogue is
+#: caught. Provenance: Hugging Face tree API, 2026-10-10 (ticket 001-comment.md).
+EXPECTED_WHISPER_PINS: dict[str, tuple[int, str]] = {
+    "tiny-q8_0": (
+        43_537_433,
+        "c2085835d3f50733e2ff6e4b41ae8a2b8d8110461e18821b09a15c40c42d1cca",
+    ),
+    "base-q8_0": (
+        81_768_585,
+        "c577b9a86e7e048a0b7eada054f4dd79a56bbfa911fbdacf900ac5b567cbb7d9",
+    ),
+    "small-q8_0": (
+        264_464_607,
+        "49c8fb02b65e6049d5fa6c04f81f53b867b5ec9540406812c643f177317f779f",
+    ),
+    "medium-q5_0": (
+        539_212_467,
+        "19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f",
+    ),
+    "medium-q8_0": (
+        823_369_779,
+        "42a1ffcbe4167d224232443396968db4d02d4e8e87e213d3ee2e03095dea6502",
+    ),
+    "large-v3-turbo-q5_0": (
+        574_041_195,
+        "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+    ),
+    "large-v3-turbo-q8_0": (
+        874_188_075,
+        "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1",
+    ),
+}
+
+
+def test_whisper_catalogue_covers_exactly_the_live_verified_names() -> None:
+    assert tuple(entry.name for entry in WHISPER_CPP_MODELS) == tuple(EXPECTED_WHISPER_PINS)
+    assert set(WHISPER_CPP_CATALOGUE) == set(EXPECTED_WHISPER_PINS)
+
+
+def test_whisper_catalogue_pins_match_the_live_host() -> None:
+    for name, (size_bytes, sha256) in EXPECTED_WHISPER_PINS.items():
+        entry = whisper_model(name)
+        assert entry.size_bytes == size_bytes
+        assert entry.sha256 == sha256
+
+
+def test_whisper_catalogue_entries_are_self_consistent() -> None:
+    for entry in WHISPER_CPP_MODELS:
+        assert entry.name == f"{entry.model.size}-{entry.model.quant}"
+        assert entry.file_name == f"ggml-{entry.name}.bin"
+        assert entry.url == f"{WHISPER_CPP_MODELS_URL}/{entry.file_name}"
+        assert len(entry.sha256) == 64
+        int(entry.sha256, 16)  # a hex digest, or ValueError
+        assert entry.size_bytes > 0
+        assert entry.pin() == ArtifactPin(
+            name=entry.file_name,
+            url=entry.url,
+            sha256=entry.sha256,
+            size=entry.size_bytes,
+        )
+
+
+def test_whisper_catalogue_only_uses_supported_quants_and_never_f16() -> None:
+    quants = {entry.model.quant for entry in WHISPER_CPP_MODELS}
+    assert quants <= set(WHISPER_CPP_QUANTS)
+    assert "f16" not in quants
+
+
+def test_whisper_catalogue_publishes_q8_for_every_size_and_q5_only_where_upstream_does() -> None:
+    # q8_0 for every size; q5_0 only for medium/large-v3-turbo (the ticket's rule).
+    for size in WHISPER_CPP_SIZES:
+        assert whisper_model(f"{size}-q8_0").model.quant == "q8_0"
+    assert {entry.name for entry in WHISPER_CPP_MODELS if entry.model.quant == "q5_0"} == {
+        "medium-q5_0",
+        "large-v3-turbo-q5_0",
+    }
+
+
+# --- whisper.cpp: name parser -------------------------------------------------
+
+
+def test_parse_whisper_model_name_splits_size_and_quant() -> None:
+    assert parse_whisper_model_name("medium-q5_0") == WhisperModelName(
+        size="medium", quant="q5_0"
+    )
+    assert parse_whisper_model_name("large-v3-turbo-q8_0") == WhisperModelName(
+        size="large-v3-turbo", quant="q8_0"
+    )
+
+
+def test_parse_whisper_model_name_accepts_every_catalogue_entry() -> None:
+    for entry in WHISPER_CPP_MODELS:
+        parsed = parse_whisper_model_name(entry.name)
+        assert parsed.name == entry.name
+        assert parsed == entry.model
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "",
+        "medium",
+        "medium-",
+        "-q5_0",
+        "MEDIUM-q8_0",
+        "tiny-q5_0",  # size/quant valid, but not published upstream
+        "small-q5_1",  # q5_1 is published but not supported
+        "medium-f16",  # never f16
+        "large-v1-q8_0",  # size not in the shipped range
+        "medium-q5_0-extra",
+        "medium-q9_9",
+    ],
+)
+def test_parse_whisper_model_name_rejects_with_a_typed_error_naming_the_valid_set(
+    name: str,
+) -> None:
+    with pytest.raises(WhisperModelNameError) as excinfo:
+        parse_whisper_model_name(name)
+
+    message = str(excinfo.value)
+    assert "valid models:" in message
+    for valid in WHISPER_CPP_CATALOGUE:
+        assert valid in message
+
+
+def test_whisper_model_name_error_carries_its_fields() -> None:
+    with pytest.raises(WhisperModelNameError) as excinfo:
+        parse_whisper_model_name("medium-f16")
+
+    error = excinfo.value
+    assert error.name == "medium-f16"
+    assert "f16" in error.reason
+    assert error.valid == tuple(WHISPER_CPP_CATALOGUE)
+
+
+# --- whisper.cpp: paths -------------------------------------------------------
+
+
+def test_whisper_model_path_uses_the_epic_layout(data_home: Path) -> None:
+    assert whisper_model_path("medium-q5_0") == (
+        data_home / "ges2t" / "models" / "whisper-cpp" / "medium-q5_0" / "ggml-medium-q5_0.bin"
+    )
+    assert whisper_model_path("large-v3-turbo-q5_0") == (
+        data_home
+        / "ges2t"
+        / "models"
+        / "whisper-cpp"
+        / "large-v3-turbo-q5_0"
+        / "ggml-large-v3-turbo-q5_0.bin"
+    )
+
+
+def test_whisper_model_path_rejects_an_unknown_name(data_home: Path) -> None:
+    with pytest.raises(WhisperModelNameError):
+        whisper_model_path("medium-f16")
+
+
+# --- whisper.cpp: acquisition -------------------------------------------------
+
+WHISPER_TEST_BYTES: bytes = b"ggml-whisper-payload" * 3
+WHISPER_TEST_ENTRY: WhisperModel = WhisperModel(
+    model=WhisperModelName(size="tiny", quant="q8_0"),
+    url=f"{WHISPER_CPP_MODELS_URL}/ggml-tiny-q8_0.bin",
+    sha256=hashlib.sha256(WHISPER_TEST_BYTES).hexdigest(),
+    size_bytes=len(WHISPER_TEST_BYTES),
+)
+
+
+def _flip_one_byte(payload: bytes) -> bytes:
+    """Return ``payload`` with exactly one bit flipped in its first byte."""
+    flipped = bytearray(payload)
+    flipped[0] ^= 0x01
+    return bytes(flipped)
+
+
+@pytest.fixture()
+def fake_whisper_catalogue(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace the real (multi-hundred-MB) catalogue with one tiny synthetic entry."""
+    monkeypatch.setattr(
+        model_store,
+        "WHISPER_CPP_CATALOGUE",
+        MappingProxyType({WHISPER_TEST_ENTRY.name: WHISPER_TEST_ENTRY}),
+    )
+    monkeypatch.setattr(model_store, "WHISPER_CPP_MODELS", (WHISPER_TEST_ENTRY,))
+
+
+def test_ensure_whisper_model_downloads_verifies_and_installs(
+    data_home: Path, fake_whisper_catalogue: None
+) -> None:
+    fetcher = RecordingFetcher(WHISPER_TEST_BYTES)
+
+    result = ensure_whisper_model("tiny-q8_0", fetcher=fetcher)
+
+    assert result == whisper_model_path("tiny-q8_0")
+    assert result.read_bytes() == WHISPER_TEST_BYTES
+    assert len(fetcher.calls) == 1
+    assert fetcher.calls[0][0] == WHISPER_TEST_ENTRY.url
+    assert verify(result, WHISPER_TEST_ENTRY.pin()) is True
+
+
+def test_ensure_whisper_model_is_idempotent(
+    data_home: Path, fake_whisper_catalogue: None
+) -> None:
+    ensure_whisper_model("tiny-q8_0", fetcher=RecordingFetcher(WHISPER_TEST_BYTES))
+    second = RecordingFetcher(b"")
+
+    result = ensure_whisper_model("tiny-q8_0", fetcher=second)
+
+    assert result == whisper_model_path("tiny-q8_0")
+    assert second.calls == []
+
+
+def test_ensure_whisper_model_flipped_byte_is_a_typed_error(
+    data_home: Path, fake_whisper_catalogue: None
+) -> None:
+    corrupted = _flip_one_byte(WHISPER_TEST_BYTES)
+    assert len(corrupted) == WHISPER_TEST_ENTRY.size_bytes  # size alone would pass
+    fetcher = RecordingFetcher(corrupted)
+
+    with pytest.raises(ArtifactVerificationError) as excinfo:
+        ensure_whisper_model("tiny-q8_0", fetcher=fetcher)
+
+    message = str(excinfo.value)
+    assert WHISPER_TEST_ENTRY.file_name in message
+    assert WHISPER_TEST_ENTRY.sha256 in message
+    assert hashlib.sha256(corrupted).hexdigest() in message
+    assert not whisper_model_path("tiny-q8_0").exists()
+    assert _part_files(data_home) == []
+
+
+def test_ensure_whisper_model_truncated_file_is_a_typed_error(
+    data_home: Path, fake_whisper_catalogue: None
+) -> None:
+    fetcher = RecordingFetcher(WHISPER_TEST_BYTES[:-1])
+
+    with pytest.raises(ArtifactVerificationError):
+        ensure_whisper_model("tiny-q8_0", fetcher=fetcher)
+
+    assert not whisper_model_path("tiny-q8_0").exists()
+    assert _part_files(data_home) == []
+
+
+def test_ensure_whisper_model_network_failure_propagates_and_leaves_nothing(
+    data_home: Path, fake_whisper_catalogue: None
+) -> None:
+    fetcher = InterruptedFetcher(WHISPER_TEST_BYTES[:5])
+
+    with pytest.raises(ConnectionError):
+        ensure_whisper_model("tiny-q8_0", fetcher=fetcher)
+
+    assert fetcher.calls == 1
+    assert not whisper_model_path("tiny-q8_0").exists()
+    assert _part_files(data_home) == []
+
+
+def test_ensure_whisper_model_rejects_an_unpublished_name_before_fetching(
+    data_home: Path, fake_whisper_catalogue: None
+) -> None:
+    fetcher = RecordingFetcher(WHISPER_TEST_BYTES)
+
+    with pytest.raises(WhisperModelNameError):
+        ensure_whisper_model("medium-q5_0", fetcher=fetcher)
+
+    assert fetcher.calls == []
+
+
+# --- ADR 0018: acquisition is the only networked path ------------------------
+
+
+_HTTP_CLIENT_MODULES: frozenset[str] = frozenset(
+    {"urllib", "http", "httpx", "requests", "aiohttp", "ftplib"}
+)
+
+
+def _imported_top_level_names(source: str) -> set[str]:
+    """Return the top-level module names imported by Python ``source``."""
+    pattern = re.compile(r"^\s*(?:import|from)\s+([A-Za-z_][\w.]*)", re.MULTILINE)
+    return {match.group(1).split(".")[0] for match in pattern.finditer(source)}
+
+
+def test_http_clients_are_imported_only_by_the_model_store() -> None:
+    """An HTTP client import anywhere but the acquisition path violates ADR 0018.
+
+    Unix-domain ``socket`` use (the service IPC in ``socket_proto`` and the
+    ``ydotoold`` probe in ``doctor``) is local IPC, not network I/O, and is
+    deliberately outside this check's scope; it is checked by the doctor suite.
+    """
+    source_root = Path(model_store.__file__).resolve().parent
+    offenders: dict[str, set[str]] = {}
+    for path in sorted(source_root.rglob("*.py")):
+        hits = _imported_top_level_names(path.read_text(encoding="utf-8"))
+        network_hits = hits & _HTTP_CLIENT_MODULES
+        if network_hits:
+            offenders[path.name] = network_hits
+
+    assert offenders == {"model_store.py": {"urllib"}}, offenders
