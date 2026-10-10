@@ -1,9 +1,27 @@
 # Recalibrate the speech gate on real device idle audio
 
 - **Priority:** P0
-- **Status:** blocked
+- **Status:** obsolete
 - **Complexity:** M
 - **Epic:** ../epic.md
+
+## Why this is obsolete (2026-10-10)
+
+The user has decided **not** to pursue this recalibration, so the ticket is closed **obsolete** rather
+than merged.
+
+The measurement is sound — the shipped ticket-29 gate *can* be improved — but the recalibration's cost
+lands exactly where this user dictates. Its keep-boundary is **noise-relative**: it needs speech RMS
+≥ ~0.47 × the noise floor (≈ −6.5 dB SNR), so in the noisy environment the user actually works in (a car
+with the window open) it keeps nothing below **gain ≈ 4.0**, while the engine still reads near-correct
+text down to gain 0.5 — about **8× more conservative than the engine**. Merging it could therefore
+**drop real dictation**, which is worse than the `Thank you.` hallucination it fixes.
+
+And the failure it fixes requires an environment the user does **not** dictate in: **true silence is not
+an input they have**. The shipped ticket-29 gate is retained unchanged.
+
+The implementation on `feat/speech-gate-recalibration` was **never merged**; its `001-comment.md` and
+`002-review.md` are kept in this folder as the record of the measurement.
 
 ## Current state / context
 
