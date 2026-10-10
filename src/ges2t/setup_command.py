@@ -50,11 +50,12 @@ from ges2t.model_store import (
     ProgressCallback,
 )
 from ges2t.whisper_engine import (
+    DEFAULT_WHISPER_MODEL_CPU,
+    DEFAULT_WHISPER_MODEL_GPU,
     EngineBuild,
-    HostSystemProbe,
     SystemProbe,
+    default_whisper_model,
     ensure_engine,
-    inspect_vulkan,
 )
 
 __all__ = [
@@ -80,16 +81,13 @@ __all__ = [
 ]
 
 # --- The ADR 0021 §4 default-model rule ---------------------------------------
-
-#: The whisper.cpp model ``ges2t setup`` uses when a Vulkan device is available.
-#: ``medium q5_0`` is the research's most accurate model *and* the best
-#: accuracy-per-second on Vulkan (ADR 0021 §4).
-DEFAULT_WHISPER_MODEL_GPU: str = "medium-q5_0"
-
-#: The whisper.cpp model used on a CPU-only machine. Upstream publishes **no**
-#: ``small-q5_0`` (that only existed via a local quantiser), and ``q8_0`` scored
-#: identically, so ``small-q8_0`` is the CPU default (ADR 0021 §4).
-DEFAULT_WHISPER_MODEL_CPU: str = "small-q8_0"
+#
+# The rule itself lives in :mod:`ges2t.whisper_engine`, next to
+# :func:`~ges2t.whisper_engine.inspect_vulkan`, so the model ``ges2t setup``
+# fetches and the model the service loads from an omitted config are chosen by
+# the **same** probe (ticket 45). ``DEFAULT_WHISPER_MODEL_GPU``,
+# ``DEFAULT_WHISPER_MODEL_CPU`` and :func:`default_whisper_model` are re-exported
+# here because they are part of this module's public API (ticket 44).
 
 
 # --- Errors --------------------------------------------------------------------
@@ -272,23 +270,6 @@ def _parse_backend(token: str | None) -> SetupBackend:
         return SetupBackend(token)
     except ValueError as exc:
         raise UnknownBackendError(token) from exc
-
-
-def default_whisper_model(system: SystemProbe | None = None) -> str:
-    """Return the ADR 0021 §4 default whisper.cpp model for this machine.
-
-    ``medium-q5_0`` when a Vulkan build is possible, ``small-q8_0`` otherwise.
-    The probe is the **same** :func:`ges2t.whisper_engine.inspect_vulkan` the
-    engine build uses to choose CPU-vs-Vulkan, so the default model always
-    matches the engine that would actually be built: a machine with a Vulkan
-    runtime but no dev headers/``glslc`` gets a CPU build *and* the CPU model.
-
-    ``system`` is the test seam; the default is the real host probe.
-    """
-    probe = system if system is not None else HostSystemProbe()
-    if inspect_vulkan(probe).available:
-        return DEFAULT_WHISPER_MODEL_GPU
-    return DEFAULT_WHISPER_MODEL_CPU
 
 
 def plan_setup(

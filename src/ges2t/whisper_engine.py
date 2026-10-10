@@ -58,6 +58,8 @@ __all__ = [
     "BUILD_TARGET",
     "CLONE_TIMEOUT_SECONDS",
     "CONFIGURE_TIMEOUT_SECONDS",
+    "DEFAULT_WHISPER_MODEL_CPU",
+    "DEFAULT_WHISPER_MODEL_GPU",
     "ENGINE_DIRECTORY_NAME",
     "MANIFEST_NAME",
     "PACMAN_PREFIX",
@@ -98,6 +100,7 @@ __all__ = [
     "check_prerequisites",
     "default_build_root",
     "default_jobs",
+    "default_whisper_model",
     "engine_dir",
     "ensure_engine",
     "inspect_vulkan",
@@ -147,6 +150,26 @@ LIBRARY_GLOBS: tuple[str, ...] = ("libwhisper.so*", "libggml*.so*")
 
 #: The library the adapter loads; every other installed library is a dependency.
 ENTRY_LIBRARY_NAME: str = "libwhisper.so"
+
+# --- The ADR 0021 §4 default-model rule ---------------------------------------
+#
+# The rule lives here, next to :func:`inspect_vulkan`, because the default model
+# and the default build variant are decided by the **same** probe: the model must
+# match the engine that would actually be built, and choosing it anywhere else
+# would duplicate the probe (ticket 45). ``ges2t setup`` (which fetches the
+# model) and the service startup (which loads it) both call
+# :func:`default_whisper_model`, so a machine can never be set up with one model
+# and run with another.
+
+#: The whisper.cpp model the rule selects when a Vulkan build is possible (ADR
+#: 0021 §4): the research's most accurate model and the best accuracy-per-second
+#: on Vulkan.
+DEFAULT_WHISPER_MODEL_GPU: str = "medium-q5_0"
+
+#: The whisper.cpp model the rule selects on a CPU-only machine. Upstream
+#: publishes **no** ``small-q5_0`` (that only existed via a local quantiser) and
+#: ``q8_0`` scored identically, so the CPU default is ``small-q8_0`` (ADR 0021 §4).
+DEFAULT_WHISPER_MODEL_CPU: str = "small-q8_0"
 
 # --- Prerequisites (ADR 0021 §7) ---------------------------------------------
 
@@ -744,6 +767,28 @@ def inspect_vulkan(system: SystemProbe) -> VulkanStatus:
         spirv_headers=system.header(SPIRV_HEADER_PATH),
         shader_compiler=system.executable(SHADER_COMPILER_NAME),
     )
+
+
+def default_whisper_model(system: SystemProbe | None = None) -> str:
+    """Return the ADR 0021 §4 default whisper.cpp model for this machine.
+
+    ``medium-q5_0`` when a Vulkan build is possible, ``small-q8_0`` otherwise.
+    The probe is the **same** :func:`inspect_vulkan` the engine build uses to
+    choose CPU-vs-Vulkan, so the default model always matches the engine that
+    would actually be built: a machine with a Vulkan runtime but no dev
+    headers/``glslc`` gets a CPU build *and* the CPU model.
+
+    This is the **single source of truth** for the rule. ``ges2t setup`` calls it
+    to decide which model to fetch (ADR 0021 §6) and the service startup calls it
+    to resolve an omitted ``[engine.whisper_cpp] model`` (ADR 0021 §8), so the
+    two cannot drift apart.
+
+    ``system`` is the test seam; the default is the real host probe.
+    """
+    probe = system if system is not None else HostSystemProbe()
+    if inspect_vulkan(probe).available:
+        return DEFAULT_WHISPER_MODEL_GPU
+    return DEFAULT_WHISPER_MODEL_CPU
 
 
 # --- Manifest ------------------------------------------------------------------

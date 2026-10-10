@@ -10,7 +10,10 @@ The block owns exactly four keys:
 
 * ``model`` -- a ``<size>-<quant>`` name from :mod:`ges2t.model_store`'s
   catalogue (e.g. ``medium-q5_0``). It is validated here so a typo fails at
-  config load rather than at model acquisition.
+  config load rather than at model acquisition. **Omitted** (``None``) is not an
+  error: the device-aware default (``medium-q5_0`` on Vulkan, ``small-q8_0``
+  otherwise -- ADR 0021 §4) is resolved by the composition root at build time,
+  because that rule probes the machine and a pure parse must not (ticket 45).
 * ``language`` -- passed through to whisper.cpp; the empty string means
   auto-detect. Any string is accepted, because the language set is upstream data
   and not our contract.
@@ -25,9 +28,11 @@ An absent block is normal: the generic layer never synthesizes
 empty mapping and returns all defaults.
 
 The **device-dependent default model** (``medium-q5_0`` on a Vulkan machine,
-``small-q5_0`` otherwise -- ADR 0021) and the strict *startup* validation are the
-config ticket's concerns (``whisper-backend-config-and-validation``); this module
-only names a safe CPU default and does not probe the machine.
+``small-q8_0`` otherwise -- ADR 0021 §4) is resolved by the composition root
+(:func:`ges2t.pipeline.resolve_whisper_cpp_config`) through
+:func:`ges2t.whisper_engine.default_whisper_model`, the same rule ``ges2t setup``
+uses; this module deliberately does **not** probe the machine and leaves an
+omitted ``model`` as ``None`` (ticket 45).
 
 This module must stay importable with no backend present (ADR 0010): it imports
 no native library and no third-party package. It reads the catalogue from
@@ -62,14 +67,13 @@ __all__ = [
 #: ``doctor`` line names the exact key the user must edit.
 BLOCK_NAME: str = "engine.whisper_cpp"
 
-#: The CPU-safe default model. ADR 0021's device rule picks ``medium-q5_0`` when a
-#: Vulkan device is available, but that rule belongs to the config layer (it must
-#: probe the machine); this module names the CPU-safe fallback so an adapter
-#: constructed without a block still works. It is ``small-q8_0``, not the ADR's
-#: shorthand ``small-q5_0``: upstream does not publish a ``q5_0`` for ``small``
-#: (only ``q5_1``/``q8_0``), and ges2t ships no quantiser, so ``q8_0`` -- measured
-#: WER-identical to ``q5_0`` -- is the acquirable small model (ticket 41).
-DEFAULT_MODEL: str = "small-q8_0"
+#: The default ``model``: ``None`` means "omitted". It is deliberately **not**
+#: a concrete name -- the device-aware ADR 0021 §4 default (``medium-q5_0`` on
+#: Vulkan, ``small-q8_0`` otherwise) is resolved by the composition root at build
+#: time through :func:`ges2t.whisper_engine.default_whisper_model`, because that
+#: rule probes the machine and this module stays probe-free (ticket 45). A
+#: concrete unresolved default here would contradict the rule.
+DEFAULT_MODEL: str | None = None
 
 #: Default ``language``: empty means whisper.cpp auto-detects (ADR 0009).
 DEFAULT_LANGUAGE: str = ""
@@ -115,9 +119,14 @@ class WhisperCppConfigError(Exception):
 
 @dataclass(frozen=True)
 class WhisperCppConfig:
-    """Validated ``[engine.whisper_cpp]`` settings (ADR 0009, ADR 0021)."""
+    """Validated ``[engine.whisper_cpp]`` settings (ADR 0009, ADR 0021).
 
-    model: str = DEFAULT_MODEL
+    ``model`` is ``None`` when the block omitted it; the composition root
+    resolves that to the device-aware default (ADR 0021 §4) before the adapter
+    is built (ticket 45).
+    """
+
+    model: str | None = DEFAULT_MODEL
     language: str = DEFAULT_LANGUAGE
     threads: int | None = DEFAULT_THREADS
     gpu: GpuPreference = DEFAULT_GPU
@@ -127,9 +136,11 @@ class WhisperCppConfig:
         """Validate a raw ``[engine.whisper_cpp]`` mapping (ADR 0009).
 
         An empty mapping -- the block is absent, which the generic layer never
-        synthesizes -- yields all defaults with no warnings. Unknown keys are
-        collected into the result's warnings and ignored. A wrong-typed or
-        invalid value raises :class:`WhisperCppConfigError`.
+        synthesizes -- yields all defaults with no warnings; an omitted ``model``
+        stays ``None`` (the composition root resolves the device-aware default,
+        ticket 45). Unknown keys are collected into the result's warnings and
+        ignored. A wrong-typed or invalid value raises
+        :class:`WhisperCppConfigError`.
         """
         warnings: list[str] = [
             _unknown_key_warning(key) for key in raw if key not in KNOWN_KEYS
@@ -173,8 +184,8 @@ def _unknown_key_warning(key: str) -> str:
     return f"{BLOCK_NAME}: unknown key {key!r}"
 
 
-def _read_model(raw: Mapping[str, Any]) -> str:
-    """Return ``model``, validated against the catalogue, defaulting to the CPU model."""
+def _read_model(raw: Mapping[str, Any]) -> str | None:
+    """Return ``model``, validated against the catalogue; ``None`` when omitted."""
     key = "model"
     if key not in raw:
         return DEFAULT_MODEL

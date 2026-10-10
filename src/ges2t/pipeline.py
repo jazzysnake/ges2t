@@ -56,9 +56,11 @@ import logging
 import os
 import sys
 from collections.abc import Callable, Iterator, Mapping
+from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
-from ges2t import model_store
+from ges2t import model_store, whisper_engine
 from ges2t.audio.pw_record import PwRecordAudioSource
 from ges2t.config import Config
 from ges2t.injectors.clipboard import ClipboardPasteInjector
@@ -86,6 +88,7 @@ from ges2t.transcribers.whistle import WhistleTranscriber
 from ges2t.transcribers.whistle_config import WhistleConfig
 from ges2t.transcribers.whisper_cpp import WhisperCppTranscriber
 from ges2t.transcribers.whisper_cpp_config import WhisperCppConfig
+from ges2t.whisper_engine import SystemProbe
 from ges2t.ui.status import (
     DiagnosticStatusUI,
     NullStatusUI,
@@ -100,6 +103,7 @@ __all__ = [
     "build_injector",
     "build_status_ui",
     "build_transcriber",
+    "resolve_whisper_cpp_config",
     "run_service",
 ]
 
@@ -194,20 +198,42 @@ def _build_whistle(config: Config) -> Transcriber:
     )
 
 
+def resolve_whisper_cpp_config(
+    block: Mapping[str, Any], *, system: SystemProbe | None = None
+) -> WhisperCppConfig:
+    """Validate a raw ``[engine.whisper_cpp]`` block and resolve an omitted ``model``.
+
+    This is where the ADR 0021 §4 device-aware default is applied: an omitted
+    ``model`` becomes :func:`ges2t.whisper_engine.default_whisper_model` -- the
+    **same** rule ``ges2t setup`` uses -- so the service and setup cannot disagree
+    about which model is in play (ticket 45).
+
+    The resolution deliberately lives here, at the composition root, and not in
+    the generic config parse: the rule probes the machine
+    (:func:`ges2t.whisper_engine.inspect_vulkan`) and a pure config parse must stay
+    side-effect-free (ADR 0009). ``system`` is the test seam.
+    """
+    whisper_config = WhisperCppConfig.from_mapping(block).config
+    if whisper_config.model is None:
+        return replace(
+            whisper_config, model=whisper_engine.default_whisper_model(system)
+        )
+    return whisper_config
+
+
 def _build_whisper_cpp(config: Config) -> Transcriber:
     """Build the in-process whisper.cpp transcriber from ``[engine.whisper_cpp]``.
 
     The block is read with ``.get(..., {})``: the generic layer never synthesises
     an engine block, so its absence is normal and means all defaults (ADR 0009).
-    The adapter keeps the model resident from :func:`_startup`'s single
-    ``load()`` call -- there is no per-utterance subprocess or reload (ADR 0021).
-    The strict *startup validation* of the whisper config (model acquired,
-    library built, no streaming) belongs to the config ticket; here the adapter's
-    own typed :class:`~ges2t.transcribers.whisper_cpp.WhisperCppLoadError` makes
-    a missing artifact fatal with a clear message.
+    :func:`resolve_whisper_cpp_config` applies the device-aware default model
+    (ADR 0021 §4). The adapter keeps the model resident from :func:`_startup`'s
+    single ``load()`` call -- there is no per-utterance subprocess or reload (ADR
+    0021). The strict *startup validation* of the whisper config (model acquired,
+    library built, no streaming) is :func:`_validate_whisper_config`.
     """
     block = config.engine_blocks.get("whisper_cpp", {})
-    whisper_config = WhisperCppConfig.from_mapping(block).config
+    whisper_config = resolve_whisper_cpp_config(block)
     return WhisperCppTranscriber(whisper_config)
 
 
@@ -476,6 +502,56 @@ def _validate_injection_backend(config: Config) -> None:
         raise _streaming_clipboard_error()
 
 
+def _whisper_streaming_error() -> PipelineError:
+    """The loud, actionable refusal of whisper + streaming (ticket 45, ADR 0021 §8).
+
+    An error, not a silent downgrade: ``streaming.enabled`` defaults to ``true``,
+    and whisper.cpp is batch-only (``supports_streaming = False``), so the
+    capability rule would quietly run the batch path. ADR 0021 §8 requires the
+    user to make that choice explicit instead, so choosing whisper without also
+    turning streaming off is refused at startup.
+    """
+    return PipelineError(
+        'transcriber.engine = "whisper_cpp" cannot be combined with '
+        'streaming.enabled = true: whisper.cpp is batch-only, so there would be '
+        "no text until the utterance ends.",
+        hint=(
+            "set streaming.enabled = false to run whisper.cpp batch-only, or set "
+            'transcriber.engine = "whistle" (the default) to keep live and '
+            "incremental typing"
+        ),
+    )
+
+
+def _validate_whisper_config(config: Config) -> None:
+    """Refuse a whisper.cpp config that cannot work (ticket 45, ADR 0021 §8).
+
+    With ``transcriber.engine = "whisper_cpp"`` the service refuses to start when
+    ``streaming.enabled = true``, when the configured (or defaulted) model is not
+    acquired, or when the engine library is not built. Each message names the
+    offending setting and, for the artifacts, the fix. **Model-vs-GPU sizing is
+    deliberately not checked** (ADR 0021 §8): it is neither a startup error nor a
+    doctor warning.
+
+    The check is config-level and runs before any artifact is loaded, mirroring
+    ticket 34's clipboard/streaming refusal, so the user sees the contradiction
+    even when the model is missing.
+    """
+    if config.transcriber.engine != "whisper_cpp":
+        return
+    if config.streaming.enabled:
+        raise _whisper_streaming_error()
+    problems = _whisper_missing_artifacts(config)
+    if problems:
+        raise PipelineError(
+            "; ".join(problems),
+            hint=(
+                "run 'ges2t setup whisper.cpp <model>' to build the engine and "
+                "download the model (the only ges2t command that uses the network)"
+            ),
+        )
+
+
 def _build_live_typer_factory(
     config: Config, transcriber: Transcriber, injector: Injector
 ) -> Callable[[], LiveTyper] | None:
@@ -587,12 +663,10 @@ def _missing_artifacts(config: Config) -> list[str]:
     running platform, so an unsupported platform is reported as such instead of
     as a spurious missing file.
 
-    The check is Whistle-specific: the whisper.cpp backend's artifacts (its built
-    ``libwhisper.so`` and its configured model) are validated by the whisper
-    adapter's own ``load()``, which raises a typed, actionable
-    :class:`~ges2t.transcribers.whisper_cpp.WhisperCppLoadError` that
-    :func:`run_service` treats as fatal. Naming the whisper artifacts here would
-    duplicate the config ticket that owns whisper startup validation.
+    The check is Whistle-specific. The whisper.cpp backend's artifacts are
+    validated separately by :func:`_whisper_missing_artifacts` (ticket 45,
+    ADR 0021 §8), so this Whistle path is unchanged and the two engines never
+    share an artifact assumption.
     """
     problems: list[str] = []
 
@@ -615,6 +689,38 @@ def _missing_artifacts(config: Config) -> list[str]:
         if not _present(engine, expected_size=engine_pin.size):
             problems.append(f"the Needle 3 engine is missing or incomplete at {engine}")
 
+    return problems
+
+
+def _whisper_missing_artifacts(config: Config) -> list[str]:
+    """Return one problem per whisper.cpp artifact missing or the wrong size.
+
+    The model is the configured one, or the device-aware default when the block
+    omitted it (:func:`resolve_whisper_cpp_config`), checked against its pinned
+    size. The library check is the engine build's own completeness test
+    (:func:`ges2t.whisper_engine.verify_build`), which reads the install manifest
+    and confirms every named library still exists. **Model-vs-GPU sizing is not
+    checked** (ADR 0021 §8).
+    """
+    problems: list[str] = []
+    whisper_config = resolve_whisper_cpp_config(
+        config.engine_blocks.get("whisper_cpp", {})
+    )
+    model_name = whisper_config.model
+    assert model_name is not None  # resolve_whisper_cpp_config always resolves it
+    model_path = model_store.whisper_model_path(model_name)
+    pin = model_store.whisper_model(model_name)
+    if not _present(model_path, expected_size=pin.size_bytes):
+        problems.append(
+            f"the whisper.cpp model {model_name!r} is not acquired or is "
+            f"incomplete at {model_path}"
+        )
+    engine_directory = whisper_engine.engine_dir()
+    if whisper_engine.verify_build(engine_directory) is None:
+        problems.append(
+            f"the whisper.cpp engine library is not built at {engine_directory} "
+            f"({whisper_engine.ENTRY_LIBRARY_NAME} is missing or incomplete)"
+        )
     return problems
 
 
@@ -645,6 +751,7 @@ def _startup(config: Config, status_ui: StatusUI) -> Service:
     lifetime (ADR 0015), and finally the service is constructed.
     """
     _validate_injection_backend(config)
+    _validate_whisper_config(config)
     _require_artifacts(config)
     transcriber = build_transcriber(config)
     audio_source = build_audio_source(config)
