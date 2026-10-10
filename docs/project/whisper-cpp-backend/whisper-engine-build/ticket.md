@@ -68,6 +68,10 @@ Vulkan set is only needed for the **GPU** build; a CPU-only build needs just a C
 - **Do not** require or install `whisper-cli`; the integration is `ctypes`, not a subprocess.
 - **No keystrokes, no clipboard, no windows, no microphone, no `sudo`, no service changes.** No
   package installs.
+- Review follow-ups from `002-review.md` (four non-blocking findings) are recorded in
+  `003-comment.md`: the `001-comment.md` falsification-count correction, the `SubprocessRunner`
+  spawn-`OSError` wrap plus a narrowed docstring, the now-falsifiable clone-timeout test, and the
+  "only `vulkan/vulkan.h` missing" test.
 
 ## Related tickets
 

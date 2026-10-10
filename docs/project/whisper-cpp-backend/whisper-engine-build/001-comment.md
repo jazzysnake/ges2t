@@ -274,14 +274,17 @@ So the install half of the builder is verified against **real** CMake output, no
 only against the test fake's output. The scratch tree was removed afterwards.
 
 Failure modes are typed, never raw: `SubprocessRunner` turns a non-zero exit into
-`BuildFailedError` naming the command and the tail of its stderr, a timeout into
-one naming the budget, and a missing executable into one naming it (tests:
-`test_subprocess_runner_wraps_*`). `git` is **not** in the prerequisite report —
-the ticket fixes that report's package list to the toolchain, `cmake` and the
-Vulkan dev packages, and `base-devel` does not ship `git` — so a missing `git` is
-caught in `WhisperCppBuilder._clone` with its own actionable message
-(`sudo pacman -S git`), deliberately rather than by widening the ADR's package
-line.
+`BuildFailedError` naming the command and the tail of its stderr, a timeout (and
+a non-positive budget, which is rejected outright as a caller bug) into one
+naming the budget, and an `OSError` from the spawn into one naming the executable
+(covering both a missing and a present-but-**non-executable** `argv[0]`; tests:
+`test_subprocess_runner_wraps_*`, `test_subprocess_runner_rejects_a_non_positive_timeout`).
+The docstring states exactly that wrapped set and no more. `git` is **not** in the
+prerequisite report — the ticket fixes that report's package list to the
+toolchain, `cmake` and the Vulkan dev packages, and `base-devel` does not ship
+`git` — so a missing `git` is caught in `WhisperCppBuilder._clone` with its own
+actionable message (`sudo pacman -S git`), deliberately rather than by widening
+the ADR's package line.
 
 ## Falsification (each watched to fail, then reverted)
 
@@ -294,12 +297,21 @@ re-run against the final committed code.
    report`) →
    `test_ensure_engine_fails_before_building_when_a_prerequisite_is_missing`
    FAILED: `DID NOT RAISE PrerequisiteError`.
-2. **Drop `cmake` from `prerequisites_for(CPU)`** → three tests FAILED:
+2. **Delete the `cmake` `Prerequisite` from the shared `common` tuple in
+   `prerequisites_for`** — the tuple feeds both variants, so this is the actual
+   mutation (there is no way to drop `cmake` "from `prerequisites_for(CPU)`"
+   alone), and running the **whole** file (no `-k` filter) fails **six** tests,
+   `6 failed, 57 passed`:
    `test_cpu_requirement_set_is_the_base_devel_and_cmake_line`,
+   `test_vulkan_requirement_set_is_the_epic_package_line`,
    `test_missing_cmake_is_reported_with_its_package_and_command`,
-   `test_ensure_engine_fails_before_building_when_a_prerequisite_is_missing`
-   (the last with `DID NOT RAISE PrerequisiteError`). This is the ticket's
-   required "missing `cmake`" falsification.
+   `test_prerequisite_kinds_route_to_the_matching_probe`,
+   `test_ensure_engine_fails_before_building_when_a_prerequisite_is_missing`,
+   `test_builder_raises_prerequisite_error_when_cmake_is_absent`.
+   This is the ticket's required "missing `cmake`" falsification. *(Corrected
+   after `002-review.md` §Risks 1: this artifact previously said "three tests
+   FAILED" — the number left over from a narrower `-k` run that deselected the
+   other three. Re-measured in `003-comment.md` §F1.)*
 3. **Skip the idempotency short-circuit** (`if installed is not None:` →
    `if False:`) →
    `test_ensure_engine_is_idempotent_and_builds_only_once` (`assert 2 == 1`) and
@@ -328,6 +340,10 @@ Baseline before this ticket: 923 passed. This ticket adds 63 tests
 (`tests/test_whisper_engine.py`); none deleted, skipped or weakened. The two
 commands were re-run after every edit above and after the status/README/comment
 updates, with the same result and a clean `git status`.
+
+> **Superseded after the `002-review.md` fixes:** the suite is now `990 passed`
+> (923 + 67) with the same green `mypy`. See `003-comment.md` for the four fixes
+> and their evidence; the numbers in this section are the pre-review run.
 
 Test-by-test totals (all in `tests/test_whisper_engine.py`): 63. The ones that
 carry each definition-of-done clause are
