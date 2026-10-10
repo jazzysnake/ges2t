@@ -1,7 +1,7 @@
 # setup guidance: one engine spelling, the config line, and the GPU dev-package hint
 
 - **Priority:** P1
-- **Status:** in progress
+- **Status:** in review
 - **Complexity:** S
 - **Epic:** ../epic.md
 
@@ -28,29 +28,28 @@ GPU path (the manifest records `"variant": "cpu"`, `"spirv_headers": null`). `se
 
 ## Definition of done
 
-- [ ] **One canonical engine value, plus a forgiving alias.** `whisper_cpp` is canonical (TOML block
+- [x] **One canonical engine value, plus a forgiving alias.** `whisper_cpp` is canonical (TOML block
       names make `whisper.cpp` awkward); the config layer accepts **`whisper.cpp` as an alias**,
       normalised to `whisper_cpp` at parse, and `ges2t setup` accepts **both** tokens.
-- [ ] The `[engine.<name>]` block is resolved through the same normalisation, so
-      `transcriber.engine = "whisper.cpp"` reads the `[engine.whisper_cpp]` block (and an actual
-      `[engine.whisper.cpp]` block, if present, is either read or rejected with a clear message — decide
-      and document).
-- [ ] **`ges2t setup` prints the exact line to add** to `~/.config/ges2t/config.toml` for the backend it
+- [x] The `[engine.<name>]` block is resolved through the same normalisation, so
+      `transcriber.engine = "whisper.cpp"` reads the `[engine.whisper_cpp]` block (an actual
+      `[engine.whisper.cpp]` block is **read** as the same block — TOML's dotted form is folded
+      through the normaliser; having both spellings is a hard error naming both).
+- [x] **`ges2t setup` prints the exact line to add** to `~/.config/ges2t/config.toml` for the backend it
       just set up (`transcriber.engine = "whisper_cpp"`), because it cannot edit the config itself
-      (ADR 0004). Same for `needle` (the default needs no line, but say so).
-- [ ] The rejection message for an unknown engine **names the valid set** and, when the value looks like
-      the CLI token, points at the right one.
-- [ ] Docs (README + the setup guide) show **one** spelling and note the accepted alias.
-- [ ] Tests: the alias normalises in both the CLI and the config value; the block resolves; setup prints
-      the line; the rejection names the valid set. **Falsify each** — remove the normalisation, watch a
-      test fail, revert.
-- [ ] **When a Vulkan runtime/GPU is present but a Vulkan dev piece is missing**, `ges2t setup`
+      (ADR 0004). Same for `needle` (the default needs no line, so it says so).
+- [x] The rejection message for an unknown engine **names the valid set** and, when the value looks like
+      the CLI token (or a near miss such as `whisper` / `Whisper.CPP`), points at the right one.
+- [x] Docs (README + the setup guide) show **one** spelling and note the accepted alias.
+- [x] Tests: the alias normalises in both the CLI and the config value; the block resolves; setup prints
+      the line; the rejection names the valid set. **Falsified** (F1–F5 in `001-comment.md`).
+- [x] **When a Vulkan runtime/GPU is present but a Vulkan dev piece is missing**, `ges2t setup`
       prints a hint **naming the missing package** (e.g. `spirv-headers`) and the consequence
-      (**CPU-only build**), with the exact `pacman` line — a **diagnostic, not an error**: the CPU-only
-      build still succeeds. Distinguish "no GPU at all" (no hint) from "GPU present, dev packages
-      missing" (hint), using the pieces `inspect_vulkan`/`engine.json` already detect.
-- [ ] `uv run pytest` and `uv run mypy src/ges2t tests` green; report counts; no behaviour change beyond
-      the alias, the messages and the hint.
+      (**CPU-only build**), with the exact `pacman` line — a **diagnostic, not an error**. "No GPU at
+      all" gets no hint; "GPU present, dev packages missing" does, via
+      `inspect_vulkan`/`check_prerequisites`.
+- [x] `uv run pytest` (1159 passed) and `uv run mypy src/ges2t tests` (0 errors, 64 files) green;
+      no behaviour change beyond the alias, the messages and the hint.
 
 ## Notes
 

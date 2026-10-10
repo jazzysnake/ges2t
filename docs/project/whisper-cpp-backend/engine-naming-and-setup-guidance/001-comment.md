@@ -112,3 +112,103 @@ are reused) but **not modified**.
 whisper path, `cpu_only_build_hint(outcome.whisper_engine)` — **exit code
 unchanged** (a diagnostic, not an error). The `setup --help` text names the alias
 and the printed line.
+
+## Verification (real output)
+
+```
+$ uv run pytest -q
+1159 passed in 8.23s
+
+$ rm -rf .mypy_cache __pycache__ && uv run mypy src/ges2t tests
+Success: no issues found in 64 source files
+```
+
+Baseline was `1129 passed` / 0 errors; this ticket adds 30 tests and regresses
+nothing.
+
+## Falsification (each change removed, the test watched failing, reverted)
+
+| # | What was removed | Command | Result |
+|---|---|---|---|
+| F1 | the `transcriber.engine` **value** normalisation | `pytest tests/test_config.py -k "alias or canonical_whisper"` | `2 failed, 4 passed` (`test_config_accepts_whisper_dot_cpp_as_an_alias`, `test_alias_selector_reads_the_canonical_engine_block`) |
+| F2 | the **block-name** normalisation | `pytest tests/test_config.py -k "alias or dotted or quoted"` | `2 failed, 3 passed` (quoted and dotted alias block tests) |
+| F3 | the "did you mean" **suggestion** | `pytest tests/test_config.py -k "did_you_mean or points_at_the_right or looks_like"` | `2 failed` |
+| F4 | the **CPU-only hint** | `pytest tests/test_setup_command.py tests/test_cli.py -k "cpu_only or hint"` | `2 failed, 7 passed` |
+| F5 | the printed **config line** | `pytest tests/test_cli.py -k "config_engine_line or no_line"` | `1 failed` |
+
+Every probe was reverted with `git checkout -- <file>`; `git diff --stat` was
+empty before the next probe and before every commit.
+
+## Real behaviour (run from the worktree, no network, no machine side effects)
+
+`normalize_engine` / `suggest_engine` / `load_config` alias + block resolution:
+
+```
+normalize_engine('whisper.cpp') = whisper_cpp
+suggest_engine('whisper')      = whisper_cpp
+suggest_engine('Whisper.CPP')  = whisper_cpp
+suggest_engine('sphinx')       = None
+plan_setup('whisper.cpp', ..)  = SetupPlan(backend=<SetupBackend.WHISPER_CPP: 'whisper.cpp'>, model='medium-q5_0')
+plan_setup('whisper_cpp', ..)  = SetupPlan(backend=<SetupBackend.WHISPER_CPP: 'whisper.cpp'>, model='medium-q5_0')
+config engine value           = 'whisper_cpp'
+engine_blocks resolved        = {'whisper_cpp': {'model': 'medium-q5_0'}}
+```
+
+(`transcriber.engine = "whisper.cpp"` + `[engine.whisper_cpp]` in one file.)
+
+`ges2t setup whisper.cpp tiny-q8_0 --config <tmp>` **with the real `cli.main`, fakes
+for the acqusition steps only** (no network, no `cmake`):
+
+```
+Setting up the whisper.cpp backend and model tiny-q8_0.
+This is the only ges2t command that uses the network; the rest runs offline.
+Engine: whisper.cpp v1.9.5 (CPU-only) at /tmp/.../engine/v1.9.5
+Model:  /tmp/.../ggml.bin
+Setup complete.
+Add this line to /tmp/.../config.toml to select the engine (ges2t never edits it for you):
+
+    transcriber.engine = "whisper_cpp"
+
+whisper.cpp is batch-only, so also set, under [streaming]:
+
+    enabled = false
+exit=0
+```
+
+Unknown backend (real `ges2t` entry point, `plan_setup` rejects before any build):
+
+```
+$ uv run ges2t setup whisper
+ges2t: setup: unknown backend 'whisper'; valid backends: needle, whisper.cpp, whisper_cpp; did you mean 'whisper_cpp'?
+  hint: run 'ges2t setup --help' to list the accepted backends and models
+exit=1
+```
+
+Unknown **config** engine:
+
+```
+transcriber.engine = 'whisper' is not a known engine; known engines: 'whistle',
+'whisper_cpp'; did you mean 'whisper_cpp'? ('whisper.cpp' is the spelling
+'ges2t setup' takes; the config value is 'whisper_cpp')
+```
+
+CPU-only hint, GPU present with `spirv-headers` missing:
+
+```
+Note: the Vulkan runtime is present, but the engine was built CPU-only
+because these Vulkan development packages are missing: SPIR-V headers (spirv-headers).
+Install them, then re-run 'ges2t setup whisper.cpp' for a Vulkan (GPU) build:
+    sudo pacman -S spirv-headers
+```
+
+Same `EngineBuild` with no Vulkan runtime at all → `cpu_only_build_hint(...)` is
+`None` (no hint), and a Vulkan build → `None`.
+
+## Out of scope / handed back
+
+- No `sudo`, no package installs, no network, no microphone, no clipboard, no
+  window, no notification, no service change. Nothing was recorded and no audio
+  was committed.
+- The real whisper.cpp build and a live dictation remain **user-owned** and were
+  not performed here; the hint path is exercised through fakes and a real
+  `EngineBuild` record only.
