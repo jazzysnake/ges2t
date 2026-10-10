@@ -1,7 +1,7 @@
 # whisper.cpp engine build
 
 - **Priority:** P1
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** M
 - **Epic:** ../epic.md
 
@@ -31,19 +31,32 @@ Vulkan set is only needed for the **GPU** build; a CPU-only build needs just a C
       `libwhisper.so` + the `libggml*.so` libraries, and installs them into
       `~/.local/share/ges2t/engine/whisper-cpp/<version>/` — mirroring Needle's
       `engine/<version>/libneedle.so` layout.
-- [ ] **Vulkan when the Vulkan runtime and dev headers are present; CPU-only otherwise.** The chosen
+
+      **Left unticked on purpose: the end-to-end run is USER-OWNED.** The builder is implemented and
+      the recipe is verified (a real `cmake` 4.4.4 configure/build of the `whisper` target in scratch,
+      plus the real install step driven over that output and loaded with `ctypes` — see
+      `001-comment.md`), but `cmake` is **not installed on this machine** and this role may not
+      install it. User-owned steps, in order:
+
+      ```
+      sudo pacman -S base-devel cmake vulkan-headers spirv-headers shaderc
+      uv run ges2t setup whisper.cpp small-q5_0   # once ticket 44 wires ensure_engine() into setup
+      ```
+
+      (To exercise the builder alone before ticket 44, call `ges2t.whisper_engine.ensure_engine()`.)
+- [x] **Vulkan when the Vulkan runtime and dev headers are present; CPU-only otherwise.** The chosen
       feature set is recorded and surfaced (so `doctor` and the user can see which was built).
-- [ ] **Prerequisite detection**: check for a C++ compiler, `cmake`, and — for the GPU build —
+- [x] **Prerequisite detection**: check for a C++ compiler, `cmake`, and — for the GPU build —
       `vulkan-headers`, `spirv-headers` and a shader compiler. On a missing prerequisite, fail with a
       typed error naming **the exact package/command**. **Never install, never `sudo`, never fetch
       build tooling.**
-- [ ] **Idempotent**: re-running against an already-built engine verifies and does nothing else.
-- [ ] Network is used **only** to clone whisper.cpp at the pinned revision — nothing else (ADR 0018).
-- [ ] `tests/` cover the prerequisite check and the idempotent path with a **fake** builder (no real
+- [x] **Idempotent**: re-running against an already-built engine verifies and does nothing else.
+- [x] Network is used **only** to clone whisper.cpp at the pinned revision — nothing else (ADR 0018).
+- [x] `tests/` cover the prerequisite check and the idempotent path with a **fake** builder (no real
       cmake in the suite). **Falsify**: simulate a missing `cmake` → the typed error listing it; watch
       the test fail without the check, revert.
-- [ ] `uv run pytest` and `uv run mypy src/ges2t tests` green; report counts.
-- [ ] `001-comment.md` records the pinned revision, the exact prerequisite package list, the
+- [x] `uv run pytest` and `uv run mypy src/ges2t tests` green; report counts.
+- [x] `001-comment.md` records the pinned revision, the exact prerequisite package list, the
       configure/build commands, and the CPU-vs-Vulkan detection rule.
 
 ## Notes
@@ -55,6 +68,10 @@ Vulkan set is only needed for the **GPU** build; a CPU-only build needs just a C
 - **Do not** require or install `whisper-cli`; the integration is `ctypes`, not a subprocess.
 - **No keystrokes, no clipboard, no windows, no microphone, no `sudo`, no service changes.** No
   package installs.
+- Review follow-ups from `002-review.md` (four non-blocking findings) are recorded in
+  `003-comment.md`: the `001-comment.md` falsification-count correction, the `SubprocessRunner`
+  spawn-`OSError` wrap plus a narrowed docstring, the now-falsifiable clone-timeout test, and the
+  "only `vulkan/vulkan.h` missing" test.
 
 ## Related tickets
 
