@@ -1366,7 +1366,7 @@ def _rebuild_reason() -> str:
     The variant-aware policy rebuilds in **exactly one** situation: an installed
     **CPU** build is replaced by a **Vulkan** one once the dev pieces appear.
     :func:`_satisfies` keeps a Vulkan build and keeps a CPU build that is already
-    the target, and :ref:`BuildVariant` has only those two members, so the generic
+    the target, and :class:`BuildVariant` has only those two members, so the generic
     ``"<installed> -> <desired>"`` fallback this function used to carry was
     unreachable (ticket 51, R3) and has been removed. If a future policy adds a
     second rebuild reason, it must add its own sentence here rather than inherit

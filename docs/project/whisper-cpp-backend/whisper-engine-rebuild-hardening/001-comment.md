@@ -96,8 +96,11 @@ branch because no input can reach it** — that is the point.
 `installed = None if force else verify_build(target)` meant a forced rebuild emitted no notice. A
 forced rebuild now emits `rebuilding: forced by --rebuild` (new `_forced_rebuild_reason()`), so it
 reads as forced rather than identical to the automatic variant-aware rebuild. The notice is emitted
-**after** the explicit-Vulkan gate (same place as the automatic one), so it is never printed before
-a `PrerequisiteError` either (see R6). The existing force test now also asserts the message.
+at the same point as the automatic one — **after** the explicit-`vulkan` gate — so, exactly like
+R1, a `gpu = "vulkan"` rebuild that cannot be built prints nothing before the typed error. (A
+forced rebuild on a machine missing a *general* prerequisite still prints the forced line first,
+same as the automatic path; the line is true either way.) The existing force test now also asserts
+the message.
 
 ### R5 — notice wording (fixed: generic, not `spirv-headers`)
 
