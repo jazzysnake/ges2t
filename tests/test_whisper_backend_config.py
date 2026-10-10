@@ -51,7 +51,7 @@ from ges2t.whisper_engine import (
     VulkanStatus,
     _write_manifest,
 )
-from tests.fakes import FakeAudioSource, FakeInjector
+from tests.fakes import FakeAudioSource, FakeInjector, FakeTranscriber
 from tests.test_setup_command import FakeSystemProbe
 
 
@@ -325,6 +325,124 @@ def test_streaming_with_whisper_is_refused_naming_both_settings() -> None:
     assert "batch-only" in message
     assert excinfo.value.hint is not None
     assert "streaming.enabled = false" in excinfo.value.hint
+
+
+# --- ticket 50: the default follows the engine; only an explicit true errors ---
+
+
+def _write_toml(tmp_path: Path, text: str) -> Path:
+    path = tmp_path / "config.toml"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def _loaded_config(tmp_path: Path, engine: str, streaming: str | None) -> Config:
+    """Load a config selecting ``engine`` with the ``[streaming]`` body (or none)."""
+    text = f'[transcriber]\nengine = "{engine}"\n'
+    if streaming is not None:
+        text += f"\n[streaming]\n{streaming}\n"
+    return load_config(_write_toml(tmp_path, text)).config
+
+
+def test_batch_only_engines_agree_with_the_transcriber_capability() -> None:
+    # The engine-aware default (ticket 50) is driven by config.BATCH_ONLY_ENGINES,
+    # while the real source of truth for "can this engine stream" is the adapter's
+    # declared supports_streaming. The two must not drift: one guard test over
+    # every known engine, constructed directly so no machine is probed.
+    from ges2t.transcribers.whistle import WhistleTranscriber
+    from ges2t.transcribers.whistle_config import WhistleConfig
+
+    declared = {
+        "whistle": WhistleTranscriber(WhistleConfig()).supports_streaming,
+        "whisper_cpp": WhisperCppTranscriber(WhisperCppConfig()).supports_streaming,
+    }
+    assert set(declared) == set(config_module.KNOWN_ENGINES)
+    assert config_module.BATCH_ONLY_ENGINES == {
+        engine for engine, streams in declared.items() if not streams
+    }
+
+
+def test_omitted_streaming_with_a_batch_only_engine_starts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The minimal config the user actually hit: only the engine line. It must
+    # start (batch), with the default resolved to false and no streaming refusal.
+    config = _loaded_config(tmp_path, "whisper_cpp", None)
+    assert config.streaming.enabled is False
+    monkeypatch.setattr(pipeline, "_whisper_missing_artifacts", lambda config: [])
+    pipeline._validate_whisper_config(config)  # noqa: SLF001  # must not raise
+
+
+def test_explicit_true_streaming_with_a_batch_only_engine_is_still_refused(
+    tmp_path: Path,
+) -> None:
+    config = _loaded_config(tmp_path, "whisper_cpp", "enabled = true")
+    assert config.streaming.enabled is True
+    with pytest.raises(PipelineError) as excinfo:
+        pipeline._validate_whisper_config(config)  # noqa: SLF001
+    message = str(excinfo.value)
+    assert 'transcriber.engine = "whisper_cpp"' in message
+    assert "streaming.enabled = true" in message
+    assert "batch-only" in message
+
+
+def test_explicit_false_streaming_with_a_batch_only_engine_starts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _loaded_config(tmp_path, "whisper_cpp", "enabled = false")
+    assert config.streaming.enabled is False
+    monkeypatch.setattr(pipeline, "_whisper_missing_artifacts", lambda config: [])
+    pipeline._validate_whisper_config(config)  # noqa: SLF001  # must not raise
+
+
+def test_whistle_with_omitted_streaming_still_streams_from_a_file(tmp_path: Path) -> None:
+    config = _loaded_config(tmp_path, "whistle", None)
+    assert config.streaming.enabled is True
+    transcriber = pipeline.build_transcriber(config)
+    assert pipeline._select_session_kind(config, transcriber) == "streaming"  # noqa: SLF001
+
+
+def test_a_batch_only_engine_is_announced_in_one_line(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Informed, not a silent downgrade: with the default following the engine the
+    # user no longer writes a [streaming] line, so the consequence is stated.
+    pipeline._announce_batch_only_engine(  # noqa: SLF001
+        Config(streaming=StreamingConfig(enabled=False)),
+        FakeTranscriber(name="whisper_cpp", supports_streaming=False),
+    )
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1
+    assert "whisper_cpp" in err
+    assert "batch-only" in err
+    assert "no text until the utterance ends" in err
+
+
+def test_a_streaming_engine_is_not_announced(capsys: pytest.CaptureFixture[str]) -> None:
+    pipeline._announce_batch_only_engine(  # noqa: SLF001
+        Config(), FakeTranscriber(supports_streaming=True)
+    )
+    assert capsys.readouterr().err == ""
+
+
+def test_startup_announces_a_batch_only_engine(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    transcriber = FakeTranscriber(name="whisper_cpp", supports_streaming=False)
+    monkeypatch.setattr(pipeline, "build_transcriber", lambda config: transcriber)
+    monkeypatch.setattr(pipeline, "build_audio_source", lambda config: FakeAudioSource())
+    monkeypatch.setattr(pipeline, "build_injector", lambda config: FakeInjector())
+    monkeypatch.setattr(pipeline, "_whisper_missing_artifacts", lambda config: [])
+
+    config = Config(
+        transcriber=TranscriberConfig(engine="whisper_cpp"),
+        streaming=StreamingConfig(enabled=False),
+    )
+    pipeline._startup(config, NullStatusUI())  # noqa: SLF001
+
+    err = capsys.readouterr().err
+    assert "batch-only" in err
+    assert "no text until the utterance ends" in err
 
 
 def test_a_model_that_is_not_acquired_is_refused(

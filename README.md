@@ -230,6 +230,10 @@ edits your config ([ADR 0004](docs/adr/0004-global-hotkey-via-cli-and-service.md
 transcriber.engine = "whisper_cpp"
 ```
 
+For `whisper_cpp` that is the only line needed: the engine is batch-only, so streaming is off
+by default for it (there is no text until the utterance ends), and `setup` says so rather than
+asking for a redundant `[streaming]` line.
+
 If a Vulkan GPU is present but a Vulkan *development* package (`spirv-headers`,
 `vulkan-headers` or `shaderc`) is missing, the engine can only be built **CPU-only**. That is
 not an error — the build still succeeds — but `setup` prints a diagnostic naming the missing
@@ -457,15 +461,14 @@ fewer errors** than Whistle — at the cost of latency: on that 25 s clip it run
 reference Radeon 780M via Vulkan, and on CPU-only machines it is still **faster than realtime**
 (`medium-q5_0` ~19 s, the CPU default `small-q8_0` ~6 s). It is
 **batch-only**: there is **no text until the utterance ends** (whisper's partial-window output
-was measured unstable). Because `streaming.enabled` defaults to `true`, selecting whisper
-requires turning streaming off — otherwise **the service refuses to start**:
+was measured unstable). Because whisper.cpp cannot stream, **streaming is off by default for
+it** — you do not need a `[streaming]` line, and the engine line alone starts a batch-only
+service. Setting `streaming.enabled = true` alongside it is a contradiction and **the service
+refuses to start**:
 
 ```toml
 [transcriber]
 engine = "whisper_cpp"
-
-[streaming]
-enabled = false            # required: whisper.cpp is batch-only
 
 [engine.whisper_cpp]
 # model    = "medium-q5_0"  # omit for the GPU/CPU default below
@@ -491,8 +494,9 @@ The block is `[engine.whisper_cpp]`. Only that spelling is documented; a
 error (one spelling is the rule).
 
 At startup with `transcriber.engine = "whisper_cpp"` the service **refuses to start** — rather
-than degrading — when `streaming.enabled = true`, when the model above is not acquired, or when
-the whisper library is not built. **Model-vs-GPU sizing is deliberately not checked.**
+than degrading — when `streaming.enabled` is explicitly `true`, when the model above is not
+acquired, or when the whisper library is not built. **Model-vs-GPU sizing is deliberately not
+checked.**
 
 ### Behaviours the configuration controls, and their traps
 

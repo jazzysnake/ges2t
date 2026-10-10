@@ -281,6 +281,45 @@ def test_config_accepts_whisper_dot_cpp_as_an_alias(tmp_path: Path) -> None:
     assert result.config.transcriber.engine == "whisper_cpp"
 
 
+def test_omitted_streaming_enabled_follows_the_engine(tmp_path: Path) -> None:
+    # Ticket 50: the default follows the engine. A batch-only engine (whisper.cpp)
+    # resolves an omitted switch to false, so the minimal config starts; whistle
+    # keeps streaming as the default (ADR 0011).
+    whistle = load_config(_write_config(tmp_path, '[transcriber]\nengine = "whistle"\n'))
+    assert whistle.config.streaming.enabled is True
+
+    whisper = load_config(
+        _write_config(tmp_path, '[transcriber]\nengine = "whisper_cpp"\n')
+    )
+    assert whisper.config.streaming.enabled is False
+
+
+def test_an_empty_streaming_table_still_follows_the_engine(tmp_path: Path) -> None:
+    # A present-but-empty [streaming] table is the same as an omitted one: it
+    # carries no explicit request, so the engine decides (ticket 50).
+    result = load_config(
+        _write_config(tmp_path, '[transcriber]\nengine = "whisper_cpp"\n\n[streaming]\n')
+    )
+    assert result.config.streaming.enabled is False
+
+
+@pytest.mark.parametrize("engine", ["whistle", "whisper_cpp"])
+def test_explicit_streaming_enabled_beats_the_engine_default(
+    tmp_path: Path, engine: str
+) -> None:
+    # An explicit value is used verbatim for either engine, including the
+    # contradictory explicit true on the batch-only engine (refused later, at
+    # startup, rather than rewritten), and the explicit false that stays valid.
+    for spelling in ("true", "false"):
+        result = load_config(
+            _write_config(
+                tmp_path,
+                f'[transcriber]\nengine = "{engine}"\n\n[streaming]\nenabled = {spelling}\n',
+            )
+        )
+        assert result.config.streaming.enabled is (spelling == "true")
+
+
 def test_unknown_engine_that_looks_like_the_cli_token_points_at_the_right_one(
     tmp_path: Path,
 ) -> None:

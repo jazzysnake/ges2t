@@ -452,12 +452,17 @@ def _select_session_kind(config: Config, transcriber: Transcriber) -> str:
     decision is a capability flag (``Transcriber.supports_streaming``), never an
     exception or a runtime probe, and it is derived rather than configured: the
     only switch is ``streaming.enabled`` (ticket 16).
+
+    The capability is checked **first** so the logged reason names the real
+    cause: for a batch-only engine with streaming omitted, ticket 50's
+    engine-aware default is ``streaming.enabled = false``, but the reason that
+    matters is that the engine cannot stream at all.
     """
-    if not config.streaming.enabled:
-        reason = "streaming.enabled = false"
-        kind = _SESSION_BATCH
-    elif not transcriber.supports_streaming:
+    if not transcriber.supports_streaming:
         reason = f"transcriber {transcriber.name!r} does not support streaming"
+        kind = _SESSION_BATCH
+    elif not config.streaming.enabled:
+        reason = "streaming.enabled = false"
         kind = _SESSION_BATCH
     else:
         reason = (
@@ -467,6 +472,26 @@ def _select_session_kind(config: Config, transcriber: Transcriber) -> str:
         kind = _SESSION_STREAMING
     _logger.debug("using the %s dictation session (%s)", kind, reason)
     return kind
+
+
+def _announce_batch_only_engine(config: Config, transcriber: Transcriber) -> None:
+    """State, in one line, that a batch-only engine will not stream (ticket 50).
+
+    Selecting a batch-only engine no longer needs an explicit
+    ``streaming.enabled = false``: the default follows the engine. Because that
+    removes a visible config line, the consequence ("no text until the utterance
+    ends") is **stated** instead of silently applied. The line is informational,
+    changes no behaviour, and is printed at most once per startup, after the
+    engine has been validated, only when the engine cannot stream and streaming
+    is off. An engine that streams never prints it.
+    """
+    if transcriber.supports_streaming or config.streaming.enabled:
+        return
+    print(
+        f"ges2t: transcriber {transcriber.name!r} is batch-only, so streaming is "
+        "off and there is no text until the utterance ends",
+        file=sys.stderr,
+    )
 
 
 def _streaming_clipboard_error() -> PipelineError:
@@ -505,11 +530,13 @@ def _validate_injection_backend(config: Config) -> None:
 def _whisper_streaming_error() -> PipelineError:
     """The loud, actionable refusal of whisper + streaming (ticket 45, ADR 0021 §8).
 
-    An error, not a silent downgrade: ``streaming.enabled`` defaults to ``true``,
-    and whisper.cpp is batch-only (``supports_streaming = False``), so the
-    capability rule would quietly run the batch path. ADR 0021 §8 requires the
-    user to make that choice explicit instead, so choosing whisper without also
-    turning streaming off is refused at startup.
+    An error, not a silent downgrade: whisper.cpp is batch-only
+    (``supports_streaming = False``), so an *explicit* ``streaming.enabled =
+    true`` (ADR 0021 §8) would otherwise quietly run the batch path. ADR 0021 §8
+    requires the user to make that choice explicit instead. Ticket 50 narrowed
+    this to the **explicit** request only: an omitted ``streaming.enabled``
+    resolves to ``false`` for a batch-only engine (``config.BATCH_ONLY_ENGINES``),
+    so the minimal ``transcriber.engine = "whisper_cpp"`` config now starts.
     """
     return PipelineError(
         'transcriber.engine = "whisper_cpp" cannot be combined with '
@@ -527,11 +554,13 @@ def _validate_whisper_config(config: Config) -> None:
     """Refuse a whisper.cpp config that cannot work (ticket 45, ADR 0021 §8).
 
     With ``transcriber.engine = "whisper_cpp"`` the service refuses to start when
-    ``streaming.enabled = true``, when the configured (or defaulted) model is not
-    acquired, or when the engine library is not built. Each message names the
-    offending setting and, for the artifacts, the fix. **Model-vs-GPU sizing is
-    deliberately not checked** (ADR 0021 §8): it is neither a startup error nor a
-    doctor warning.
+    ``streaming.enabled`` is explicitly ``true``, when the configured (or
+    defaulted) model is not acquired, or when the engine library is not built.
+    Each message names the offending setting and, for the artifacts, the fix.
+    **Model-vs-GPU sizing is deliberately not checked** (ADR 0021 §8): it is
+    neither a startup error nor a doctor warning. An *omitted* ``streaming.enabled``
+    is not ``true`` here: the engine-aware default resolves it to ``false`` for
+    whisper.cpp (ticket 50), so the minimal config starts.
 
     The check is config-level and runs before any artifact is loaded, mirroring
     ticket 34's clipboard/streaming refusal, so the user sees the contradiction
@@ -748,12 +777,15 @@ def _startup(config: Config, status_ui: StatusUI) -> Service:
     artifacts), then the artifacts are confirmed present locally, the
     collaborators are built, the managed environment overrides are applied
     (ADR 0007), the model is **loaded once** so it stays warm for the process
-    lifetime (ADR 0015), and finally the service is constructed.
+    lifetime (ADR 0015), and finally the service is constructed. Because ticket
+    50's engine-aware default can leave streaming off without the user writing a
+    line, a batch-only engine is announced in one line right after it is built.
     """
     _validate_injection_backend(config)
     _validate_whisper_config(config)
     _require_artifacts(config)
     transcriber = build_transcriber(config)
+    _announce_batch_only_engine(config, transcriber)
     audio_source = build_audio_source(config)
     injector = build_injector(config)
     # The adapter also applies these in load(); doing it here as well is

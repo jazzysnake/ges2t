@@ -447,10 +447,12 @@ def test_config_guidance_prints_the_exact_engine_line() -> None:
     guidance = config_guidance(plan, path=Path("/home/u/.config/ges2t/config.toml"))
     assert 'transcriber.engine = "whisper_cpp"' in guidance
     assert "/home/u/.config/ges2t/config.toml" in guidance
-    # The consequence of the batch-only engine is spelled out too, so the user
-    # does not hit ticket 45's startup refusal after adding only the engine line.
+    # The consequence of the batch-only engine is spelled out, but the old
+    # "also set [streaming] enabled = false" line is gone: ticket 50 makes the
+    # default follow the engine, so the line is redundant (and misleading).
     assert "batch-only" in guidance
-    assert "enabled = false" in guidance
+    assert "streaming is off by default" in guidance
+    assert "enabled = false" not in guidance
 
 
 def test_config_guidance_for_the_default_engine_says_no_line_is_needed() -> None:
