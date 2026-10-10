@@ -101,6 +101,19 @@ utterance on the Radeon 780M. Evidence:
 | 44 | [setup-backend-and-model-arguments](whisper-cpp-backend/setup-backend-and-model-arguments/ticket.md) — `ges2t setup [backend] [model]`, model argument ported to needle | M | done | 41, 42 | feat/setup-backend-and-model-arguments (merged 89a62ef) |
 | 45 | [whisper-backend-config-and-validation](whisper-cpp-backend/whisper-backend-config-and-validation/ticket.md) — config, GPU/CPU default rule, **strict startup validation** (carries ADR 0021) | S | to do | 43 | — |
 | 46 | [whisper-doctor](whisper-cpp-backend/whisper-doctor/ticket.md) — engine library / model / Vulkan checks | S | to do | 41, 42, 43 | — |
+| 47 | [engine-naming-and-setup-guidance](whisper-cpp-backend/engine-naming-and-setup-guidance/ticket.md) — one canonical engine spelling + a `whisper.cpp` alias; `setup` prints the config line | S | to do | 45 | — |
+
+---
+
+## Epic 4 — [Code quality](code-quality/epic.md) · P2
+
+Remove the drift class behind the `whisper.cpp` / `whisper_cpp` trap: the project's **identifier
+strings** get **one definition** and are compared through named constants, never as bare literals in
+conditionals. A guard test fails when a new bare identifier literal appears in `src/`.
+
+| # | Ticket | Size | Status | Depends on | Branch |
+|---|---|---|---|---|---|
+| 48 | [centralize-identifier-literals](code-quality/centralize-identifier-literals/ticket.md) — one definition per identifier string, compared via constants (`src/` only; tests keep literals) | M | to do | — | — |
 
 ---
 
@@ -138,6 +151,8 @@ independent and may run in parallel (they touch disjoint files).
 | 24 | 41, 42 (whisper foundation: model store + engine build; disjoint files) |
 | 25 | 43, 44 (adapter · setup command; disjoint files) |
 | 26 | 45 (config + startup validation) · 46 (doctor) |
+| 27 | 47 (engine naming + setup guidance; depends on 45) |
+| 28 | 48 (identifier constants; independent) |
 
 Serialization is also required wherever two tickets touch the same file: `10 → 11/12`
 (`cli.py`, `doctor.py`), `11 → 16` (`pipeline.py`), `17 → 18` (`pipeline.py`).
