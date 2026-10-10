@@ -14,9 +14,11 @@ binary. This module is the one place that produces them, and it mirrors the
 * **Network is used for exactly one thing**: ``git clone`` of whisper.cpp at the
   pinned tag, whose commit is then verified against the pin. A tag that moved
   fails loudly instead of silently building something else (ADR 0018).
-* **Idempotent.** Re-running against a complete installed engine verifies it and
-  does nothing else: no clone, no ``cmake`` invocation. Completeness means the
-  manifest is present *and* every library it names exists.
+* **Variant-aware idempotency.** Re-running against a complete installed engine
+  is a no-op **only when it is already as good as this machine can build for the
+  configured ``gpu`` preference**: a CPU build is rebuilt as Vulkan once the
+  Vulkan dev pieces appear, and a CPU pin is honoured. Completeness means the
+  manifest is present *and* every library it names exists (ticket 49).
 * **The chosen feature set is recorded.** An ``engine.json`` manifest in the
   install directory names the revision, the tag, the variant (``cpu``/
   ``vulkan``) and the library files, so ``doctor`` and the user can see which
@@ -1213,8 +1215,10 @@ def _install_libraries(
     """Copy the built library set into ``destination``, preserving symlinks.
 
     Symlinks are recreated as symlinks, so the SONAME chain stays intact and
-    ``libwhisper.so`` keeps resolving. Existing files are replaced, which is what
-    makes a rebuild over an old install safe.
+    ``libwhisper.so`` keeps resolving. Called with the builder's **staging**
+    directory (ticket 49), so the live install is only ever replaced by a whole,
+    verified tree; an existing file is still removed first, so a re-run into the
+    same directory cannot leave a stale library behind.
     """
     names = sorted(
         {path.name for pattern in LIBRARY_GLOBS for path in build_bin.glob(pattern)}
