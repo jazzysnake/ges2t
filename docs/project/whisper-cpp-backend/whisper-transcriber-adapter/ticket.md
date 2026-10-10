@@ -1,7 +1,7 @@
 # whisper.cpp Transcriber adapter (in-process)
 
 - **Priority:** P1
-- **Status:** to do
+- **Status:** in progress
 - **Complexity:** M
 - **Epic:** ../epic.md
 
