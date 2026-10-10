@@ -53,8 +53,8 @@ Original orchestrator brief: `.pi/prompts/orchestrate-project.md`.
 
 ## 4. Baselines on `main`
 
-- `uv run pytest` → **904 passed** (with ticket 40 merged: **922**)
-- **`uv run mypy src/ges2t tests` → 0 errors (53 files)** (with 40: **55**) — this is the required
+- `uv run pytest` → **923 passed**
+- **`uv run mypy src/ges2t tests` → 0 errors (55 files)** — this is the required
   command. ADR 0019 was amended: the old `mypy src/ges2t`-only check let a real violation through a
   completed review (ticket 20).
 - **`uv run ges2t doctor`** — 22 checks, exit 0, 2 WARN by design (tray failures unverifiable from
@@ -62,22 +62,21 @@ Original orchestrator brief: `.pi/prompts/orchestrate-project.md`.
   `SyntaxWarning` from `pystray/_util/gtk.py:53` on Python 3.14 (reported, not fixed).
 - 21 ADRs (0000–0020), **40 tickets**, 2 epics.
 
-## 5. Board state (36 of 40 done)
+## 5. Board state (37 of 40 done)
 
-**Done (36):** 1–29, 32, 33, 34, 36, 37, 38, 39 (plus 25, whose manual gate passed). Merge commits
+**Done (37):** 1–29, 32–34, 36–40 (plus 25, whose manual gate passed). Merge commits
 worth knowing: 11 `338cdc2` · 12 `036d1e2` · 15 `2ba0a3a` · 17 (four rounds) · 18 `829937a` ·
 21 `11b1bf3` · 22 `0a2074a` · 23 `b4aa911` · 24 `a6ba892` · 26 `ceee7a2` · 28 `37e8937` ·
 29 `f9df8a0` · **32 `1356f88`** · **25 `2646212`** · **33 `78f87fc`** · **36 `ddeb278`** ·
-**37 `53d3c79`** · **38 `47431eb`** · **34 `5eeca4d`** · **19 `fcef28a`** · **39 `ba4f234`**
+**37 `53d3c79`** · **38 `47431eb`** · **34 `5eeca4d`** · **19 `fcef28a`** · **39 `ba4f234`** · **40 `3658ca0`**
 
 **Milestone: ticket 19 (user docs + setup guide) was the last core ticket and is merged.** v1's scope
 is complete: the tool works, is documented end to end, and the docs were checked line by line against
 the code. What remains is follow-up and one parked decision.
 
-**Remaining (4):**
+**Remaining (3):**
 | # | Ticket | State |
 |---|---|---|
-| **40** | bindable-hotkey-hint | **in review** — `doctor`/`cli` printed the bare `ges2t toggle`, which is **not on a launcher's `PATH`**; the fix prints the **resolved** console-script path (§9a) |
 | **35** | streaming-vs-batch-quality | **to do**, P2, **gates nothing**. Now the natural home for the accuracy question — three-length sweep. See §11 |
 | **30** | tray-failure-diagnostics | filed follow-up; needs a read-only socket verb → **requires an ADR 0016 amendment**, not yet raised for sign-off |
 | **31** | speech-gate-recalibration | **`blocked`** — implemented and review-passed, branch exists, **not merged**, parked pending the user's live test in **both** a quiet room and a noisy one. **Confirmed still unmerged**: `main`'s gate is ticket 29's; a commit titled "ticket 31" on `main` (`e1134f8`) is **docs-only** — a false alarm raised by ticket 19's review and checked (§10) |
@@ -90,7 +89,6 @@ from artifacts, do not re-run blindly.
 
 | Ticket | Worktree | Branch | Task |
 |---|---|---|---|
-| 40 | `.worktrees/bindable-hotkey-hint` | `feat/bindable-hotkey-hint` | **Review in flight** of `3630836`. 922 tests, mypy 55 files, `src/ges2t/console_script.py` added |
 | 31 | `.worktrees/speech-gate-recalibration` | `feat/speech-gate-recalibration` | **PARKED, review-passed (`dc75977`) — do not merge** without the user's quiet-room + noisy-room result |
 
 Everything else is merged and its worktree removed. Use three-dot diffs (`git diff main...<branch>`):
