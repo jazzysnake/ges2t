@@ -1,7 +1,7 @@
 # The hotkey advice the tool prints is not literally bindable
 
 - **Priority:** P1 (shipped user-facing output that misleads — v1's first-run experience)
-- **Status:** in review
+- **Status:** done
 - **Complexity:** XS
 - **Epic:** ../epic.md
 
