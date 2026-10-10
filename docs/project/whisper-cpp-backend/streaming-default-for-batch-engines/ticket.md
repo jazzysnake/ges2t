@@ -41,6 +41,10 @@ Only the former should be an error.
 - [ ] Tests **falsify** the matrix: unset + batch-only → starts (batch); explicit `true` + batch-only →
       error; explicit `false` + batch-only → starts; `whistle` + unset → streams. Break each, watch a
       test fail, revert.
+- [ ] **Update ticket 47's `setup` guidance.** It currently also prints `[streaming] enabled = false`
+      **because this ticket's fix is not in yet**; once the default follows the engine, that line is
+      redundant (and mildly misleading). Adjust the printed guidance, and the README/comment text that
+      quotes it, so they match the new default.
 - [ ] `uv run pytest` and `uv run mypy src/ges2t tests` green; report counts.
 
 ## Notes
