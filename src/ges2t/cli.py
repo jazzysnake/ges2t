@@ -550,6 +550,9 @@ def _handle_setup(args: argparse.Namespace) -> int:
 
     print(f"Setting up the {plan.backend.value} backend and model {plan.model}.")
     print("This is the only ges2t command that uses the network; the rest runs offline.")
+    # Flush before the work: the failure path prints to stderr, and without this
+    # the actionable error can appear above the banner that names the plan.
+    sys.stdout.flush()
     try:
         outcome = run_setup(plan, progress=lambda label: _ProgressPrinter(label))
     except (SetupError, model_store.ModelStoreError, WhisperEngineError, OSError) as exc:
