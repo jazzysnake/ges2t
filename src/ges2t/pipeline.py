@@ -63,6 +63,12 @@ from typing import Any
 from ges2t import model_store, whisper_engine
 from ges2t.audio.pw_record import PwRecordAudioSource
 from ges2t.config import Config
+from ges2t.identifiers import (
+    CLIPBOARD_BACKEND,
+    WHISPER_CPP_ENGINE,
+    WHISTLE_ENGINE,
+    YDOTOOL_BACKEND,
+)
 from ges2t.injectors.clipboard import ClipboardPasteInjector
 from ges2t.injectors.layout import ClipboardConfig, YdotoolConfig
 from ges2t.injectors.ydotool import XkbKeySequenceSource, YdotoolInjector
@@ -232,7 +238,7 @@ def _build_whisper_cpp(config: Config) -> Transcriber:
     0021). The strict *startup validation* of the whisper config (model acquired,
     library built, no streaming) is :func:`_validate_whisper_config`.
     """
-    block = config.engine_blocks.get("whisper_cpp", {})
+    block = config.engine_blocks.get(WHISPER_CPP_ENGINE, {})
     whisper_config = resolve_whisper_cpp_config(block)
     return WhisperCppTranscriber(whisper_config)
 
@@ -242,8 +248,8 @@ def _build_whisper_cpp(config: Config) -> Transcriber:
 #: mapping is the factory's single source of truth: an engine absent here gets a
 #: clear "not handled by this build" error rather than a silent fallback.
 _TRANSCRIBER_BUILDERS: Mapping[str, Callable[[Config], Transcriber]] = {
-    "whistle": _build_whistle,
-    "whisper_cpp": _build_whisper_cpp,
+    WHISTLE_ENGINE: _build_whistle,
+    WHISPER_CPP_ENGINE: _build_whisper_cpp,
 }
 
 
@@ -280,7 +286,9 @@ def _build_ydotool_injector(config: Config) -> Injector:
     ``XkbKeySequenceSource`` holds only the layout names: it rebuilds its keymap
     per utterance, so a layout switch is picked up (ADR 0020).
     """
-    settings = YdotoolConfig.from_mapping(config.injection_blocks.get("ydotool", {}))
+    settings = YdotoolConfig.from_mapping(
+        config.injection_blocks.get(YDOTOOL_BACKEND, {})
+    )
     return YdotoolInjector(
         XkbKeySequenceSource(settings.config.layout, settings.config.variant),
         trailing_space=config.ui.trailing_space,
@@ -299,7 +307,7 @@ def _build_clipboard_injector(config: Config) -> Injector:
     of being swallowed.
     """
     settings = ClipboardConfig.from_mapping(
-        config.injection_blocks.get("clipboard", {})
+        config.injection_blocks.get(CLIPBOARD_BACKEND, {})
     )
     return ClipboardPasteInjector(
         paste_keys=settings.config.paste_keys,
@@ -314,8 +322,8 @@ def _build_clipboard_injector(config: Config) -> Injector:
 #: a clear error naming the handled ones rather than a silent default -- a silent
 #: mechanism switch is exactly what ADR 0003/0020 forbid.
 _INJECTOR_BUILDERS: Mapping[str, Callable[[Config], Injector]] = {
-    "ydotool": _build_ydotool_injector,
-    "clipboard": _build_clipboard_injector,
+    YDOTOOL_BACKEND: _build_ydotool_injector,
+    CLIPBOARD_BACKEND: _build_clipboard_injector,
 }
 
 
@@ -523,7 +531,7 @@ def _validate_injection_backend(config: Config) -> None:
     :class:`~ges2t.interfaces.TextTyper`) is the backstop for a direct
     ``_build_service`` call.
     """
-    if config.streaming.enabled and config.injection.backend == "clipboard":
+    if config.streaming.enabled and config.injection.backend == CLIPBOARD_BACKEND:
         raise _streaming_clipboard_error()
 
 
@@ -566,7 +574,7 @@ def _validate_whisper_config(config: Config) -> None:
     ticket 34's clipboard/streaming refusal, so the user sees the contradiction
     even when the model is missing.
     """
-    if config.transcriber.engine != "whisper_cpp":
+    if config.transcriber.engine != WHISPER_CPP_ENGINE:
         return
     if config.streaming.enabled:
         raise _whisper_streaming_error()
@@ -699,7 +707,7 @@ def _missing_artifacts(config: Config) -> list[str]:
     """
     problems: list[str] = []
 
-    if config.transcriber.engine != "whistle":
+    if config.transcriber.engine != WHISTLE_ENGINE:
         return problems
 
     weights = _weights_path(config)
@@ -733,7 +741,7 @@ def _whisper_missing_artifacts(config: Config) -> list[str]:
     """
     problems: list[str] = []
     whisper_config = resolve_whisper_cpp_config(
-        config.engine_blocks.get("whisper_cpp", {})
+        config.engine_blocks.get(WHISPER_CPP_ENGINE, {})
     )
     model_name = whisper_config.model
     assert model_name is not None  # resolve_whisper_cpp_config always resolves it

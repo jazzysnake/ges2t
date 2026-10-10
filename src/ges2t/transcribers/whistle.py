@@ -54,6 +54,7 @@ from pathlib import Path
 from typing import Any
 
 from ges2t import model_store, streaming
+from ges2t.identifiers import WHISTLE_ENGINE
 from ges2t.interfaces import (
     AudioBuffer,
     ProgressCallback,
@@ -511,7 +512,7 @@ class WhistleTranscriber:
         config: WhistleConfig,
         model_path_override: Path | None = None,
     ) -> None:
-        self.name: str = "whistle"
+        self.name: str = WHISTLE_ENGINE
         self.supports_streaming: bool = True
         self.config = config
         self._model_path_override: Path | None = (

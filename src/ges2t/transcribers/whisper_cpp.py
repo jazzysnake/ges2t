@@ -62,6 +62,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from ges2t import model_store, whisper_engine
+from ges2t.identifiers import WHISPER_CPP_ENGINE
 from ges2t.interfaces import (
     AudioBuffer,
     ProgressCallback,
@@ -608,7 +609,7 @@ class WhisperCppTranscriber:
         engine_directory: Path | None = None,
         library: WhisperLibrary | None = None,
     ) -> None:
-        self.name: str = "whisper_cpp"
+        self.name: str = WHISPER_CPP_ENGINE
         self.supports_streaming: bool = False
         self.config = config
         self._model_path_override: Path | None = (

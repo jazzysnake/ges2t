@@ -30,6 +30,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from ges2t.identifiers import WHISTLE_ENGINE
+
 __all__ = [
     "BLOCK_NAME",
     "DEFAULT_CHUNK_SECONDS",
@@ -46,7 +48,7 @@ __all__ = [
 
 #: Dotted name of the block this module owns; it prefixes every message so a
 #: ``doctor`` line names the exact key the user must edit.
-BLOCK_NAME: str = "engine.whistle"
+BLOCK_NAME: str = f"engine.{WHISTLE_ENGINE}"
 
 #: Default ``language``: empty means the engine auto-detects (ADR 0009).
 DEFAULT_LANGUAGE: str = ""

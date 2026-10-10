@@ -67,6 +67,12 @@ from ges2t.config import (
     load_config,
 )
 from ges2t.console_script import BARE_COMMAND, resolve_console_script
+from ges2t.identifiers import (
+    CLIPBOARD_BACKEND,
+    WHISPER_CPP_ENGINE,
+    WHISTLE_ENGINE,
+    YDOTOOL_BACKEND,
+)
 from ges2t.injectors.keymap import XkbError, XkbKeymap
 from ges2t.injectors.layout import (
     AUTO_LAYOUT,
@@ -140,10 +146,6 @@ PW_DUMP_BINARY: str = "pw-dump"
 PW_CLI_BINARY: str = "pw-cli"
 WL_COPY_BINARY: str = "wl-copy"
 YDOTOOL_SOCKET_NAME: str = ".ydotool_socket"
-
-#: The ``transcriber.engine`` value that turns the whisper.cpp checks on. With
-#: any other engine they report ``OK``/skipped, never a false failure (ticket 46).
-WHISPER_CPP_ENGINE: str = "whisper_cpp"
 
 #: The uinput device ``ydotool`` writes to (ADR 0003).
 UINPUT_PATH: Path = Path("/dev/uinput")
@@ -1309,7 +1311,7 @@ def check_keyboard_layout(
 def check_clipboard_backend(*, backend: str, lookup: BinaryLookup | None = None) -> CheckResult:
     """``wl-copy`` must exist when ``injection.backend = "clipboard"`` (ADR 0020)."""
     name = "Clipboard backend"
-    if backend != "clipboard":
+    if backend != CLIPBOARD_BACKEND:
         return _ok(
             name,
             f"not selected (injection.backend = {backend!r}); 'wl-copy' is not required",
@@ -1403,7 +1405,7 @@ def diagnose_engine_config(config: Config) -> BlockDiagnosis:
     here and unified with the generic report (ADR 0009).
     """
     engine = config.transcriber.engine
-    if engine != "whistle":
+    if engine != WHISTLE_ENGINE:
         return BlockDiagnosis(
             validity=_ok(
                 "Engine config valid",
@@ -1444,9 +1446,9 @@ def diagnose_injection_config(config: Config) -> BlockDiagnosis:
     block = config.injection_blocks.get(backend, {})
     result: YdotoolConfigResult | ClipboardConfigResult
     try:
-        if backend == "ydotool":
+        if backend == YDOTOOL_BACKEND:
             result = YdotoolConfig.from_mapping(block)
-        elif backend == "clipboard":
+        elif backend == CLIPBOARD_BACKEND:
             result = ClipboardConfig.from_mapping(block)
         else:
             return BlockDiagnosis(
@@ -1514,7 +1516,9 @@ def _ydotool_settings(config: Config) -> YdotoolConfig:
     needs *something*, so it falls back to the documented defaults.
     """
     try:
-        return YdotoolConfig.from_mapping(config.injection_blocks.get("ydotool", {})).config
+        return YdotoolConfig.from_mapping(
+            config.injection_blocks.get(YDOTOOL_BACKEND, {})
+        ).config
     except InjectionConfigError:
         return YdotoolConfig()
 
@@ -1630,7 +1634,7 @@ def build_report(config: Config, options: DoctorOptions) -> DoctorReport:
                 variant=ydotool.variant,
                 resolver=probes.layout_resolver,
                 compiler=probes.layout_compiler,
-                required=config.injection.backend == "ydotool",
+                required=config.injection.backend == YDOTOOL_BACKEND,
             ),
         ),
         _guard(

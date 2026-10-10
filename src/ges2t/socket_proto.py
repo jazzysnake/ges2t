@@ -89,6 +89,12 @@ _LISTEN_BACKLOG = 8
 #: How long the single-instance probe waits for a connect to succeed.
 _PROBE_TIMEOUT_SECONDS = 0.2
 
+#: Selector data labels for :meth:`ServiceServer.serve_forever`: the listening
+#: socket and the self-pipe that wakes the loop on stop. Named so the loop's
+#: comparison is against a constant rather than a bare literal (rule 1).
+_LISTEN_SELECTOR_DATA: str = "listen"
+_WAKE_SELECTOR_DATA: str = "wake"
+
 
 class ProtocolError(ValueError):
     """A message on the wire was not valid newline-delimited JSON for this protocol."""
@@ -303,12 +309,12 @@ class ServiceServer:
         os.set_blocking(wake_write, False)
         self._wake_read = wake_read
         self._wake_write = wake_write
-        selector.register(sock, selectors.EVENT_READ, "listen")
-        selector.register(wake_read, selectors.EVENT_READ, "wake")
+        selector.register(sock, selectors.EVENT_READ, _LISTEN_SELECTOR_DATA)
+        selector.register(wake_read, selectors.EVENT_READ, _WAKE_SELECTOR_DATA)
         try:
             while not self._stop_event.is_set():
                 for key, _ in selector.select():
-                    if key.data == "wake":
+                    if key.data == _WAKE_SELECTOR_DATA:
                         try:
                             os.read(wake_read, 4096)
                         except BlockingIOError:

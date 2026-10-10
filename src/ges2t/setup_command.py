@@ -69,6 +69,7 @@ from ges2t.config import (
     default_config_path,
     suggest_engine,
 )
+from ges2t.identifiers import NEEDLE_SETUP_BACKEND, WHISPER_CPP_CLI_TOKEN
 from ges2t.model_store import (
     DEFAULT_NEEDLE_MODEL,
     ModelStoreError,
@@ -185,8 +186,8 @@ class SetupBackend(StrEnum):
     name cannot carry the dot (ticket 47).
     """
 
-    NEEDLE = "needle"
-    WHISPER_CPP = "whisper.cpp"
+    NEEDLE = NEEDLE_SETUP_BACKEND
+    WHISPER_CPP = WHISPER_CPP_CLI_TOKEN
 
     @property
     def engine(self) -> str:

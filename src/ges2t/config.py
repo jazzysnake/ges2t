@@ -29,6 +29,22 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+# The engine selector values, the injection-backend default and the hotkey
+# modes are defined once in :mod:`ges2t.identifiers` and re-exported through this
+# import: this module's public API has always named them, so existing callers and
+# tests keep importing from here (ticket 48). See that module for the
+# per-identifier rationale. ``WHISTLE_ENGINE`` stays first in
+# :data:`KNOWN_ENGINES` so the shipped default is unchanged (ADR 0021 §1).
+from ges2t.identifiers import (
+    CONFIG_KEY_BACKEND,
+    HOTKEY_MODE_PTT,
+    HOTKEY_MODE_TOGGLE,
+    INJECTION_DEFAULT_BACKEND,
+    WHISPER_CPP_CLI_TOKEN,
+    WHISPER_CPP_ENGINE,
+    WHISTLE_ENGINE,
+)
+
 __all__ = [
     "AUDIO_DEFAULT_DEVICE",
     "BATCH_ONLY_ENGINES",
@@ -56,28 +72,18 @@ __all__ = [
     "suggest_engine",
 ]
 
-#: The engine value of the shipped default: the Whistle model on the Needle 3
-#: engine. Kept last among the two because :data:`KNOWN_ENGINES` orders it first.
-WHISTLE_ENGINE: str = "whistle"
-
-#: The **canonical** engine value of the whisper.cpp backend (ADR 0021). A TOML
-#: block name cannot contain the dot of the CLI token, so the underscore form is
-#: canonical and ``whisper.cpp`` is accepted only as an alias (ticket 47).
-WHISPER_CPP_ENGINE: str = "whisper_cpp"
-
 #: Engine names the generic layer accepts as ``transcriber.engine``. This is the
 #: single source of truth: the factory (ADR 0010) and the error message below
 #: both read it, so they cannot drift apart. Adding an engine means adding its
 #: name here and a matching ``[engine.<name>]`` adapter; the schema does not change.
-#: The **first** entry is the default (:data:`DEFAULT_ENGINE`); ``whistle`` stays
-#: first so the shipped live/incremental typing is unchanged (ADR 0021 §1).
+#: The **first** entry is the default (:data:`DEFAULT_ENGINE`).
 KNOWN_ENGINES: tuple[str, ...] = (WHISTLE_ENGINE, WHISPER_CPP_ENGINE)
 
 #: Non-canonical spellings the config layer forgives, folded to the canonical
 #: engine value by :func:`normalize_engine`. The ``whisper.cpp`` entry is the
 #: **CLI token** ``ges2t setup`` takes: a user who copies it into
 #: ``transcriber.engine`` must not be told the value is unknown (ticket 47).
-ENGINE_ALIASES: Mapping[str, str] = {"whisper.cpp": WHISPER_CPP_ENGINE}
+ENGINE_ALIASES: Mapping[str, str] = {WHISPER_CPP_CLI_TOKEN: WHISPER_CPP_ENGINE}
 
 #: The default engine selector, kept in sync with :data:`KNOWN_ENGINES`.
 DEFAULT_ENGINE: str = KNOWN_ENGINES[0]
@@ -94,10 +100,7 @@ DEFAULT_ENGINE: str = KNOWN_ENGINES[0]
 BATCH_ONLY_ENGINES: frozenset[str] = frozenset({WHISPER_CPP_ENGINE})
 
 #: The only ``hotkey.mode`` values the generic layer accepts (ADR 0009).
-KNOWN_HOTKEY_MODES: tuple[str, ...] = ("ptt", "toggle")
-
-#: Default ``injection.backend`` (ADR 0003).
-INJECTION_DEFAULT_BACKEND: str = "ydotool"
+KNOWN_HOTKEY_MODES: tuple[str, ...] = (HOTKEY_MODE_PTT, HOTKEY_MODE_TOGGLE)
 
 #: Default ``audio.device``: the empty string means "system default" (ADR 0008).
 AUDIO_DEFAULT_DEVICE: str = ""
@@ -119,7 +122,7 @@ _TOP_LEVEL_KEYS = frozenset(
 _TRANSCRIBER_KEYS = frozenset({"engine", "model_path"})
 _HOTKEY_KEYS = frozenset({"mode", "key"})
 _AUDIO_KEYS = frozenset({"device"})
-_INJECTION_KEYS = frozenset({"backend"})
+_INJECTION_KEYS = frozenset({CONFIG_KEY_BACKEND})
 _UI_KEYS = frozenset({"tray", "notifications", "trailing_space"})
 _STREAMING_KEYS = frozenset({"enabled"})
 
@@ -559,7 +562,7 @@ def _read_injection_blocks(
     table = _expect_table(raw, "injection", path=path)
     blocks: dict[str, Mapping[str, Any]] = {}
     for name, block in table.items():
-        if name == "backend":
+        if name == CONFIG_KEY_BACKEND:
             continue
         if isinstance(block, Mapping):
             blocks[name] = block

@@ -44,6 +44,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from ges2t.identifiers import WHISTLE_MODEL
+
 __all__ = [
     "DEFAULT_DATA_DIRECTORY_NAME",
     "ENGINE_MEMBER",
@@ -300,7 +302,7 @@ MODEL_PIN: ArtifactPin = ArtifactPin(
 #: so ``ges2t setup needle <model>`` validates the name against data rather than
 #: a hardcoded literal (ADR 0021 §10).
 NEEDLE_MODELS: tuple[NeedleModel, ...] = (
-    NeedleModel(name="whistle", version=MODEL_VERSION, pin=MODEL_PIN),
+    NeedleModel(name=WHISTLE_MODEL, version=MODEL_VERSION, pin=MODEL_PIN),
 )
 
 #: The needle catalogue keyed by name, for O(1) lookup and printing.
