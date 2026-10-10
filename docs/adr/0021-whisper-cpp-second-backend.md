@@ -120,7 +120,7 @@ the model is loaded **once at service start**.
 Unchanged and still open: if whisper.cpp disappoints, the backend is one config value away from
 `whistle`, and the whole integration sits behind the ADR 0010 `Transcriber` Protocol.
 
-## Amendment 2026-10-10 — §8's streaming refusal applies to an **explicit** `true` only
+## Amendment 2026-10-10 — §8's streaming refusal applies to an **explicit** `true` only (user sign-off 2026-10-10)
 
 **Ticket `streaming-default-for-batch-engines`.** Decision §8 said a whisper config is "rejected at
 startup when `streaming.enabled = true`". Written before the engine-aware default existed, that
