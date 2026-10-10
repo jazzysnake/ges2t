@@ -52,7 +52,7 @@ recorded in
 System packages:
 
 ```bash
-sudo pacman -S ydotool python-gobject gtk3 libappindicator libxkbcommon xkeyboard-config
+sudo pacman -S ydotool python-gobject gtk3 libappindicator libxkbcommon xkeyboard-config pipewire
 ```
 
 | Package | Why | Version verified here |
@@ -565,11 +565,12 @@ state, so it is safe to run at any time — including while the service is runni
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Nothing is typed, but `status` reaches `idle` again | `ydotoold` is not running, or `/dev/uinput` is not writable | `systemctl --user enable --now ydotool.service`; check `systemctl --user is-active ydotool.service` and `test -w /dev/uinput`; add yourself to the `input` group and re-login (section 5) |
-| Nothing is typed and the tray/service shows `error` | the injection failed; the message names the cause | read the notification, the tray tooltip, or the service's stderr (section 12); `ges2t doctor` |
+| Nothing is typed and the service shows `error`, with a message or notification naming `ydotoold` | `ydotoold` is not running, or `/dev/uinput` is not writable | `systemctl --user enable --now ydotool.service`; check `systemctl --user is-active ydotool.service` and `test -w /dev/uinput`; add yourself to the `input` group and re-login (section 5) |
+| Nothing is typed and the service shows `error`, with a message naming a layout or characters | the layout could not be resolved, or the text is untypeable on it | `ges2t doctor` → **Keyboard layout**; set `[injection.ydotool] layout` explicitly (section 10) |
+| Nothing is typed and the run ends normally (`idle`) | the speech gate: a recording under 100 ms, or with no sustained speech energy, types nothing on purpose — silence in, nothing out | speak a normal phrase; check the microphone with `ges2t doctor` (**Audio device**, **PipeWire session**) |
+| Nothing is typed although there clearly was audio, and no error appears | the focused application discarded the synthetic keystrokes | try another application; synthetically typed keys are subject to the target's own key handling ([ADR 0003](docs/adr/0003-text-injection-via-ydotool.md)) |
 | Text appears in the wrong window or field | focus moved during the utterance — committed words land wherever focus is at each commit | keep the target window focused for the whole utterance; this is a documented limitation of incremental typing ([ADR 0011](docs/adr/0011-streaming-sliding-window.md) amendment) |
 | A word is confidently wrong, mid-sentence | a stable hallucination was committed and typed (the two-pass commit rule protects against revision, not against this) | stop, delete the wrong text, continue; ges2t never auto-corrects (section 10) |
-| Nothing at all, for a short or quiet press | the speech gate: under 100 ms, or no sustained speech energy, types nothing on purpose | speak a normal phrase; check `audio.device` with `ges2t doctor` |
 | The tray icon is invisible on Plasma 6 | the venv was created **without** `--system-site-packages`, so `gi` is missing and `pystray` fell back to the invisible XEmbed backend | `ges2t doctor` → **Tray backend** FAIL; re-create the venv (section 4) |
 | The tray icon is not in the tray but the service works | Plasma hides new AppIndicator icons in the tray's **overflow / expanded** area | open the tray's expanded area (`Show hidden icons` / the chevron on the system tray) and pin the ges2t icon so it survives; this is normal Plasma behaviour, not a ges2t failure |
 | The tray stopped updating but the service still works | a tray callback raised; the service deliberately contains display exceptions, so the tray records them instead of dying | `ges2t doctor` → **Tray failures** WARN names where they surface; watch the service's stderr for `ges2t: the tray has failed …` lines and its shutdown summary |
@@ -717,4 +718,5 @@ as section 3.
   commands for a custom shortcut (so true press-and-hold is unproven); the tray's behaviour
   when the service is started by the systemd user unit rather than from a terminal; and a
   fresh `ges2t setup` download on a machine without the artifacts. See
-  `001-comment.md` for each gap.
+  [`001-comment.md`](docs/project/live-dictation-ux/user-documentation-and-setup-guide/001-comment.md)
+  for each gap.
