@@ -81,25 +81,26 @@ documentation that takes a fresh machine to a working dictation.
 
 ---
 
-## Epic 3 — [whisper.cpp batch backend](whisper-cpp-backend/epic.md) · P1
+## Epic 3 — [whisper.cpp backend](whisper-cpp-backend/epic.md) · P1
 
-A second, **batch-only** `Transcriber` on whisper.cpp, supporting the full ggml model range and
-defaulting to `medium q5_0` — and becoming the **shipped default backend**. Measured on the reference
-recording: **~4.5× fewer errors than Whistle** with `-nt` (~1.8× on the CLI default; see the
-[`-nt` addendum](research/whisper-cpp-provider/004-addendum-nt-decode.md)), at ~1.7–3 s per 25 s
-utterance on the Radeon 780M. It **accepts the measured loss of incremental typing** (whisper's
-partial-window output is not stable enough for the commit-cadence loop). Evidence:
+A second, **selectable** `Transcriber` on whisper.cpp, integrated **in-process** (`ctypes`, model
+resident from service start) and **batch-only**, supporting the full ggml model range and defaulting to
+`medium-q5_0` on GPU devices and `small-q5_0` on CPU-only ones. The **default backend stays
+`needle`/Whistle**, so shipped live/incremental typing is unchanged; choosing whisper trades it for
+accuracy — **~4.5× fewer errors than Whistle** with `-nt` (~1.8× on the CLI default; see the
+[`-nt` addendum](research/whisper-cpp-provider/004-addendum-nt-decode.md)) at ~1.7–3 s per 25 s
+utterance on the Radeon 780M. Evidence:
 [provider research](research/whisper-cpp-provider/REPORT.md) ·
 [streaming research](research/whisper-cpp-streaming/REPORT.md) · **proposed ADR 0021** (needs sign-off).
 
 | # | Ticket | Size | Status | Depends on | Branch |
 |---|---|---|---|---|---|
-| 41 | [whisper-model-store](whisper-cpp-backend/whisper-model-store/ticket.md) — catalogue + pinned sha256/size acquisition of ggml models | S | to do | — | — |
-| 42 | [whisper-cli-runner](whisper-cpp-backend/whisper-cli-runner/ticket.md) — bounded `whisper-cli` subprocess seam, `-nt` pinned | S | to do | — | — |
-| 43 | [whisper-transcriber-adapter](whisper-cpp-backend/whisper-transcriber-adapter/ticket.md) — the `Transcriber` over runner + store, `supports_streaming = False` | M | to do | 41, 42 | — |
-| 44 | [whisper-backend-config-and-default](whisper-cpp-backend/whisper-backend-config-and-default/ticket.md) — config, selection, **default flip** (carries ADR 0021) | S | to do | 43 | — |
-| 45 | [whisper-doctor](whisper-cpp-backend/whisper-doctor/ticket.md) — `whisper-cli` / model / Vulkan checks | S | to do | 41, 43 | — |
-| 46 | [whisper-framework-overhead](whisper-cpp-backend/whisper-framework-overhead/ticket.md) — measure the non-model round trip against ADR 0001 | S | to do | 43 | — |
+| 41 | [whisper-model-store](whisper-cpp-backend/whisper-model-store/ticket.md) — catalogue + pinned sha256/size acquisition of ggml models from HF | S | to do | — | — |
+| 42 | [whisper-engine-build](whisper-cpp-backend/whisper-engine-build/ticket.md) — build `libwhisper.so` + ggml (CPU/Vulkan); prerequisites checked, never installed | M | to do | — | — |
+| 43 | [whisper-transcriber-adapter](whisper-cpp-backend/whisper-transcriber-adapter/ticket.md) — in-process `ctypes` `Transcriber`, model resident from startup, `supports_streaming = False` | M | to do | 41, 42 | — |
+| 44 | [setup-backend-and-model-arguments](whisper-cpp-backend/setup-backend-and-model-arguments/ticket.md) — `ges2t setup [backend] [model]`, model argument ported to needle | M | to do | 41, 42 | — |
+| 45 | [whisper-backend-config-and-validation](whisper-cpp-backend/whisper-backend-config-and-validation/ticket.md) — config, GPU/CPU default rule, **strict startup validation** (carries ADR 0021) | S | to do | 43 | — |
+| 46 | [whisper-doctor](whisper-cpp-backend/whisper-doctor/ticket.md) — engine library / model / Vulkan checks | S | to do | 41, 42, 43 | — |
 
 ---
 
@@ -134,16 +135,16 @@ independent and may run in parallel (they touch disjoint files).
 | 21 | 38 (the `paste_keys` default) · 34 (incremental typing; disjoint files apart from a `pipeline.py` docstring) |
 | 22 | 19 (docs) · 39 (accuracy levers; disjoint files) |
 | 23 | 40 (corrective: the hotkey advice the tool prints) |
-| 24 | 41, 42 (whisper backend foundation: model store + runner; disjoint files) |
-| 25 | 43 (the whisper adapter) |
-| 26 | 44 (config + default, carries ADR 0021) · 45 (doctor) · 46 (overhead measurement) |
+| 24 | 41, 42 (whisper foundation: model store + engine build; disjoint files) |
+| 25 | 43, 44 (adapter · setup command; disjoint files) |
+| 26 | 45 (config + startup validation) · 46 (doctor) |
 
 Serialization is also required wherever two tickets touch the same file: `10 → 11/12`
 (`cli.py`, `doctor.py`), `11 → 16` (`pipeline.py`), `17 → 18` (`pipeline.py`).
 
 ## Decisions
 
-All 21 decision records live in [`adr/`](../adr/). Start with
+All 22 decision records live in [`adr/`](../adr/). Start with
 [ADR 0000 (scope)](../adr/0000-project-scope-and-non-goals.md) and
 [ADR 0005 (the Whistle/Needle 3 backend)](../adr/0005-stt-backend-cactus-whistle.md).
 
