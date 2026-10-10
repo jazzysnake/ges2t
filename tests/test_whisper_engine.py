@@ -15,6 +15,7 @@ module, and grouping them keeps the shared interface fakes untouched.
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 import tempfile
@@ -39,6 +40,7 @@ from ges2t.whisper_engine import (
     SPIRV_HEADER_PATH,
     VULKAN_HEADER_PATH,
     VULKAN_LIBRARY_NAME,
+    WHISPER_CPP_BUILD_TIMEOUT_SECONDS,
     WHISPER_CPP_REVISION,
     WHISPER_CPP_TAG,
     WHISPER_CPP_URL,
@@ -437,6 +439,30 @@ def test_vulkan_absent_when_the_shader_compiler_is_missing() -> None:
     assert "shaderc" in _missing_text(status)
 
 
+def test_vulkan_absent_when_the_headers_are_missing(tmp_path: Path) -> None:
+    """Only ``vulkan/vulkan.h`` absent: CPU-only, and *not* an error.
+
+    The other three pieces each have their own test; this closes the fourth (the
+    reviewer's coverage note) and checks the orchestration, not just the record:
+    ``ensure_engine`` must select CPU and build rather than raising.
+    """
+    probe = FakeSystemProbe(
+        executables=(*_TOOLCHAIN_EXECUTABLES, SHADER_COMPILER_NAME),
+        headers=(SPIRV_HEADER_PATH,),
+        libraries=(VULKAN_LIBRARY_NAME,),
+    )
+    status = inspect_vulkan(probe)
+    assert not status.available
+    assert "vulkan-headers" in _missing_text(status)
+
+    builder = RecordingBuilder()
+    build = ensure_engine(
+        directory=tmp_path / "engine", system=probe, builder=builder
+    )
+    assert build.variant is BuildVariant.CPU
+    assert builder.requests[0].variant is BuildVariant.CPU
+
+
 def test_vulkan_status_summary_names_the_available_pieces() -> None:
     assert "glslc" in inspect_vulkan(_vulkan_probe()).summary()
     assert "spirv-headers" in inspect_vulkan(_cpu_probe()).summary()
@@ -716,7 +742,17 @@ def test_builder_bounds_every_command(tmp_path: Path) -> None:
     assert runner.timeouts and all(timeout > 0 for timeout in runner.timeouts)
 
 
-def test_builder_uses_a_bounded_clone_timeout(tmp_path: Path) -> None:
+def test_builder_passes_the_clone_timeout_into_the_clone_command(
+    tmp_path: Path,
+) -> None:
+    """The clone gets the clone budget, and that budget is a real bound.
+
+    Two ways to fail, both for reasons this name implies: a clone invoked with a
+    different (wrong) budget, and a clone budget that is not a positive finite
+    number. The second is what makes this more than a comparison against a
+    constant (the reviewer's finding — the previous version was backstopped by
+    ``timeout > 0`` and could not fail for its stated reason).
+    """
     runner = FakeCommandRunner()
     _builder(tmp_path, runner, _cpu_probe()).build(
         _request(BuildVariant.CPU, tmp_path / "engine")
@@ -724,7 +760,12 @@ def test_builder_uses_a_bounded_clone_timeout(tmp_path: Path) -> None:
     clone_index = next(
         index for index, call in enumerate(runner.calls) if call[:2] == ("git", "clone")
     )
+    assert CLONE_TIMEOUT_SECONDS > 0
+    assert math.isfinite(CLONE_TIMEOUT_SECONDS)
     assert runner.timeouts[clone_index] == CLONE_TIMEOUT_SECONDS
+    # The clone's own guard against the other budgets: a clone must not be given
+    # the (much longer) compile budget, which is the shape a copy/paste would take.
+    assert CLONE_TIMEOUT_SECONDS != WHISPER_CPP_BUILD_TIMEOUT_SECONDS
 
 
 def test_builder_installs_the_library_set_and_preserves_symlinks(
@@ -837,6 +878,43 @@ def test_subprocess_runner_wraps_a_missing_executable() -> None:
             timeout_seconds=30.0,
         )
     assert "command not found" in str(caught.value)
+
+
+def test_subprocess_runner_wraps_a_non_executable_executable(tmp_path: Path) -> None:
+    """A present but non-executable ``argv[0]`` is an ``OSError``, not a raw escape.
+
+    This is the case the class docstring previously overclaimed about: the spawn
+    raises ``PermissionError`` before any command runs, so the runner must wrap it
+    like the rest.
+    """
+    not_executable = tmp_path / "not-executable"
+    not_executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    not_executable.chmod(0o644)
+    runner = SubprocessRunner()
+    with pytest.raises(BuildFailedError) as caught:
+        runner.run([str(not_executable)], cwd=None, timeout_seconds=30.0)
+    assert "cannot run" in str(caught.value)
+    assert str(not_executable) in str(caught.value)
+
+
+def test_subprocess_runner_rejects_a_non_positive_timeout(tmp_path: Path) -> None:
+    """A zero/negative budget is a bug, not an immediately-timing-out command.
+
+    ``subprocess.run(timeout=0)`` raises ``TimeoutExpired`` on the spot, so an
+    accidental ``0`` would turn every command into a failure; the runner rejects
+    it instead, which is what makes "bounded" structural rather than asserted.
+    """
+    runner = SubprocessRunner()
+    command = [sys.executable, "-c", "print('never runs')"]
+    for bad in (0.0, -1.0):
+        with pytest.raises(ValueError) as caught:
+            runner.run(command, cwd=None, timeout_seconds=bad)
+        assert "positive timeout" in str(caught.value)
+
+
+def test_subprocess_runner_has_a_positive_default_timeout() -> None:
+    assert WHISPER_CPP_BUILD_TIMEOUT_SECONDS > 0
+    assert math.isfinite(WHISPER_CPP_BUILD_TIMEOUT_SECONDS)
 
 
 def test_subprocess_runner_returns_stdout() -> None:

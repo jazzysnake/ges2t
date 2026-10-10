@@ -599,9 +599,14 @@ class SubprocessRunner:
     ``check=True`` makes a non-zero exit an exception, and ``timeout`` guarantees
     no command can outlive its budget (a wedged clone cannot hang
     ``ges2t setup``). Output is captured, so a build log never lands on the
-    user's terminal unannounced, and every failure mode becomes a
-    :class:`BuildFailedError` naming the command and (where there is one) the
-    tail of its stderr — never a bare ``CalledProcessError`` traceback.
+    user's terminal unannounced.
+
+    Exactly the failures a spawned command can produce are turned into a
+    :class:`BuildFailedError` naming the command and (where there is one) the tail
+    of its stderr: a non-zero exit, a timeout, and an :class:`OSError` from the
+    spawn itself (a missing **or non-executable** ``argv[0]``). A non-positive
+    ``timeout_seconds`` is rejected outright as a caller bug, so "bounded" is a
+    property of this class rather than a promise about the constant passed in.
     """
 
     def run(
@@ -612,6 +617,10 @@ class SubprocessRunner:
         timeout_seconds: float = WHISPER_CPP_BUILD_TIMEOUT_SECONDS,
     ) -> str:
         """Run ``argv`` (no shell), returning stdout; raise on failure or timeout."""
+        if timeout_seconds <= 0:
+            raise ValueError(
+                f"a command must have a positive timeout, not {timeout_seconds}"
+            )
         command = " ".join(argv)
         try:
             completed = subprocess.run(
@@ -634,6 +643,8 @@ class SubprocessRunner:
             ) from exc
         except FileNotFoundError as exc:
             raise BuildFailedError(f"command not found: {argv[0]}") from exc
+        except OSError as exc:
+            raise BuildFailedError(f"cannot run {argv[0]}: {exc}") from exc
         return completed.stdout
 
 
