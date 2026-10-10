@@ -116,7 +116,7 @@ conditionals. A guard test fails when a new bare identifier literal appears in `
 
 | # | Ticket | Size | Status | Depends on | Branch |
 |---|---|---|---|---|---|
-| 48 | [centralize-identifier-literals](code-quality/centralize-identifier-literals/ticket.md) — one definition per identifier string, compared via constants (`src/` only; tests keep literals) | M | to do | — | — |
+| 48 | [centralize-identifier-literals](code-quality/centralize-identifier-literals/ticket.md) — one definition per identifier string, compared via constants (`src/` only; tests keep literals) | M | in review | — | feat/centralize-identifier-literals |
 
 ---
 

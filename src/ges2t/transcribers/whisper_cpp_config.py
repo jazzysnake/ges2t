@@ -48,6 +48,7 @@ from enum import StrEnum
 from typing import Any
 
 from ges2t import model_store
+from ges2t.identifiers import WHISPER_CPP_ENGINE
 
 __all__ = [
     "BLOCK_NAME",
@@ -65,7 +66,7 @@ __all__ = [
 
 #: Dotted name of the block this module owns; it prefixes every message so a
 #: ``doctor`` line names the exact key the user must edit.
-BLOCK_NAME: str = "engine.whisper_cpp"
+BLOCK_NAME: str = f"engine.{WHISPER_CPP_ENGINE}"
 
 #: The default ``model``: ``None`` means "omitted". It is deliberately **not**
 #: a concrete name -- the device-aware ADR 0021 §4 default (``medium-q5_0`` on

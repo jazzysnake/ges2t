@@ -57,6 +57,10 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from ges2t.identifiers import (
+    WHISPER_MODEL_MEDIUM_Q5_0,
+    WHISPER_MODEL_SMALL_Q8_0,
+)
 from ges2t.model_store import default_data_dir
 from ges2t.transcribers.whisper_cpp_config import GpuPreference
 
@@ -173,12 +177,12 @@ ENTRY_LIBRARY_NAME: str = "libwhisper.so"
 #: The whisper.cpp model the rule selects when a Vulkan build is possible (ADR
 #: 0021 §4): the research's most accurate model and the best accuracy-per-second
 #: on Vulkan.
-DEFAULT_WHISPER_MODEL_GPU: str = "medium-q5_0"
+DEFAULT_WHISPER_MODEL_GPU: str = WHISPER_MODEL_MEDIUM_Q5_0
 
 #: The whisper.cpp model the rule selects on a CPU-only machine. Upstream
 #: publishes **no** ``small-q5_0`` (that only existed via a local quantiser) and
 #: ``q8_0`` scored identically, so the CPU default is ``small-q8_0`` (ADR 0021 §4).
-DEFAULT_WHISPER_MODEL_CPU: str = "small-q8_0"
+DEFAULT_WHISPER_MODEL_CPU: str = WHISPER_MODEL_SMALL_Q8_0
 
 # --- Prerequisites (ADR 0021 §7) ---------------------------------------------
 
