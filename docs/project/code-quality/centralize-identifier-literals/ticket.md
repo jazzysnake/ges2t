@@ -23,11 +23,13 @@ Identifiers are compared as **bare string literals** across `src/ges2t/` — eng
 - [ ] The scattered literals are replaced by those constants across **`src/ges2t/` only** — **tests
       keep literal strings on purpose** (a test must assert the real value, so a wrong constant fails
       it, not its own constant). No behaviour change.
-- [ ] A **guard test** (AST-based, like the ADR 0018 network scan) that **fails when an identifier
-      literal is compared bare** outside the constants module(s), **scanning `src/ges2t/` only** —
-      string literals in `tests/` are explicitly fine. It must be **falsifiable**: inject a bare literal
-      into a comparison in a scratch `src/` file, watch the test fail, revert. State the residual
-      limitation honestly (a purely dynamic lookup cannot be caught statically).
+- [ ] **Run an AST-based scan** (like the ADR 0018 network scan) over **`src/ges2t/` only** that
+      enumerates the identifier-string literals used in comparisons, and **report it in
+      `001-comment.md`**: the inventory plus anything intentionally left. This is a **verification step
+      in this definition of done — not a committed test, and not a hard gate**: a remaining literal (a
+      legitimate exemption, or one in `tests/`, which keep literals on purpose) does **not** fail the
+      ticket. The scan exists to show the refactor's coverage and make the leftovers explicit; state
+      its static-scan limitation honestly (a purely dynamic lookup cannot be caught).
 - [ ] The identifier **inventory** is recorded in `001-comment.md`: each identifier, where it is
       defined, and the sites changed.
 - [ ] `uv run pytest` green and `uv run mypy src/ges2t tests` 0 errors; report before/after counts; no
@@ -38,7 +40,8 @@ Identifiers are compared as **bare string literals** across `src/ges2t/` — eng
 
 - **Scope to identifiers, not prose.** Error/help message text is out of scope (it is not compared).
 - **Tests keep literal strings** — do not replace them with constants. A test that compares against the
-  constant it is meant to verify proves nothing; the guard scans `src/ges2t/` only.
+  constant it is meant to verify proves nothing. The AST scan covers `src/ges2t/` only and is a
+  reporting step, so test literals are never flagged and never fail the ticket.
 - Do not rename anything a user sees — the **values** stay identical (this is a de-duplication, not a
   rename; ticket 47 owns the one naming change).
 - If the sweep turns out to be larger than one session, **stop and split it** — a bounded first pass

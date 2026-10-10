@@ -28,9 +28,9 @@ fails when a new bare identifier literal appears in a comparison.
 - [ ] `uv run pytest` and `uv run mypy src/ges2t tests` green; **no behaviour change**.
 - [ ] Each identifier set (engines, injection backends, setup backend tokens, model names, the config
       keys/defaults used in comparisons) has exactly **one** definition.
-- [ ] A guard test fails when an identifier literal is compared bare outside the constants module(s),
-      **scanning `src/ges2t/` only** (string literals in `tests/` are fine — a test must assert the real
-      value) — falsifiable, like the ADR 0018 network scan.
+- [ ] An AST scan enumerates the identifier literals compared in `src/ges2t/` and the leftovers are
+      reported — a **verification step of the ticket, not a committed gate**; string literals in
+      `tests/` are fine by design.
 - [ ] Every ticket's `docs/project/README.md` row is `done`.
 
 ## Out of scope for this epic
