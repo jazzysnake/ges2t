@@ -65,3 +65,50 @@ Decisions taken (and why):
 is untouched; `src/ges2t/whisper_engine.py` is **read** (its public
 `inspect_vulkan` / `check_prerequisites` / `prerequisites_for` / `PACMAN_PREFIX`
 are reused) but **not modified**.
+
+## Implementation (committed)
+
+### `config.py` — the normaliser (single source of truth)
+
+- `WHISTLE_ENGINE = "whistle"`, `WHISPER_CPP_ENGINE = "whisper_cpp"`,
+  `KNOWN_ENGINES = (WHISTLE_ENGINE, WHISPER_CPP_ENGINE)`.
+- `ENGINE_ALIASES = {"whisper.cpp": WHISPER_CPP_ENGINE}` and
+  `normalize_engine(name) -> str`, which returns the canonical value and passes an
+  unknown spelling through unchanged (so the caller can report it).
+- `load_config` normalises `transcriber.engine` **before** checking membership, so
+  `engine = "whisper.cpp"` and `engine = "whisper_cpp"` produce the identical
+  `TranscriberConfig`.
+- `_read_engine_blocks` keys every block by its canonical engine. A quoted alias
+  block (`[engine."whisper.cpp"]`) and TOML's dotted `[engine.whisper.cpp]` both
+  resolve to the `whisper_cpp` block (**read**, not ignored). Two spellings of one
+  engine are a hard `ConfigError` naming both (no silent precedence).
+- `_unknown_engine_error` names `KNOWN_ENGINES` and adds `did you mean '<canonical>'?`
+  when `suggest_engine` folds the value onto a known spelling; for the whisper
+  engine it also names the CLI token, e.g.:
+  `transcriber.engine = 'whisper' is not a known engine; known engines: 'whistle',
+  'whisper_cpp'; did you mean 'whisper_cpp'? ('whisper.cpp' is the spelling
+  'ges2t setup' takes; the config value is 'whisper_cpp')`
+
+### `setup_command.py`
+
+- `SetupBackend` keeps the CLI token (`whisper.cpp`) as its value and gains an
+  `engine` property (needle → `whistle`, whisper.cpp → `whisper_cpp`).
+- `BACKEND_ALIASES = {"whisper_cpp": SetupBackend.WHISPER_CPP}`; `_parse_backend`
+  accepts both tokens. `UnknownBackendError.valid` is
+  `("needle", "whisper.cpp", "whisper_cpp")` plus a near-miss hint.
+- `config_guidance(plan, *, path=None) -> str` — the exact line
+  `transcriber.engine = "whisper_cpp"` and the resolved config path, plus the
+  batch-only `enabled = false` note; the needle path says no line is needed.
+- `cpu_only_build_advice(build, *, system=None) -> CpuOnlyBuildAdvice | None` and
+  `cpu_only_build_hint(...) -> str | None` — the diagnostic. Gate: the *built*
+  engine is `BuildVariant.CPU` **and** `build.vulkan.runtime is not None` (a GPU is
+  present). No runtime at all → `None` (no hint). Missing packages come from
+  `whisper_engine.check_prerequisites(VULKAN, probe)` minus the host-build
+  packages (`base-devel`, `cmake`); detection is not duplicated.
+
+### `cli.py`
+
+`_handle_setup` prints `config_guidance(...)` after `Setup complete.` and, for the
+whisper path, `cpu_only_build_hint(outcome.whisper_engine)` — **exit code
+unchanged** (a diagnostic, not an error). The `setup --help` text names the alias
+and the printed line.

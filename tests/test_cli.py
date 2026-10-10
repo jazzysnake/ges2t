@@ -11,6 +11,7 @@ import hashlib
 import importlib
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
 
@@ -30,8 +31,15 @@ from ges2t.console_script import resolve_console_script
 from ges2t.model_store import ArtifactPin, Fetcher, ProgressCallback
 from ges2t.service import CommandResponse, ServiceState
 from ges2t.setup_command import SetupDependencies
-from ges2t.whisper_engine import SystemProbe
-from tests.test_setup_command import make_fakes
+from ges2t.whisper_engine import (
+    SHADER_COMPILER_NAME,
+    VULKAN_HEADER_PATH,
+    VULKAN_LIBRARY_NAME,
+    BuildVariant,
+    SystemProbe,
+    VulkanStatus,
+)
+from tests.test_setup_command import FakeSystemProbe, make_fakes
 
 SUBCOMMANDS: tuple[str, ...] = (
     "run",
@@ -693,6 +701,98 @@ def test_setup_whisper_cpp_reports_a_partial_failure(
     assert "is installed" in err
     assert "download refused" in err
     assert "Traceback" not in err
+
+
+def test_setup_whisper_cpp_prints_the_exact_config_engine_line(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fakes = make_fakes(tmp_path)
+    monkeypatch.setattr(
+        setup_command, "default_dependencies", _returns(fakes.dependencies)
+    )
+
+    assert main(["setup", "whisper.cpp", "tiny-q8_0"]) == EXIT_SUCCESS
+
+    out = capsys.readouterr().out
+    # The whole point: the user copies `ges2t setup whisper.cpp` but the config
+    # value is `whisper_cpp`, so setup states the line it cannot write itself.
+    assert 'transcriber.engine = "whisper_cpp"' in out
+    assert "config.toml" in out
+
+
+def test_setup_needle_says_no_config_line_is_needed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(model_store, "ensure_model", FakeEnsure(tmp_path / "whistle.cact"))
+    monkeypatch.setattr(
+        model_store, "ensure_engine", FakeEnsure(tmp_path / "libneedle.so")
+    )
+
+    assert main(["setup"]) == EXIT_SUCCESS
+
+    out = capsys.readouterr().out
+    assert "no line is needed" in out
+    assert "whistle" in out
+
+
+def test_setup_whisper_cpp_prints_the_cpu_only_hint_when_a_gpu_lost_the_build(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fakes = make_fakes(tmp_path)
+    # The built engine is CPU-only although a Vulkan runtime is present: the
+    # user's exact situation (a GPU, a missing dev package, a silent CPU build).
+    fakes.whisper_engine.build = replace(
+        fakes.whisper_engine.build,
+        variant=BuildVariant.CPU,
+        vulkan=VulkanStatus(
+            runtime=Path("/fake/lib/libvulkan.so.1"),
+            headers=Path("/fake/include/vulkan/vulkan.h"),
+            spirv_headers=None,
+            shader_compiler=Path("/fake/bin/glslc"),
+        ),
+    )
+    monkeypatch.setattr(
+        setup_command, "default_dependencies", _returns(fakes.dependencies)
+    )
+    monkeypatch.setattr(
+        setup_command,
+        "HostSystemProbe",
+        lambda: FakeSystemProbe(
+            executables=(SHADER_COMPILER_NAME,),
+            headers=(VULKAN_HEADER_PATH,),
+            libraries=(VULKAN_LIBRARY_NAME,),
+        ),
+    )
+
+    assert main(["setup", "whisper.cpp", "tiny-q8_0"]) == EXIT_SUCCESS
+
+    out = capsys.readouterr().out
+    assert "spirv-headers" in out
+    assert "CPU-only" in out
+    assert "sudo pacman -S spirv-headers" in out
+
+
+def test_setup_needle_prints_no_cpu_only_hint(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(model_store, "ensure_model", FakeEnsure(tmp_path / "whistle.cact"))
+    monkeypatch.setattr(
+        model_store, "ensure_engine", FakeEnsure(tmp_path / "libneedle.so")
+    )
+
+    assert main(["setup", "needle"]) == EXIT_SUCCESS
+
+    out = capsys.readouterr().out
+    assert "CPU-only" not in out
+    assert "pacman" not in out
 
 
 # -- models ---------------------------------------------------------------

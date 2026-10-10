@@ -13,9 +13,11 @@ import pytest
 
 from ges2t.config import (
     DEFAULT_ENGINE,
+    ENGINE_ALIASES,
     INJECTION_DEFAULT_BACKEND,
     KNOWN_ENGINES,
     KNOWN_HOTKEY_MODES,
+    WHISPER_CPP_ENGINE,
     AudioConfig,
     Config,
     ConfigError,
@@ -28,7 +30,9 @@ from ges2t.config import (
     default_config,
     default_config_path,
     load_config,
+    normalize_engine,
     resolve_config_path,
+    suggest_engine,
 )
 
 MISSING_FILE = "definitely-not-there.toml"
@@ -227,6 +231,73 @@ def test_unknown_engine_name_lists_the_known_names(tmp_path: Path) -> None:
     assert "known engines" in message
     for name in KNOWN_ENGINES:
         assert name in message
+    # 'sphinx' resembles nothing in the valid set, so no spelling advice is added.
+    assert "did you mean" not in message
+
+
+# --- one canonical engine value, one accepted alias (ticket 47) ---------------
+
+
+def test_engine_alias_map_points_only_at_canonical_values() -> None:
+    assert ENGINE_ALIASES == {"whisper.cpp": WHISPER_CPP_ENGINE}
+    assert WHISPER_CPP_ENGINE in KNOWN_ENGINES
+
+
+def test_normalize_engine_folds_the_cli_token_to_the_canonical_value() -> None:
+    assert normalize_engine("whisper.cpp") == WHISPER_CPP_ENGINE
+    assert normalize_engine("whisper_cpp") == WHISPER_CPP_ENGINE
+    assert normalize_engine("whistle") == "whistle"
+    # An unknown spelling is returned unchanged, so the caller can report it.
+    assert normalize_engine("sphinx") == "sphinx"
+
+
+@pytest.mark.parametrize(
+    ("spelling", "expected"),
+    [
+        ("whisper", "whisper_cpp"),
+        ("whisper-cpp", "whisper_cpp"),
+        ("Whisper.CPP", "whisper_cpp"),
+        ("WHISPER_CPP", "whisper_cpp"),
+        ("whistl", "whistle"),
+        ("sphinx", None),
+        ("", None),
+    ],
+)
+def test_suggest_engine_points_at_the_canonical_value(
+    spelling: str, expected: str | None
+) -> None:
+    assert suggest_engine(spelling) == expected
+
+
+def test_config_accepts_the_canonical_whisper_value(tmp_path: Path) -> None:
+    result = load_config(_write_config(tmp_path, '[transcriber]\nengine = "whisper_cpp"\n'))
+    assert result.warnings == []
+    assert result.config.transcriber.engine == "whisper_cpp"
+
+
+def test_config_accepts_whisper_dot_cpp_as_an_alias(tmp_path: Path) -> None:
+    result = load_config(_write_config(tmp_path, '[transcriber]\nengine = "whisper.cpp"\n'))
+    assert result.warnings == []
+    assert result.config.transcriber.engine == "whisper_cpp"
+
+
+def test_unknown_engine_that_looks_like_the_cli_token_points_at_the_right_one(
+    tmp_path: Path,
+) -> None:
+    message = _load_error(tmp_path, '[transcriber]\nengine = "whisper"\n')
+    assert "known engines" in message
+    assert WHISPER_CPP_ENGINE in message
+    assert "did you mean 'whisper_cpp'?" in message
+    # The config value and the CLI token are named together, which is the whole
+    # point of the ticket: one thing, two spellings, explained.
+    assert "whisper.cpp" in message
+    assert "ges2t setup" in message
+
+
+def test_unknown_engine_separator_variant_points_at_the_right_one(tmp_path: Path) -> None:
+    message = _load_error(tmp_path, '[transcriber]\nengine = "Whisper.CPP"\n')
+    assert "did you mean 'whisper_cpp'?" in message
+    assert "whisper.cpp" in message
 
 
 def test_hotkey_mode_rejects_anything_but_ptt_and_toggle(tmp_path: Path) -> None:
@@ -316,6 +387,46 @@ def test_unselected_engine_block_alone_is_not_an_error(tmp_path: Path) -> None:
     assert result.config.engine_blocks == {"whisper_cpp": {"model": "ggml.bin"}}
 
 
+def test_alias_selector_reads_the_canonical_engine_block(tmp_path: Path) -> None:
+    result = load_config(
+        _write_config(
+            tmp_path,
+            '[transcriber]\nengine = "whisper.cpp"\n\n[engine.whisper_cpp]\nmodel = "medium-q5_0"\n',
+        )
+    )
+    assert result.config.transcriber.engine == "whisper_cpp"
+    assert result.config.engine_blocks == {"whisper_cpp": {"model": "medium-q5_0"}}
+
+
+def test_quoted_alias_block_name_reads_as_the_canonical_block(tmp_path: Path) -> None:
+    result = load_config(
+        _write_config(tmp_path, '[engine."whisper.cpp"]\nmodel = "medium-q5_0"\n')
+    )
+    assert result.config.engine_blocks == {"whisper_cpp": {"model": "medium-q5_0"}}
+
+
+def test_dotted_alias_block_name_reads_as_the_canonical_block(tmp_path: Path) -> None:
+    # NOTE: "[engine.whisper.cpp]" is TOML's dotted form and parses as the nested
+    # table {"whisper": {"cpp": {...}}}. It is folded through the same normaliser,
+    # so the block is read rather than silently ignored (ticket 47).
+    result = load_config(
+        _write_config(tmp_path, '[engine.whisper.cpp]\nmodel = "medium-q5_0"\n')
+    )
+    assert result.warnings == []
+    assert result.config.engine_blocks == {"whisper_cpp": {"model": "medium-q5_0"}}
+
+
+def test_two_spellings_of_one_engine_block_are_rejected(tmp_path: Path) -> None:
+    message = _load_error(
+        tmp_path,
+        '[engine.whisper_cpp]\nmodel = "a"\n\n[engine.whisper.cpp]\nmodel = "b"\n',
+    )
+    assert "both spellings" in message
+    assert "whisper_cpp" in message
+    assert "whisper.cpp" in message
+
+
+# --- engine block contents are uninterpreted ----------------------------------
 def test_engine_block_contents_are_not_interpreted_or_warned_about(tmp_path: Path) -> None:
     result = load_config(_write_config(tmp_path, "[engine.whistle]\ntotally_unknown = 42\n"))
     assert result.warnings == []
