@@ -1,7 +1,7 @@
 # whisper engine rebuild: test hardening and follow-ups
 
 - **Priority:** P2
-- **Status:** to do
+- **Status:** in progress
 - **Complexity:** XS
 - **Epic:** ../epic.md
 
