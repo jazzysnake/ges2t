@@ -81,6 +81,28 @@ documentation that takes a fresh machine to a working dictation.
 
 ---
 
+## Epic 3 — [whisper.cpp batch backend](whisper-cpp-backend/epic.md) · P1
+
+A second, **batch-only** `Transcriber` on whisper.cpp, supporting the full ggml model range and
+defaulting to `medium q5_0` — and becoming the **shipped default backend**. Measured on the reference
+recording: **~4.5× fewer errors than Whistle** with `-nt` (~1.8× on the CLI default; see the
+[`-nt` addendum](research/whisper-cpp-provider/004-addendum-nt-decode.md)), at ~1.7–3 s per 25 s
+utterance on the Radeon 780M. It **accepts the measured loss of incremental typing** (whisper's
+partial-window output is not stable enough for the commit-cadence loop). Evidence:
+[provider research](research/whisper-cpp-provider/REPORT.md) ·
+[streaming research](research/whisper-cpp-streaming/REPORT.md) · **proposed ADR 0021** (needs sign-off).
+
+| # | Ticket | Size | Status | Depends on | Branch |
+|---|---|---|---|---|---|
+| 41 | [whisper-model-store](whisper-cpp-backend/whisper-model-store/ticket.md) — catalogue + pinned sha256/size acquisition of ggml models | S | to do | — | — |
+| 42 | [whisper-cli-runner](whisper-cpp-backend/whisper-cli-runner/ticket.md) — bounded `whisper-cli` subprocess seam, `-nt` pinned | S | to do | — | — |
+| 43 | [whisper-transcriber-adapter](whisper-cpp-backend/whisper-transcriber-adapter/ticket.md) — the `Transcriber` over runner + store, `supports_streaming = False` | M | to do | 41, 42 | — |
+| 44 | [whisper-backend-config-and-default](whisper-cpp-backend/whisper-backend-config-and-default/ticket.md) — config, selection, **default flip** (carries ADR 0021) | S | to do | 43 | — |
+| 45 | [whisper-doctor](whisper-cpp-backend/whisper-doctor/ticket.md) — `whisper-cli` / model / Vulkan checks | S | to do | 41, 43 | — |
+| 46 | [whisper-framework-overhead](whisper-cpp-backend/whisper-framework-overhead/ticket.md) — measure the non-model round trip against ADR 0001 | S | to do | 43 | — |
+
+---
+
 ## Dispatch order
 
 Dependencies are respected by working the board in this order; tickets in the same row are
@@ -112,6 +134,9 @@ independent and may run in parallel (they touch disjoint files).
 | 21 | 38 (the `paste_keys` default) · 34 (incremental typing; disjoint files apart from a `pipeline.py` docstring) |
 | 22 | 19 (docs) · 39 (accuracy levers; disjoint files) |
 | 23 | 40 (corrective: the hotkey advice the tool prints) |
+| 24 | 41, 42 (whisper backend foundation: model store + runner; disjoint files) |
+| 25 | 43 (the whisper adapter) |
+| 26 | 44 (config + default, carries ADR 0021) · 45 (doctor) · 46 (overhead measurement) |
 
 Serialization is also required wherever two tickets touch the same file: `10 → 11/12`
 (`cli.py`, `doctor.py`), `11 → 16` (`pipeline.py`), `17 → 18` (`pipeline.py`).
