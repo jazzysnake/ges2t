@@ -104,6 +104,7 @@ utterance on the Radeon 780M. Evidence:
 | 47 | [engine-naming-and-setup-guidance](whisper-cpp-backend/engine-naming-and-setup-guidance/ticket.md) — one canonical engine spelling + a `whisper.cpp` alias; `setup` prints the config line, and names a missing Vulkan dev package when a GPU is present | S | done | 45 | feat/engine-naming-and-setup-guidance (merged 05603a2) |
 | 49 | [whisper-engine-variant-rebuild](whisper-cpp-backend/whisper-engine-variant-rebuild/ticket.md) — re-running `setup` upgrades a CPU-only build to Vulkan once the dev package is installed (variant-aware idempotency) | S | done | 42 | feat/whisper-engine-variant-rebuild (merged a1c557c) |
 | 50 | [streaming-default-for-batch-engines](whisper-cpp-backend/streaming-default-for-batch-engines/ticket.md) — selecting a batch-only engine must not require an explicit `streaming.enabled = false`; only an explicit `true` errors | S | to do | 45 | — |
+| 51 | [whisper-engine-rebuild-hardening](whisper-cpp-backend/whisper-engine-rebuild-hardening/ticket.md) — close ticket 49's non-blocking review follow-ups (ordering test, weak test, dead code, `--rebuild` message) | XS | to do | 49 | — |
 
 ---
 
@@ -157,6 +158,7 @@ independent and may run in parallel (they touch disjoint files).
 | 28 | 48 (identifier constants; independent) |
 | 29 | 46 · 47 · 49 (doctor · setup guidance · variant rebuild) |
 | 30 | 50 (engine-aware streaming default) |
+| 31 | 51 (ticket 49 review follow-ups) · 48 (identifier constants) |
 
 Serialization is also required wherever two tickets touch the same file: `10 → 11/12`
 (`cli.py`, `doctor.py`), `11 → 16` (`pipeline.py`), `17 → 18` (`pipeline.py`).
