@@ -8,12 +8,13 @@ synthetic pins.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import io
-import re
 import sys
 import zipfile
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Literal
@@ -509,8 +510,11 @@ def test_verify_rejects_a_missing_file(data_home: Path, fake_pins: None) -> None
 
 # --- whisper.cpp: catalogue ---------------------------------------------------
 
-#: The live-verified pins, restated as data so a silent edit to the catalogue is
-#: caught. Provenance: Hugging Face tree API, 2026-10-10 (ticket 001-comment.md).
+#: The pins, **recorded as data** so a silent edit to the catalogue is caught.
+#: They were verified against the live Hugging Face host (provenance: the tree
+#: API listing in the ticket's 001-comment.md), but this dict is a constant: the
+#: test below does **not** contact the network. The live check is the manual step
+#: recorded in 001-comment.md and re-run by the reviewer.
 EXPECTED_WHISPER_PINS: dict[str, tuple[int, str]] = {
     "tiny-q8_0": (
         43_537_433,
@@ -548,7 +552,13 @@ def test_whisper_catalogue_covers_exactly_the_live_verified_names() -> None:
     assert set(WHISPER_CPP_CATALOGUE) == set(EXPECTED_WHISPER_PINS)
 
 
-def test_whisper_catalogue_pins_match_the_live_host() -> None:
+def test_whisper_catalogue_matches_the_recorded_pins() -> None:
+    """Compare the catalogue against the recorded pin constants.
+
+    This is an offline change-detector, **not** a live-host check: it only
+    compares two constants and never contacts Hugging Face. The live
+    re-verification is the manual step recorded in this ticket's 001-comment.md.
+    """
     for name, (size_bytes, sha256) in EXPECTED_WHISPER_PINS.items():
         entry = whisper_model(name)
         assert entry.size_bytes == size_bytes
@@ -777,31 +787,111 @@ def test_ensure_whisper_model_rejects_an_unpublished_name_before_fetching(
 
 # --- ADR 0018: acquisition is the only networked path ------------------------
 
-
+#: Modules that provide an HTTP client to our own code. Any import of one of
+#: these outside ``model_store`` is a second networked path (ADR 0018).
 _HTTP_CLIENT_MODULES: frozenset[str] = frozenset(
     {"urllib", "http", "httpx", "requests", "aiohttp", "ftplib"}
 )
 
+#: The only modules allowed to import ``socket``: both use it for **AF_UNIX**
+#: local IPC (the service protocol and the ``ydotoold`` probe). A new module that
+#: needs a socket fails this test until a human adds it here deliberately.
+_SOCKET_MODULES_ALLOWED: frozenset[str] = frozenset({"doctor.py", "socket_proto.py"})
 
-def _imported_top_level_names(source: str) -> set[str]:
-    """Return the top-level module names imported by Python ``source``."""
-    pattern = re.compile(r"^\s*(?:import|from)\s+([A-Za-z_][\w.]*)", re.MULTILINE)
-    return {match.group(1).split(".")[0] for match in pattern.finditer(source)}
+#: Names that only appear when a **network** socket is built. ``AF_INET`` /
+#: ``AF_INET6`` and ``create_connection`` are the raw-socket equivalent of an
+#: HTTP client; none may appear anywhere in our source.
+_NETWORK_SOCKET_CONSTRUCTS: frozenset[str] = frozenset(
+    {"AF_INET", "AF_INET6", "create_connection"}
+)
 
 
-def test_http_clients_are_imported_only_by_the_model_store() -> None:
-    """An HTTP client import anywhere but the acquisition path violates ADR 0018.
+@dataclass(frozen=True)
+class ModuleScan:
+    """What one source file imports and which bare/attribute names it references."""
 
-    Unix-domain ``socket`` use (the service IPC in ``socket_proto`` and the
-    ``ydotoold`` probe in ``doctor``) is local IPC, not network I/O, and is
-    deliberately outside this check's scope; it is checked by the doctor suite.
+    imported_modules: frozenset[str]
+    referenced_names: frozenset[str]
+
+
+def _imported_top_level_names(tree: ast.AST) -> set[str]:
+    """Return the top-level module names imported by a parsed module.
+
+    Uses :mod:`ast`, not a regex, so it sees every name in a multi-import
+    (``import os, httpx``) and resolves ``importlib.import_module("httpx")`` and
+    ``__import__("httpx")`` when the target is a string literal.
+    """
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imported.add(alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            if node.module is not None and node.level == 0:
+                imported.add(node.module.split(".")[0])
+        elif isinstance(node, ast.Call):
+            dynamic = _dynamic_import_target(node)
+            if dynamic is not None:
+                imported.add(dynamic)
+    return imported
+
+
+def _dynamic_import_target(node: ast.Call) -> str | None:
+    """Return the top-level module of a string-literal ``import_module``/``__import__`` call."""
+    func = node.func
+    is_dynamic_import = (
+        isinstance(func, ast.Attribute)
+        and func.attr in {"import_module", "__import__"}
+    ) or (isinstance(func, ast.Name) and func.id == "__import__")
+    if not is_dynamic_import or not node.args:
+        return None
+    first = node.args[0]
+    if isinstance(first, ast.Constant) and isinstance(first.value, str):
+        return first.value.split(".")[0] or None
+    return None
+
+
+def _scan_module(source: str) -> ModuleScan:
+    """Return the imports and referenced names of one source file."""
+    tree = ast.parse(source)
+    referenced: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            referenced.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            referenced.add(node.attr)
+    return ModuleScan(
+        imported_modules=frozenset(_imported_top_level_names(tree)),
+        referenced_names=frozenset(referenced),
+    )
+
+
+def test_network_clients_are_confined_to_the_model_store() -> None:
+    """No second networked path: HTTP clients and network sockets live only in acquisition.
+
+    Scope, stated honestly: this is a **static** scan of matching names, not a
+    runtime guard. It catches HTTP-client imports (including multi-imports and
+    literal ``importlib.import_module``) and the raw-socket constructs
+    ``AF_INET``/``AF_INET6``/``create_connection``. The residual hole is a bare
+    ``socket.socket()`` (which defaults to ``AF_INET``) followed by a
+    ``.connect((host, port))`` hidden inside one of the two allow-listed
+    AF_UNIX modules; that is not caught. The realistic HTTP clients are.
     """
     source_root = Path(model_store.__file__).resolve().parent
-    offenders: dict[str, set[str]] = {}
+    http_importers: dict[str, frozenset[str]] = {}
+    socket_importers: set[str] = set()
+    network_socket_users: dict[str, frozenset[str]] = {}
     for path in sorted(source_root.rglob("*.py")):
-        hits = _imported_top_level_names(path.read_text(encoding="utf-8"))
-        network_hits = hits & _HTTP_CLIENT_MODULES
-        if network_hits:
-            offenders[path.name] = network_hits
+        scan = _scan_module(path.read_text(encoding="utf-8"))
+        http_hits = scan.imported_modules & _HTTP_CLIENT_MODULES
+        if http_hits:
+            http_importers[path.name] = http_hits
+        if "socket" in scan.imported_modules:
+            socket_importers.add(path.name)
+        socket_hits = scan.referenced_names & _NETWORK_SOCKET_CONSTRUCTS
+        if socket_hits:
+            network_socket_users[path.name] = socket_hits
 
-    assert offenders == {"model_store.py": {"urllib"}}, offenders
+    assert http_importers == {"model_store.py": frozenset({"urllib"})}, http_importers
+    assert socket_importers == _SOCKET_MODULES_ALLOWED, socket_importers
+    assert network_socket_users == {}, network_socket_users
