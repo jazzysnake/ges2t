@@ -321,13 +321,24 @@ Run from the worktree (`986 = 923 baseline + 63 new`):
 $ rm -rf .mypy_cache __pycache__ && uv run mypy src/ges2t tests
 Success: no issues found in 57 source files
 $ uv run pytest -q
-986 passed in 6.42s
+986 passed in 5.73s
 ```
 
 Baseline before this ticket: 923 passed. This ticket adds 63 tests
 (`tests/test_whisper_engine.py`); none deleted, skipped or weakened. The two
 commands were re-run after every edit above and after the status/README/comment
 updates, with the same result and a clean `git status`.
+
+Test-by-test totals (all in `tests/test_whisper_engine.py`): 63. The ones that
+carry each definition-of-done clause are
+`test_missing_cmake_is_reported_with_its_package_and_command` (prerequisite +
+exact line), `test_ensure_engine_builds_cpu_only_when_vulkan_is_absent` /
+`..._builds_vulkan_when_every_piece_is_present` (CPU-vs-Vulkan),
+`test_ensure_engine_is_idempotent_and_builds_only_once` (idempotency),
+`test_the_only_git_commands_are_the_pinned_clone_and_its_revision_check`
+(network scope), `test_builder_builds_the_whisper_target_and_never_the_cli`
+(library, not CLI) and `test_builder_writes_a_manifest_read_back_by_read_build`
+(`doctor` can read the recorded feature set).
 
 ## Cleanup
 
