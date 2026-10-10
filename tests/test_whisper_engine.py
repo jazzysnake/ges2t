@@ -60,6 +60,7 @@ from ges2t.whisper_engine import (
     VulkanStatus,
     WhisperCppBuilder,
     check_prerequisites,
+    cpu_only_build_hint,
     default_build_root,
     default_jobs,
     engine_dir,
@@ -1205,3 +1206,73 @@ def test_vulkan_dev_package_hint_names_only_the_missing_packages() -> None:
     assert PACKAGE_VULKAN_HEADERS not in hint
     assert "pacman -S spirv-headers shaderc" in hint
     assert "CPU-only" in hint
+
+
+# --- the setup composite: one wording, one gate (tickets 46/47) ---------------
+
+def _installed_build(
+    tmp_path: Path, *, variant: BuildVariant, status: VulkanStatus
+) -> EngineBuild:
+    """An installed :class:`EngineBuild` record with the given variant and Vulkan status."""
+    return EngineBuild(
+        version=WHISPER_CPP_VERSION,
+        tag=WHISPER_CPP_TAG,
+        revision=WHISPER_CPP_REVISION,
+        variant=variant,
+        directory=tmp_path,
+        libraries=EngineLibraries(libwhisper=tmp_path / "libwhisper.so", ggml=()),
+        vulkan=status,
+        built_at="2026-10-10T00:00:00+00:00",
+    )
+
+
+def _gpu_without_spirv_probe() -> FakeSystemProbe:
+    """A machine with the runtime, the Vulkan headers and ``glslc``, but no ``spirv-headers``."""
+    return FakeSystemProbe(
+        executables=(SHADER_COMPILER_NAME,),
+        headers=(VULKAN_HEADER_PATH,),
+        libraries=(VULKAN_LIBRARY_NAME,),
+    )
+
+
+def test_cpu_only_build_hint_is_exactly_the_shared_sentence(tmp_path: Path) -> None:
+    # The single-source property: setup's diagnostic is not a second wording, it
+    # is ``vulkan_dev_package_hint`` of the live status (the same function
+    # ``ges2t doctor`` renders as its fix, ticket 46).
+    probe = _gpu_without_spirv_probe()
+    build = _installed_build(
+        tmp_path, variant=BuildVariant.CPU, status=inspect_vulkan(probe)
+    )
+    shared = vulkan_dev_package_hint(inspect_vulkan(probe))
+    assert shared is not None
+    assert cpu_only_build_hint(build, system=probe) == shared
+
+
+def test_cpu_only_build_hint_is_none_for_a_vulkan_build(tmp_path: Path) -> None:
+    build = _installed_build(
+        tmp_path, variant=BuildVariant.VULKAN, status=inspect_vulkan(_gpu_without_spirv_probe())
+    )
+    assert cpu_only_build_hint(build, system=_gpu_without_spirv_probe()) is None
+
+
+def test_cpu_only_build_hint_is_none_without_a_vulkan_runtime(tmp_path: Path) -> None:
+    # "No GPU at all": no hint, because there is no GPU path to lose.
+    probe = FakeSystemProbe()
+    build = _installed_build(
+        tmp_path, variant=BuildVariant.CPU, status=inspect_vulkan(probe)
+    )
+    assert cpu_only_build_hint(build, system=probe) is None
+
+
+def test_cpu_only_build_hint_is_none_when_nothing_dev_is_missing(tmp_path: Path) -> None:
+    # A CPU-only build whose missing dev piece has since been installed: the
+    # "install X" advice would now be stale, so it is not printed.
+    probe = FakeSystemProbe(
+        executables=(SHADER_COMPILER_NAME,),
+        headers=(VULKAN_HEADER_PATH, SPIRV_HEADER_PATH),
+        libraries=(VULKAN_LIBRARY_NAME,),
+    )
+    build = _installed_build(
+        tmp_path, variant=BuildVariant.CPU, status=inspect_vulkan(probe)
+    )
+    assert cpu_only_build_hint(build, system=probe) is None

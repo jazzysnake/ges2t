@@ -542,11 +542,10 @@ def _handle_setup(args: argparse.Namespace) -> int:
     from ges2t.setup_command import (
         SetupError,
         config_guidance,
-        cpu_only_build_hint,
         plan_setup,
         run_setup,
     )
-    from ges2t.whisper_engine import WhisperEngineError
+    from ges2t.whisper_engine import WhisperEngineError, cpu_only_build_hint
 
     try:
         plan = plan_setup(

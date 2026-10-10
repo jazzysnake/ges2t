@@ -21,9 +21,11 @@ The surface it implements (ADR 0021 §6, ADR 0021 §10):
   (ADR 0004).
 
 A GPU that loses its build to missing Vulkan *development* packages is reported
-by :func:`cpu_only_build_hint`: a diagnostic, never an error, naming the missing
-package and the exact ``pacman`` line, while a machine with no Vulkan runtime at
-all gets no hint (there is no GPU path to lose).
+by the shared :func:`ges2t.whisper_engine.cpu_only_build_hint`: a diagnostic,
+never an error, naming the missing package and the exact ``pacman`` line, while a
+machine with no Vulkan runtime at all gets no hint (there is no GPU path to
+lose). The wording has one definition, in
+:mod:`ges2t.whisper_engine`, so ``ges2t setup`` and ``ges2t doctor`` cannot drift.
 
 Two properties the ticket makes load-bearing:
 
@@ -67,15 +69,8 @@ from ges2t.model_store import (
 from ges2t.whisper_engine import (
     DEFAULT_WHISPER_MODEL_CPU,
     DEFAULT_WHISPER_MODEL_GPU,
-    PACMAN_PREFIX,
-    PACKAGE_CMAKE,
-    PACKAGE_TOOLCHAIN,
-    BuildVariant,
     EngineBuild,
-    HostSystemProbe,
-    Prerequisite,
     SystemProbe,
-    check_prerequisites,
     default_whisper_model,
     ensure_engine,
 )
@@ -83,7 +78,6 @@ from ges2t.whisper_engine import (
 __all__ = [
     "ACCEPTED_BACKEND_TOKENS",
     "BACKEND_ALIASES",
-    "CpuOnlyBuildAdvice",
     "DEFAULT_SETUP_BACKEND",
     "DEFAULT_WHISPER_MODEL_CPU",
     "DEFAULT_WHISPER_MODEL_GPU",
@@ -100,8 +94,6 @@ __all__ = [
     "WhisperEngineInstaller",
     "WhisperModelInstaller",
     "config_guidance",
-    "cpu_only_build_advice",
-    "cpu_only_build_hint",
     "default_dependencies",
     "default_whisper_model",
     "plan_setup",
@@ -370,85 +362,12 @@ def plan_setup(
 
 # --- Post-setup guidance (ticket 47) -------------------------------------------
 #
-# ges2t never edits the user's configuration (ADR 0004, ADR 0009), so the two
-# things `setup` cannot do for the user are *printed* instead: the exact config
-# line that selects the backend just set up, and a diagnostic when a Vulkan GPU
-# is present but the engine could only be built CPU-only.
-
-
-@dataclass(frozen=True)
-class CpuOnlyBuildAdvice:
-    """The packages whose absence forced a CPU-only build despite a Vulkan GPU.
-
-    ``named`` is the human list (name and package per item); ``packages`` is the
-    unique package set, in prerequisite order, for the exact ``pacman`` line.
-    """
-
-    named: str
-    packages: tuple[str, ...]
-
-    @property
-    def pacman_command(self) -> str:
-        """The exact command that installs the missing Vulkan development pieces."""
-        return f"{PACMAN_PREFIX} {' '.join(self.packages)}"
-
-
-#: Build-prerequisite packages that are *not* Vulkan development pieces: when
-#: they are missing the build fails outright, so they are never part of the
-#: "you got a CPU build instead of a GPU build" diagnostic.
-_HOST_BUILD_PACKAGES: frozenset[str] = frozenset({PACKAGE_TOOLCHAIN, PACKAGE_CMAKE})
-
-
-def _unique_packages(items: tuple[Prerequisite, ...]) -> tuple[str, ...]:
-    """Return the unique packages of ``items``, in declaration order."""
-    unique: list[str] = []
-    for item in items:
-        if item.package not in unique:
-            unique.append(item.package)
-    return tuple(unique)
-
-
-def cpu_only_build_advice(
-    build: EngineBuild, *, system: SystemProbe | None = None
-) -> CpuOnlyBuildAdvice | None:
-    """Diagnose a CPU-only build on a Vulkan machine, or ``None`` when it does not apply.
-
-    The pieces are the ones the engine build already records: a **missing Vulkan
-    runtime** means there is no GPU path to lose, so the advice is ``None``
-    (no hint). A CPU-only build with the runtime present means a required
-    *development* piece (``spirv-headers``, ``vulkan-headers`` or ``shaderc``)
-    was missing, so the user is told which package would enable the GPU build.
-    The prerequisite check is :func:`ges2t.whisper_engine.check_prerequisites`
-    itself -- the detection is never duplicated here (ticket 47).
-    """
-    if build.variant is not BuildVariant.CPU or build.vulkan.runtime is None:
-        return None
-    probe = system if system is not None else HostSystemProbe()
-    report = check_prerequisites(BuildVariant.VULKAN, probe)
-    missing = tuple(
-        item for item in report.missing if item.package not in _HOST_BUILD_PACKAGES
-    )
-    if not missing:
-        return None
-    return CpuOnlyBuildAdvice(
-        named=", ".join(f"{item.name} ({item.package})" for item in missing),
-        packages=_unique_packages(missing),
-    )
-
-
-def cpu_only_build_hint(
-    build: EngineBuild, *, system: SystemProbe | None = None
-) -> str | None:
-    """Return the CPU-only-build diagnostic to print, or ``None`` when it does not apply."""
-    advice = cpu_only_build_advice(build, system=system)
-    if advice is None:
-        return None
-    return (
-        "Note: the Vulkan runtime is present, but the engine was built CPU-only\n"
-        f"because these Vulkan development packages are missing: {advice.named}.\n"
-        "Install them, then re-run 'ges2t setup whisper.cpp' for a Vulkan (GPU) build:\n"
-        f"    {advice.pacman_command}"
-    )
+# ges2t never edits the user's configuration (ADR 0004, ADR 0009), so the exact
+# config line that selects the backend just set up is *printed* instead. The
+# CPU-only-build diagnostic is **not** here: it is the one shared wording in
+# :mod:`ges2t.whisper_engine` (``cpu_only_build_hint`` /
+# ``vulkan_dev_package_hint``), which ``ges2t doctor`` reads too (ticket 46), so
+# the two commands cannot drift.
 
 
 def config_guidance(plan: SetupPlan, *, path: Path | None = None) -> str:

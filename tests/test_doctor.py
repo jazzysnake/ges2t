@@ -674,6 +674,20 @@ def test_vulkan_names_only_spirv_headers_when_that_is_the_missing_piece(
     assert "sudo pacman -S spirv-headers" in result.fix
 
 
+def test_vulkan_fix_is_the_same_sentence_setup_prints(tmp_path: Path) -> None:
+    # The single-source property (tickets 46/47): doctor's fix is exactly the
+    # shared ``whisper_engine.vulkan_dev_package_hint`` sentence that ges2t setup
+    # prints, so a rewording in one cannot leave the other behind.
+    probe = _MISSING_SPIRV_PROBE
+    result = check_vulkan(
+        _whisper_config(), system=probe, directory=tmp_path / "absent"
+    )
+
+    shared = whisper_engine.vulkan_dev_package_hint(whisper_engine.inspect_vulkan(probe))
+    assert shared is not None
+    assert result.fix == shared
+
+
 def test_vulkan_ok_with_a_vulkan_engine(tmp_path: Path) -> None:
     directory = _write_whisper_engine(tmp_path / "engine", variant="vulkan")
 

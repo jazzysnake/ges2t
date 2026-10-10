@@ -31,8 +31,6 @@ from ges2t.setup_command import (
     SetupPlan,
     UnknownBackendError,
     config_guidance,
-    cpu_only_build_advice,
-    cpu_only_build_hint,
     default_whisper_model,
     plan_setup,
     run_setup,
@@ -47,6 +45,9 @@ from ges2t.whisper_engine import (
     EngineLibraries,
     VulkanStatus,
     WhisperEngineError,
+    cpu_only_build_hint,
+    inspect_vulkan,
+    vulkan_dev_package_hint,
 )
 
 # --- fakes ---------------------------------------------------------------------
@@ -482,32 +483,46 @@ def test_cpu_only_hint_names_the_missing_dev_package_and_the_pacman_line(
 ) -> None:
     build = _build_with(tmp_path, variant=BuildVariant.CPU, vulkan=_GPU_WITHOUT_SPIRV)
     # The probe agrees: runtime, vulkan headers and glslc are present, the
-    # SPIR-V header is not (the toolchain/cmake are absent too --- irrelevant,
-    # because the build already succeeded, and excluded from the diagnostic).
+    # SPIR-V header is not.
     probe = FakeSystemProbe(
         executables=(SHADER_COMPILER_NAME,),
         headers=(VULKAN_HEADER_PATH,),
         libraries=(VULKAN_LIBRARY_NAME,),
     )
-    advice = cpu_only_build_advice(build, system=probe)
-    assert advice is not None
-    assert advice.packages == ("spirv-headers",)
-    assert advice.pacman_command == "sudo pacman -S spirv-headers"
     hint = cpu_only_build_hint(build, system=probe)
     assert hint is not None
     assert "spirv-headers" in hint
-    assert "SPIR-V headers" in hint
     assert "CPU-only" in hint
     assert "sudo pacman -S spirv-headers" in hint
     assert "ges2t setup whisper.cpp" in hint
 
 
-def test_cpu_only_hint_lists_every_missing_dev_package(tmp_path: Path) -> None:
+def test_cpu_only_hint_is_the_shared_sentence_itself(tmp_path: Path) -> None:
+    # The single-source property (tickets 46/47): the setup diagnostic is not a
+    # second wording, it is exactly ``vulkan_dev_package_hint`` of the live
+    # status. If the shared function changes, setup changes with it.
+    build = _build_with(tmp_path, variant=BuildVariant.CPU, vulkan=_GPU_WITHOUT_SPIRV)
+    probe = FakeSystemProbe(
+        executables=(SHADER_COMPILER_NAME,),
+        headers=(VULKAN_HEADER_PATH,),
+        libraries=(VULKAN_LIBRARY_NAME,),
+    )
+    shared = vulkan_dev_package_hint(inspect_vulkan(probe))
+    assert shared is not None
+    assert cpu_only_build_hint(build, system=probe) == shared
+
+
+def test_cpu_only_hint_names_every_missing_dev_package(tmp_path: Path) -> None:
     build = _build_with(tmp_path, variant=BuildVariant.CPU, vulkan=_GPU_WITHOUT_SPIRV)
     probe = FakeSystemProbe(libraries=(VULKAN_LIBRARY_NAME,))
-    advice = cpu_only_build_advice(build, system=probe)
-    assert advice is not None
-    assert advice.packages == ("vulkan-headers", "spirv-headers", "shaderc")
+    hint = cpu_only_build_hint(build, system=probe)
+    assert hint == vulkan_dev_package_hint(inspect_vulkan(probe))
+    assert hint is not None
+    # The one ``pacman`` line names only the pieces actually missing.
+    assert hint.count("sudo pacman -S") == 1
+    for package in ("vulkan-headers", "spirv-headers", "shaderc"):
+        assert package in hint
+    assert hint.count("spirv-headers") == 2  # the list and the pacman line
 
 
 def test_cpu_only_hint_is_silent_for_a_vulkan_build(tmp_path: Path) -> None:

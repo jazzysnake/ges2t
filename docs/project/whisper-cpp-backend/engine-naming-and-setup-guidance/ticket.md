@@ -46,9 +46,10 @@ GPU path (the manifest records `"variant": "cpu"`, `"spirv_headers": null`). `se
 - [x] **When a Vulkan runtime/GPU is present but a Vulkan dev piece is missing**, `ges2t setup`
       prints a hint **naming the missing package** (e.g. `spirv-headers`) and the consequence
       (**CPU-only build**), with the exact `pacman` line — a **diagnostic, not an error**. "No GPU at
-      all" gets no hint; "GPU present, dev packages missing" does, via
-      `inspect_vulkan`/`check_prerequisites`.
-- [x] `uv run pytest` (1159 passed) and `uv run mypy src/ges2t tests` (0 errors, 64 files) green;
+      all" gets no hint; "GPU present, dev packages missing" does, via the **one shared wording**
+      `whisper_engine.cpu_only_build_hint` / `vulkan_dev_package_hint` (also read by `doctor`), which
+      uses `inspect_vulkan`; the duplicate in `setup_command.py` was removed (`003-comment.md`).
+- [x] `uv run pytest` (1194 passed) and `uv run mypy src/ges2t tests` (0 errors, 64 files) green;
       no behaviour change beyond the alias, the messages and the hint.
 
 ## Notes

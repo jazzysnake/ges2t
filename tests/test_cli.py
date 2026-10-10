@@ -18,7 +18,7 @@ from types import ModuleType
 import pytest
 
 from collections.abc import Callable
-from ges2t import __version__, cli, model_store, setup_command
+from ges2t import __version__, cli, model_store, setup_command, whisper_engine
 from ges2t.cli import (
     EXIT_ENGINE_FAILURE,
     EXIT_FAILURE,
@@ -38,6 +38,8 @@ from ges2t.whisper_engine import (
     BuildVariant,
     SystemProbe,
     VulkanStatus,
+    inspect_vulkan,
+    vulkan_dev_package_hint,
 )
 from tests.test_setup_command import FakeSystemProbe, make_fakes
 
@@ -760,19 +762,21 @@ def test_setup_whisper_cpp_prints_the_cpu_only_hint_when_a_gpu_lost_the_build(
     monkeypatch.setattr(
         setup_command, "default_dependencies", _returns(fakes.dependencies)
     )
-    monkeypatch.setattr(
-        setup_command,
-        "HostSystemProbe",
-        lambda: FakeSystemProbe(
-            executables=(SHADER_COMPILER_NAME,),
-            headers=(VULKAN_HEADER_PATH,),
-            libraries=(VULKAN_LIBRARY_NAME,),
-        ),
+    probe = FakeSystemProbe(
+        executables=(SHADER_COMPILER_NAME,),
+        headers=(VULKAN_HEADER_PATH,),
+        libraries=(VULKAN_LIBRARY_NAME,),
     )
+    # The hint is built from the live probe in ``whisper_engine`` now (the shared
+    # helper), not in ``setup_command``.
+    monkeypatch.setattr(whisper_engine, "HostSystemProbe", lambda: probe)
 
     assert main(["setup", "whisper.cpp", "tiny-q8_0"]) == EXIT_SUCCESS
 
     out = capsys.readouterr().out
+    shared = vulkan_dev_package_hint(inspect_vulkan(probe))
+    assert shared is not None
+    assert shared in out
     assert "spirv-headers" in out
     assert "CPU-only" in out
     assert "sudo pacman -S spirv-headers" in out
