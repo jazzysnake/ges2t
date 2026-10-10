@@ -51,14 +51,17 @@ def test_build_transcriber_returns_whistle_for_the_default_engine() -> None:
 
 
 def test_build_transcriber_raises_for_an_unknown_engine() -> None:
-    config = Config(transcriber=TranscriberConfig(engine="whisper_cpp"))
+    config = Config(transcriber=TranscriberConfig(engine="whispercpp"))
 
     with pytest.raises(pipeline.PipelineError) as excinfo:
         pipeline.build_transcriber(config)
 
     message = str(excinfo.value)
-    assert "whisper_cpp" in message
+    assert "whispercpp" in message
+    # The handled engines are named, so a typo is actionable. ``whisper_cpp``
+    # (with the underscore) is handled since ticket 43.
     assert "whistle" in message
+    assert "whisper_cpp" in message
 
 
 def test_build_transcriber_accepts_a_missing_engine_block_as_all_defaults() -> None:
