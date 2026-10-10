@@ -118,7 +118,7 @@ Serialization is also required wherever two tickets touch the same file: `10 →
 
 ## Decisions
 
-All 20 decision records live in [`adr/`](../adr/). Start with
+All 21 decision records live in [`adr/`](../adr/). Start with
 [ADR 0000 (scope)](../adr/0000-project-scope-and-non-goals.md) and
 [ADR 0005 (the Whistle/Needle 3 backend)](../adr/0005-stt-backend-cactus-whistle.md).
 
