@@ -23,6 +23,7 @@ import pytest
 
 from ges2t import model_store
 from ges2t.model_store import (
+    DEFAULT_NEEDLE_MODEL,
     ENGINE_MEMBER,
     ENGINE_SHA256,
     ENGINE_SIZE,
@@ -30,6 +31,7 @@ from ges2t.model_store import (
     MODEL_SHA256,
     MODEL_SIZE,
     MODEL_URL,
+    NEEDLE_MODELS,
     PLATFORM_KEY,
     WHISPER_CPP_CATALOGUE,
     WHISPER_CPP_MODELS,
@@ -39,6 +41,7 @@ from ges2t.model_store import (
     ArtifactPin,
     ArtifactVerificationError,
     ModelStoreError,
+    NeedleModelNameError,
     UnsupportedPlatformError,
     WhisperModel,
     WhisperModelName,
@@ -50,6 +53,7 @@ from ges2t.model_store import (
     ensure_whisper_model,
     env_overrides,
     model_path,
+    needle_model,
     parse_whisper_model_name,
     verify,
     whisper_model,
@@ -140,9 +144,23 @@ def data_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]
 
 @pytest.fixture()
 def fake_pins(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Replace the real pins with small synthetic ones (no network, fast)."""
+    """Replace the real pins with small synthetic ones (no network, fast).
+
+    The acquisition reads the needle catalogue, so the synthetic pin replaces the
+    default entry's ``NeedleModel`` (not just the ``MODEL_PIN`` constant).
+    """
     monkeypatch.setattr(model_store, "MODEL_PIN", MODEL_TEST_PIN)
     monkeypatch.setattr(model_store, "ENGINE_PIN", ENGINE_TEST_PIN)
+    synthetic = model_store.NeedleModel(
+        name=model_store.DEFAULT_NEEDLE_MODEL,
+        version=model_store.MODEL_VERSION,
+        pin=MODEL_TEST_PIN,
+    )
+    monkeypatch.setattr(
+        model_store,
+        "NEEDLE_CATALOGUE",
+        MappingProxyType({synthetic.name: synthetic}),
+    )
 
 
 # --- pins and platform --------------------------------------------------------
@@ -508,6 +526,48 @@ def test_verify_rejects_a_missing_file(data_home: Path, fake_pins: None) -> None
     assert verify(model_path(), MODEL_TEST_PIN) is False
 
 
+# --- needle model catalogue ---------------------------------------------------
+
+
+def test_needle_catalogue_pins_exactly_whistle() -> None:
+    assert tuple(entry.name for entry in NEEDLE_MODELS) == ("whistle",)
+    assert DEFAULT_NEEDLE_MODEL == "whistle"
+    assert set(model_store.NEEDLE_CATALOGUE) == {"whistle"}
+
+
+def test_needle_model_path_matches_the_adr_layout(data_home: Path) -> None:
+    assert needle_model("whistle").path() == model_path()
+    assert model_path() == (
+        data_home / "ges2t" / "models" / "whistle" / "2.0.0" / "whistle.cact"
+    )
+
+
+def test_needle_model_rejects_an_unknown_name_with_a_typed_error() -> None:
+    with pytest.raises(NeedleModelNameError) as excinfo:
+        needle_model("dragon")
+
+    error = excinfo.value
+    assert error.name == "dragon"
+    assert error.valid == ("whistle",)
+    assert "whistle" in str(error)
+
+
+def test_ensure_model_rejects_an_unknown_name_before_fetching(
+    data_home: Path, fake_pins: None
+) -> None:
+    fetcher = RecordingFetcher(MODEL_BYTES)
+
+    with pytest.raises(NeedleModelNameError):
+        ensure_model("dragon", fetcher=fetcher)
+
+    assert fetcher.calls == []
+
+
+def test_ensure_model_accepts_the_named_default(data_home: Path, fake_pins: None) -> None:
+    result = ensure_model("whistle", fetcher=RecordingFetcher(MODEL_BYTES))
+    assert result == model_path()
+
+
 # --- whisper.cpp: catalogue ---------------------------------------------------
 
 #: The pins, **recorded as data** so a silent edit to the catalogue is caught.
@@ -783,6 +843,46 @@ def test_ensure_whisper_model_rejects_an_unpublished_name_before_fetching(
         ensure_whisper_model("medium-q5_0", fetcher=fetcher)
 
     assert fetcher.calls == []
+
+
+SECOND_WHISPER_TEST_BYTES: bytes = b"ggml-second-whisper-payload" * 2
+SECOND_WHISPER_TEST_ENTRY: WhisperModel = WhisperModel(
+    model=WhisperModelName(size="base", quant="q8_0"),
+    url=f"{WHISPER_CPP_MODELS_URL}/ggml-base-q8_0.bin",
+    sha256=hashlib.sha256(SECOND_WHISPER_TEST_BYTES).hexdigest(),
+    size_bytes=len(SECOND_WHISPER_TEST_BYTES),
+)
+
+
+def test_fetching_a_second_whisper_model_leaves_the_first_untouched(
+    data_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        model_store,
+        "WHISPER_CPP_CATALOGUE",
+        MappingProxyType(
+            {
+                WHISPER_TEST_ENTRY.name: WHISPER_TEST_ENTRY,
+                SECOND_WHISPER_TEST_ENTRY.name: SECOND_WHISPER_TEST_ENTRY,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        model_store,
+        "WHISPER_CPP_MODELS",
+        (WHISPER_TEST_ENTRY, SECOND_WHISPER_TEST_ENTRY),
+    )
+
+    ensure_whisper_model("tiny-q8_0", fetcher=RecordingFetcher(WHISPER_TEST_BYTES))
+    first = whisper_model_path("tiny-q8_0")
+
+    second = RecordingFetcher(SECOND_WHISPER_TEST_BYTES)
+    ensure_whisper_model("base-q8_0", fetcher=second)
+
+    assert whisper_model_path("base-q8_0").read_bytes() == SECOND_WHISPER_TEST_BYTES
+    # The first model's bytes are untouched and it was not re-fetched.
+    assert first.read_bytes() == WHISPER_TEST_BYTES
+    assert len(second.calls) == 1
 
 
 # --- ADR 0018: acquisition is the only networked path ------------------------

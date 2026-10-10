@@ -16,7 +16,8 @@ from types import ModuleType
 
 import pytest
 
-from ges2t import __version__, cli, model_store
+from collections.abc import Callable
+from ges2t import __version__, cli, model_store, setup_command
 from ges2t.cli import (
     EXIT_ENGINE_FAILURE,
     EXIT_FAILURE,
@@ -28,6 +29,9 @@ from ges2t.cli import (
 from ges2t.console_script import resolve_console_script
 from ges2t.model_store import ArtifactPin, Fetcher, ProgressCallback
 from ges2t.service import CommandResponse, ServiceState
+from ges2t.setup_command import SetupDependencies
+from ges2t.whisper_engine import SystemProbe
+from tests.test_setup_command import make_fakes
 
 SUBCOMMANDS: tuple[str, ...] = (
     "run",
@@ -88,20 +92,27 @@ class FixedPath:
 
 
 class FakeEnsure:
-    """A replacement for ``model_store.ensure_*`` that records its progress callback."""
+    """A replacement for ``model_store.ensure_*`` that records its progress callback.
+
+    The needle model's ``ensure_model`` takes a model name and the engines do not,
+    so ``name`` is optional: it is recorded when supplied and ignored otherwise.
+    """
 
     def __init__(self, path: Path) -> None:
         self.path = path
         self.calls = 0
+        self.names: list[str | None] = []
         self.progress_callbacks: list[ProgressCallback | None] = []
 
     def __call__(
         self,
+        name: str | None = None,
         *,
         fetcher: Fetcher | None = None,
         progress: ProgressCallback | None = None,
     ) -> Path:
         self.calls += 1
+        self.names.append(name)
         self.progress_callbacks.append(progress)
         if progress is not None:
             progress(1.0)
@@ -116,6 +127,7 @@ class FailingEnsure:
 
     def __call__(
         self,
+        name: str | None = None,
         *,
         fetcher: Fetcher | None = None,
         progress: ProgressCallback | None = None,
@@ -506,6 +518,25 @@ def test_doctor_reports_a_missing_doctor_module_cleanly(
 # -- setup ----------------------------------------------------------------
 
 
+def _returns(deps: SetupDependencies) -> Callable[[], SetupDependencies]:
+    """Return a zero-argument factory for ``deps`` (the ``default_dependencies`` seam)."""
+
+    def factory() -> SetupDependencies:
+        return deps
+
+    return factory
+
+
+def _fixed_model(name: str) -> Callable[[SystemProbe | None], str]:
+    """Return a ``default_whisper_model`` replacement that always resolves ``name``."""
+
+    def resolve(system: SystemProbe | None = None) -> str:
+        del system
+        return name
+
+    return resolve
+
+
 def test_setup_calls_the_model_store_functions_with_progress(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -543,6 +574,123 @@ def test_setup_reports_a_model_store_failure(
     assert main(["setup"]) == EXIT_FAILURE
 
     err = capsys.readouterr().err
+    assert "download refused" in err
+    assert "Traceback" not in err
+
+
+def test_setup_default_backend_selects_the_whistle_model_by_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    ensure_model = FakeEnsure(tmp_path / "whistle.cact")
+    monkeypatch.setattr(model_store, "ensure_model", ensure_model)
+    monkeypatch.setattr(model_store, "ensure_engine", FakeEnsure(tmp_path / "libneedle.so"))
+
+    assert main(["setup"]) == EXIT_SUCCESS
+
+    assert ensure_model.names == ["whistle"]
+
+
+def test_setup_needle_accepts_an_explicit_model_argument(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    ensure_model = FakeEnsure(tmp_path / "whistle.cact")
+    monkeypatch.setattr(model_store, "ensure_model", ensure_model)
+    monkeypatch.setattr(model_store, "ensure_engine", FakeEnsure(tmp_path / "libneedle.so"))
+
+    assert main(["setup", "needle", "whistle"]) == EXIT_SUCCESS
+
+    assert ensure_model.names == ["whistle"]
+
+
+def test_setup_rejects_an_unknown_backend_before_acquiring(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ensure_model = FakeEnsure(tmp_path / "whistle.cact")
+    ensure_engine = FakeEnsure(tmp_path / "libneedle.so")
+    monkeypatch.setattr(model_store, "ensure_model", ensure_model)
+    monkeypatch.setattr(model_store, "ensure_engine", ensure_engine)
+
+    assert main(["setup", "bogus"]) == EXIT_FAILURE
+
+    assert ensure_model.calls == 0
+    assert ensure_engine.calls == 0
+    err = capsys.readouterr().err
+    assert "unknown backend" in err
+    assert "whisper.cpp" in err
+    assert "Traceback" not in err
+
+
+def test_setup_rejects_an_unpublished_whisper_model_before_acquiring(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fakes = make_fakes(tmp_path)
+    monkeypatch.setattr(
+        setup_command, "default_dependencies", _returns(fakes.dependencies)
+    )
+
+    assert main(["setup", "whisper.cpp", "small-q5_0"]) == EXIT_FAILURE
+
+    assert fakes.log == []
+    err = capsys.readouterr().err
+    assert "valid models:" in err
+    assert "small-q8_0" in err
+    assert "Traceback" not in err
+
+
+def test_setup_whisper_cpp_builds_the_engine_then_fetches_the_model(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fakes = make_fakes(tmp_path)
+    monkeypatch.setattr(
+        setup_command, "default_dependencies", _returns(fakes.dependencies)
+    )
+
+    assert main(["setup", "whisper.cpp", "tiny-q8_0"]) == EXIT_SUCCESS
+
+    assert fakes.log == ["whisper-engine", "whisper-model"]
+    assert fakes.whisper_model.names == ["tiny-q8_0"]
+    out = capsys.readouterr().out
+    assert "v1.9.5" in out
+    assert "Setup complete." in out
+
+
+def test_setup_whisper_cpp_omitted_model_uses_the_default_rule(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fakes = make_fakes(tmp_path)
+    monkeypatch.setattr(
+        setup_command, "default_dependencies", _returns(fakes.dependencies)
+    )
+    monkeypatch.setattr(
+        setup_command, "default_whisper_model", _fixed_model("small-q8_0")
+    )
+
+    assert main(["setup", "whisper.cpp"]) == EXIT_SUCCESS
+
+    assert fakes.whisper_model.names == ["small-q8_0"]
+
+
+def test_setup_whisper_cpp_reports_a_partial_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fakes = make_fakes(tmp_path)
+    fakes.whisper_model.error = model_store.ModelStoreError("download refused")
+    monkeypatch.setattr(
+        setup_command, "default_dependencies", _returns(fakes.dependencies)
+    )
+
+    assert main(["setup", "whisper.cpp", "small-q8_0"]) == EXIT_FAILURE
+
+    err = capsys.readouterr().err
+    assert "is installed" in err
     assert "download refused" in err
     assert "Traceback" not in err
 
