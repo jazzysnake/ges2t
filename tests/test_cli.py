@@ -25,6 +25,7 @@ from ges2t.cli import (
     EXIT_SUCCESS,
     main,
 )
+from ges2t.console_script import resolve_console_script
 from ges2t.model_store import ArtifactPin, Fetcher, ProgressCallback
 from ges2t.service import CommandResponse, ServiceState
 
@@ -215,6 +216,36 @@ def test_doctor_help_mentions_the_recommended_bindings(
     out = capsys.readouterr().out
     assert "System Settings" in out
     assert "Shortcuts" in out
+
+
+def test_kde_shortcut_hint_names_the_resolved_console_script() -> None:
+    hint = cli.kde_shortcut_hint(console_script="/opt/ges2t/bin/ges2t")
+
+    assert "/opt/ges2t/bin/ges2t toggle" in hint
+    assert "bind 'ges2t toggle'" not in hint
+
+
+def test_kde_shortcut_hint_falls_back_to_the_bare_command() -> None:
+    for value in (None, ""):
+        hint = cli.kde_shortcut_hint(console_script=value)
+
+        assert "enter 'ges2t toggle'" in hint
+        assert "bind 'ges2t toggle'" in hint
+        assert "/opt" not in hint
+
+
+def test_key_bound_help_prints_a_bindable_command(capsys: pytest.CaptureFixture[str]) -> None:
+    """The help must name the resolved path when one exists, else the bare form."""
+    resolved = resolve_console_script()
+
+    with pytest.raises(SystemExit):
+        main(["toggle", "--help"])
+
+    out = capsys.readouterr().out
+    if resolved is None:
+        assert "bind 'ges2t toggle'" in out
+    else:
+        assert f"{resolved} toggle" in out
 
 
 def test_no_subcommand_prints_help_and_succeeds(capsys: pytest.CaptureFixture[str]) -> None:
