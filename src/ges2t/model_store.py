@@ -1,10 +1,12 @@
 """Model store: pinned download, verification, and atomic install.
 
-This module owns the two artifacts ges2t runs against — the Whistle weights
+This module owns the artifacts ges2t runs against — the Whistle weights
 (``whistle.cact``) and the Needle 3 engine (``libneedle.so``, extracted from
-upstream's engine wheel) — and is, by design, **the only code in ges2t allowed
-to perform network I/O** (ADR 0018). It is called from ``ges2t setup`` and from
-``ges2t models``; never from the service's startup path.
+upstream's engine wheel) for the default backend, plus the whisper.cpp ggml model
+**catalogue** (``ggml-<size>-<quant>.bin`` from ``ggerganov/whisper.cpp``) — and
+is, by design, **the only code in ges2t allowed to perform network I/O**
+(ADR 0018). It is called from ``ges2t setup`` and from ``ges2t models``; never
+from the service's startup path.
 
 Facts that shape this module:
 
@@ -36,9 +38,10 @@ import sys
 import tempfile
 import urllib.request
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 __all__ = [
@@ -57,20 +60,32 @@ __all__ = [
     "PINNED_CACTUS_NEEDLE_VERSION",
     "PLATFORM_KEY",
     "SUPPORTED_ENGINE_PLATFORMS",
+    "WHISPER_CPP_CATALOGUE",
+    "WHISPER_CPP_MODELS",
+    "WHISPER_CPP_MODELS_URL",
+    "WHISPER_CPP_QUANTS",
+    "WHISPER_CPP_SIZES",
     "ArtifactPin",
     "ArtifactVerificationError",
     "Fetcher",
     "ModelStoreError",
     "ProgressCallback",
     "UnsupportedPlatformError",
+    "WhisperModel",
+    "WhisperModelName",
+    "WhisperModelNameError",
     "default_data_dir",
     "engine_path",
     "engine_pin",
     "ensure_engine",
     "ensure_model",
+    "ensure_whisper_model",
     "env_overrides",
     "model_path",
+    "parse_whisper_model_name",
     "verify",
+    "whisper_model",
+    "whisper_model_path",
 ]
 
 # --- Pins (ADR 0017) ----------------------------------------------------------
@@ -112,6 +127,35 @@ ENGINE_MEMBER: str = "needle/libneedle3.so"
 ENGINE_SHA256: str = "0772130a416cc7a07fe444bfe400239a595195324f595b2139391839874fd030"
 ENGINE_SIZE: int = 1_581_448
 
+# --- whisper.cpp model catalogue ---------------------------------------------- #
+
+#: Canonical Hugging Face repo for the whisper.cpp ggml models. The individual
+#: files are ``<repo>/ggml-<size>-<quant>.bin``; ``/resolve/`` redirects to a CDN
+#: and the stdlib opener follows that redirect (ADR 0018, verified against the
+#: real endpoint). The catalogue below pins the exact file, size and sha256.
+WHISPER_CPP_MODELS_URL: str = (
+    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
+)
+
+#: The whisper.cpp sizes ges2t ships. This is the provider research's tested
+#: range and the ADR 0021 default-model range (tiny … large-v3-turbo). Upstream
+#: also publishes ``large-v1``/``large-v2``/``large-v3`` variants; they are
+#: deliberately **not** pinned here (untested by the research, and not needed by
+#: the GPU/CPU default rule).
+WHISPER_CPP_SIZES: tuple[str, ...] = (
+    "tiny",
+    "base",
+    "small",
+    "medium",
+    "large-v3-turbo",
+)
+
+#: The quantisations ges2t supports. **Never ``f16``** (larger, slower, never
+#: more accurate — ADR 0021) and no quantiser is shipped: only files upstream
+#: actually publishes are pinned. ``q8_0`` exists for every size; ``q5_0`` only
+#: for ``medium``/``large-v3-turbo``.
+WHISPER_CPP_QUANTS: tuple[str, ...] = ("q5_0", "q8_0")
+
 #: Directory name under the XDG data home.
 DEFAULT_DATA_DIRECTORY_NAME: str = "ges2t"
 
@@ -145,6 +189,75 @@ class ArtifactPin:
     member: str | None = None
 
 
+@dataclass(frozen=True)
+class WhisperModelName:
+    """A parsed whisper.cpp model name: a size and a quantisation.
+
+    ``name`` renders back to the ``<size>-<quant>`` form used by config,
+    ``doctor`` and the destination directory. A class rather than a tuple so a
+    caller cannot confuse the two strings (ADR 0019).
+    """
+
+    size: str
+    quant: str
+
+    @property
+    def name(self) -> str:
+        """Return the canonical ``<size>-<quant>`` name, e.g. ``medium-q5_0``."""
+        return f"{self.size}-{self.quant}"
+
+
+@dataclass(frozen=True)
+class WhisperModel:
+    """A downloadable whisper.cpp ggml model: its name plus a pinned file.
+
+    ``size_bytes``/``sha256`` always describe the ``.bin`` that is installed,
+    never the repo. ``pin()`` adapts the entry to the shared :class:`ArtifactPin`
+    so acquisition reuses the Whistle store's download/verify/install path
+    rather than duplicating it.
+    """
+
+    model: WhisperModelName
+    url: str
+    sha256: str
+    size_bytes: int
+
+    @property
+    def name(self) -> str:
+        """Return the canonical ``<size>-<quant>`` name."""
+        return self.model.name
+
+    @property
+    def file_name(self) -> str:
+        """Return the upstream file name, ``ggml-<name>.bin``."""
+        return f"ggml-{self.model.name}.bin"
+
+    def pin(self) -> ArtifactPin:
+        """Return this model as an :class:`ArtifactPin` for the shared installer."""
+        return ArtifactPin(
+            name=self.file_name,
+            url=self.url,
+            sha256=self.sha256,
+            size=self.size_bytes,
+        )
+
+
+def _whisper_model(
+    size: str,
+    quant: str,
+    size_bytes: int,
+    sha256: str,
+) -> WhisperModel:
+    """Build a catalogue entry from the live-verified pin data."""
+    name = WhisperModelName(size=size, quant=quant)
+    return WhisperModel(
+        model=name,
+        url=f"{WHISPER_CPP_MODELS_URL}/ggml-{name.name}.bin",
+        sha256=sha256,
+        size_bytes=size_bytes,
+    )
+
+
 #: The Whistle weights pin.
 MODEL_PIN: ArtifactPin = ArtifactPin(
     name="whistle.cact",
@@ -160,6 +273,66 @@ ENGINE_PIN: ArtifactPin = ArtifactPin(
     sha256=ENGINE_SHA256,
     size=ENGINE_SIZE,
     member=ENGINE_MEMBER,
+)
+
+#: The whisper.cpp ggml model catalogue.
+#:
+#: Every pin was **re-verified against the live Hugging Face host** on
+#: 2026-10-10 (see the ticket's ``001-comment.md`` for the provenance): the tree
+#: API reports each Git-LFS object's size and ``lfs.oid``, which *is* the file's
+#: sha256. The three entries the provider research already published
+#: (``small-q8_0``, ``medium-q5_0``, ``large-v3-turbo-q5_0``) match the live host
+#: byte-for-byte; the others are newly measured against it. ``tiny``/``base`` /
+#: ``small`` ``q5_0`` are **not** upstream-published — the research produced those
+#: with a local quantiser — so they are not here.
+WHISPER_CPP_MODELS: tuple[WhisperModel, ...] = (
+    _whisper_model(
+        "tiny",
+        "q8_0",
+        43_537_433,
+        "c2085835d3f50733e2ff6e4b41ae8a2b8d8110461e18821b09a15c40c42d1cca",
+    ),
+    _whisper_model(
+        "base",
+        "q8_0",
+        81_768_585,
+        "c577b9a86e7e048a0b7eada054f4dd79a56bbfa911fbdacf900ac5b567cbb7d9",
+    ),
+    _whisper_model(
+        "small",
+        "q8_0",
+        264_464_607,
+        "49c8fb02b65e6049d5fa6c04f81f53b867b5ec9540406812c643f177317f779f",
+    ),
+    _whisper_model(
+        "medium",
+        "q5_0",
+        539_212_467,
+        "19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f",
+    ),
+    _whisper_model(
+        "medium",
+        "q8_0",
+        823_369_779,
+        "42a1ffcbe4167d224232443396968db4d02d4e8e87e213d3ee2e03095dea6502",
+    ),
+    _whisper_model(
+        "large-v3-turbo",
+        "q5_0",
+        574_041_195,
+        "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+    ),
+    _whisper_model(
+        "large-v3-turbo",
+        "q8_0",
+        874_188_075,
+        "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1",
+    ),
+)
+
+#: The catalogue keyed by ``<size>-<quant>`` name, for O(1) lookup and printing.
+WHISPER_CPP_CATALOGUE: Mapping[str, WhisperModel] = MappingProxyType(
+    {model.name: model for model in WHISPER_CPP_MODELS}
 )
 
 #: Normalised CPU architecture, e.g. ``x86_64`` from ``platform.machine()``.
@@ -204,7 +377,6 @@ class ArtifactVerificationError(ModelStoreError):
     The message names the artifact, the expected hash and size, and the actual
     hash and size, so ``ges2t setup`` can print it verbatim (ADR 0017).
     """
-
     def __init__(
         self,
         pin: ArtifactPin,
@@ -220,6 +392,30 @@ class ArtifactVerificationError(ModelStoreError):
             f"{pin.name}: pinned sha256 {pin.sha256} ({pin.size} bytes), but downloaded "
             f"sha256 {actual_sha256} ({actual_size} bytes); refusing to install into "
             f"{destination}"
+        )
+
+
+class WhisperModelNameError(ModelStoreError):
+    """A whisper.cpp model name is malformed or not upstream-published.
+
+    Carries the offending ``name`` and the parse ``reason``, and always names the
+    valid set of catalogue names so ``ges2t setup``/config can print an
+    actionable error (the ticket's "unknown size or quant → a typed error naming
+    the valid set").
+    """
+
+    def __init__(
+        self,
+        name: str,
+        reason: str,
+        valid: Sequence[str],
+    ) -> None:
+        self.name = name
+        self.reason = reason
+        self.valid = tuple(valid)
+        super().__init__(
+            f"unknown whisper.cpp model {name!r}: {reason}; "
+            f"valid models: {', '.join(self.valid)}"
         )
 
 
@@ -250,6 +446,54 @@ def engine_path(version: str = ENGINE_VERSION) -> Path:
     former (ADR 0017).
     """
     return default_data_dir() / "engine" / version / "libneedle.so"
+
+
+def whisper_model_path(name: str) -> Path:
+    """Return ``<data_dir>/models/whisper-cpp/<name>/ggml-<name>.bin``.
+
+    Args:
+        name: a canonical ``<size>-<quant>`` name, e.g. ``medium-q5_0``. It is
+            parsed and validated first, so an unknown name raises a typed error
+            rather than producing a plausible-looking path.
+    """
+    parsed = parse_whisper_model_name(name)
+    return (
+        default_data_dir()
+        / "models"
+        / "whisper-cpp"
+        / parsed.name
+        / f"ggml-{parsed.name}.bin"
+    )
+
+
+def parse_whisper_model_name(name: str) -> WhisperModelName:
+    """Parse and validate a ``<size>-<quant>`` whisper.cpp model name.
+
+    The size may contain hyphens (``large-v3-turbo-q5_0``), so the quant is the
+    segment after the *last* hyphen. A name is accepted only when it is a
+    catalogue entry, i.e. an upstream-published size/quant combination; anything
+    else raises :class:`WhisperModelNameError` whose message names the valid set.
+    """
+    entry = WHISPER_CPP_CATALOGUE.get(name)
+    if entry is not None:
+        return entry.model
+
+    size, separator, quant = name.rpartition("-")
+    if not separator or not size or not quant:
+        reason = "expected '<size>-<quant>'"
+    elif size not in WHISPER_CPP_SIZES:
+        reason = f"unknown size {size!r}; valid sizes: {', '.join(WHISPER_CPP_SIZES)}"
+    elif quant not in WHISPER_CPP_QUANTS:
+        reason = f"unknown quant {quant!r}; valid quants: {', '.join(WHISPER_CPP_QUANTS)}"
+    else:
+        reason = f"{quant!r} is not published upstream for size {size!r}"
+    raise WhisperModelNameError(name, reason, tuple(WHISPER_CPP_CATALOGUE))
+
+
+def whisper_model(name: str) -> WhisperModel:
+    """Return the catalogue entry for ``name``, or raise :class:`WhisperModelNameError`."""
+    parsed = parse_whisper_model_name(name)
+    return WHISPER_CPP_CATALOGUE[parsed.name]
 
 
 def engine_pin() -> ArtifactPin:
@@ -333,6 +577,33 @@ def ensure_engine(
     return _ensure(
         pin,
         engine_path(ENGINE_VERSION),
+        fetcher=fetcher,
+        progress=progress,
+    )
+
+
+def ensure_whisper_model(
+    name: str,
+    *,
+    fetcher: Fetcher | None = None,
+    progress: ProgressCallback | None = None,
+) -> Path:
+    """Ensure the named whisper.cpp ggml model exists locally and return its path.
+
+    Same contract as :func:`ensure_model`: an existing file of the pinned byte
+    size is returned untouched (idempotent — no download, no hash), otherwise the
+    file is downloaded atomically, verified against the pinned sha256 **and** byte
+    size, and installed at
+    ``<data_dir>/models/whisper-cpp/<name>/ggml-<name>.bin``. ``name`` is parsed
+    and validated first, so an unpublished model fails before any network I/O.
+
+    Whisper models are platform-independent (unlike the architecture-pinned
+    Needle engine), so no platform gate applies here.
+    """
+    entry = whisper_model(name)
+    return _ensure(
+        entry.pin(),
+        whisper_model_path(name),
         fetcher=fetcher,
         progress=progress,
     )
