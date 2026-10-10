@@ -1,7 +1,7 @@
 # whisper engine rebuild: test hardening and follow-ups
 
 - **Priority:** P2
-- **Status:** in progress
+- **Status:** in review
 - **Complexity:** XS
 - **Epic:** ../epic.md
 
@@ -14,23 +14,23 @@ little tidiness.
 
 ## Definition of done
 
-- [ ] **R1 — pin the ordering.** With `gpu = "vulkan"` and no Vulkan available, **no** "rebuilding: …"
+- [x] **R1 — pin the ordering.** With `gpu = "vulkan"` and no Vulkan available, **no** "rebuilding: …"
       notice is emitted **before** the typed `PrerequisiteError`. The explicit-`vulkan` gate is redundant
       for the *error* but load-bearing for the *ordering* (removing it prints a false notice first); add
       the test that locks it.
-- [ ] **R2 — strengthen the weak test.** `test_a_failed_fresh_build_leaves_no_engine_verify_build_accepts`
+- [x] **R2 — strengthen the weak test.** `test_a_failed_fresh_build_leaves_no_engine_verify_build_accepts`
       currently passes even under the staging break (installing straight into the destination); make it
       **fail** in that case.
-- [ ] **R3 — dead code.** Remove the unreachable `_rebuild_reason` fallback (or cover it with a test, if
+- [x] **R3 — dead code.** Remove the unreachable `_rebuild_reason` fallback (or cover it with a test, if
       it is in fact reachable — say which).
-- [ ] **R4 — `--rebuild` says why.** A forced rebuild states that it is forced (not silently identical to
+- [x] **R4 — `--rebuild` says why.** A forced rebuild states that it is forced (not silently identical to
       an automatic one).
-- [ ] **R5 — notice wording.** Decide whether the notice names `spirv-headers` or the generic "Vulkan
+- [x] **R5 — notice wording.** Decide whether the notice names `spirv-headers` or the generic "Vulkan
       development packages", and make it consistent with the shared `vulkan_dev_package_hint` sentence.
-- [ ] **R6 — the missing case.** Add a committed test for `force + gpu = "vulkan"` + no Vulkan.
-- [ ] `uv run pytest` and `uv run mypy src/ges2t tests` green; report counts; **no behaviour change**
+- [x] **R6 — the missing case.** Add a committed test for `force + gpu = "vulkan"` + no Vulkan.
+- [x] `uv run pytest` and `uv run mypy src/ges2t tests` green; report counts; **no behaviour change**
       beyond the `--rebuild` message and the notice wording.
-- [ ] `001-comment.md` records which of R1–R6 were fixed vs declined, with the reason.
+- [x] `001-comment.md` records which of R1–R6 were fixed vs declined, with the reason.
 
 ## Notes
 

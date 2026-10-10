@@ -104,7 +104,7 @@ utterance on the Radeon 780M. Evidence:
 | 47 | [engine-naming-and-setup-guidance](whisper-cpp-backend/engine-naming-and-setup-guidance/ticket.md) — one canonical engine spelling + a `whisper.cpp` alias; `setup` prints the config line, and names a missing Vulkan dev package when a GPU is present | S | done | 45 | feat/engine-naming-and-setup-guidance (merged 05603a2) |
 | 49 | [whisper-engine-variant-rebuild](whisper-cpp-backend/whisper-engine-variant-rebuild/ticket.md) — re-running `setup` upgrades a CPU-only build to Vulkan once the dev package is installed (variant-aware idempotency) | S | done | 42 | feat/whisper-engine-variant-rebuild (merged a1c557c) |
 | 50 | [streaming-default-for-batch-engines](whisper-cpp-backend/streaming-default-for-batch-engines/ticket.md) — selecting a batch-only engine must not require an explicit `streaming.enabled = false`; only an explicit `true` errors | S | done | 45 | feat/streaming-default-for-batch-engines (merged 247c5aa) |
-| 51 | [whisper-engine-rebuild-hardening](whisper-cpp-backend/whisper-engine-rebuild-hardening/ticket.md) — close ticket 49's non-blocking review follow-ups (ordering test, weak test, dead code, `--rebuild` message) | XS | in progress | 49 | feat/whisper-engine-rebuild-hardening |
+| 51 | [whisper-engine-rebuild-hardening](whisper-cpp-backend/whisper-engine-rebuild-hardening/ticket.md) — close ticket 49's non-blocking review follow-ups (ordering test, weak test, dead code, `--rebuild` message) | XS | in review | 49 | feat/whisper-engine-rebuild-hardening |
 
 ---
 
