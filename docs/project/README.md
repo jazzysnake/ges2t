@@ -97,7 +97,7 @@ utterance on the Radeon 780M. Evidence:
 |---|---|---|---|---|---|
 | 41 | [whisper-model-store](whisper-cpp-backend/whisper-model-store/ticket.md) — catalogue + pinned sha256/size acquisition of ggml models from HF | S | done | — | feat/whisper-model-store (merged 7da409e) |
 | 42 | [whisper-engine-build](whisper-cpp-backend/whisper-engine-build/ticket.md) — build `libwhisper.so` + ggml (CPU/Vulkan); prerequisites checked, never installed | M | done | — | feat/whisper-engine-build (merged 3478b78) |
-| 43 | [whisper-transcriber-adapter](whisper-cpp-backend/whisper-transcriber-adapter/ticket.md) — in-process `ctypes` `Transcriber`, model resident from startup, `supports_streaming = False` | M | to do | 41, 42 | — |
+| 43 | [whisper-transcriber-adapter](whisper-cpp-backend/whisper-transcriber-adapter/ticket.md) — in-process `ctypes` `Transcriber`, model resident from startup, `supports_streaming = False` | M | in review | 41, 42 | feat/whisper-transcriber-adapter |
 | 44 | [setup-backend-and-model-arguments](whisper-cpp-backend/setup-backend-and-model-arguments/ticket.md) — `ges2t setup [backend] [model]`, model argument ported to needle | M | to do | 41, 42 | — |
 | 45 | [whisper-backend-config-and-validation](whisper-cpp-backend/whisper-backend-config-and-validation/ticket.md) — config, GPU/CPU default rule, **strict startup validation** (carries ADR 0021) | S | to do | 43 | — |
 | 46 | [whisper-doctor](whisper-cpp-backend/whisper-doctor/ticket.md) — engine library / model / Vulkan checks | S | to do | 41, 42, 43 | — |

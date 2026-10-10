@@ -10,7 +10,8 @@ the abstraction real rather than decorative.
 What it builds
 --------------
 * :func:`build_transcriber` — maps ``config.transcriber.engine`` to a
-  :class:`~ges2t.transcribers.whistle.WhistleTranscriber`. The
+  :class:`~ges2t.transcribers.whistle.WhistleTranscriber` or the in-process
+  :class:`~ges2t.transcribers.whisper_cpp.WhisperCppTranscriber` (ADR 0021). The
   ``[engine.<name>]`` block is fetched with ``.get(..., {})``: the generic
   config layer deliberately never synthesises an engine block, so an absent
   ``[engine.whistle]`` is the *normal* case and must mean "all defaults", never a
@@ -83,6 +84,8 @@ from ges2t.socket_proto import (
 from ges2t.streaming_session import StreamingDictationSession
 from ges2t.transcribers.whistle import WhistleTranscriber
 from ges2t.transcribers.whistle_config import WhistleConfig
+from ges2t.transcribers.whisper_cpp import WhisperCppTranscriber
+from ges2t.transcribers.whisper_cpp_config import WhisperCppConfig
 from ges2t.ui.status import (
     DiagnosticStatusUI,
     NullStatusUI,
@@ -191,23 +194,41 @@ def _build_whistle(config: Config) -> Transcriber:
     )
 
 
+def _build_whisper_cpp(config: Config) -> Transcriber:
+    """Build the in-process whisper.cpp transcriber from ``[engine.whisper_cpp]``.
+
+    The block is read with ``.get(..., {})``: the generic layer never synthesises
+    an engine block, so its absence is normal and means all defaults (ADR 0009).
+    The adapter keeps the model resident from :func:`_startup`'s single
+    ``load()`` call -- there is no per-utterance subprocess or reload (ADR 0021).
+    The strict *startup validation* of the whisper config (model acquired,
+    library built, no streaming) belongs to the config ticket; here the adapter's
+    own typed :class:`~ges2t.transcribers.whisper_cpp.WhisperCppLoadError` makes
+    a missing artifact fatal with a clear message.
+    """
+    block = config.engine_blocks.get("whisper_cpp", {})
+    whisper_config = WhisperCppConfig.from_mapping(block).config
+    return WhisperCppTranscriber(whisper_config)
+
+
 #: The engine identifiers :func:`build_transcriber` can build, mapped to their
 #: builder. The key is matched against ``config.transcriber.engine`` and the
 #: mapping is the factory's single source of truth: an engine absent here gets a
 #: clear "not handled by this build" error rather than a silent fallback.
 _TRANSCRIBER_BUILDERS: Mapping[str, Callable[[Config], Transcriber]] = {
     "whistle": _build_whistle,
+    "whisper_cpp": _build_whisper_cpp,
 }
 
 
 def build_transcriber(config: Config) -> Transcriber:
     """Choose and construct the configured :class:`~ges2t.interfaces.Transcriber`.
 
-    Only ``"whistle"`` is handled in v1. The engine's own ``[engine.whistle]``
-    block is selected with ``.get(..., {})``: the generic layer never
-    synthesises an engine block, so its absence is normal and means "all
-    defaults" (ADR 0009). An unhandled engine raises :class:`PipelineError` with
-    the list of engines this build can construct.
+    ``"whistle"`` and ``"whisper_cpp"`` are handled. The engine's own
+    ``[engine.<name>]`` block is selected with ``.get(..., {})``: the generic
+    layer never synthesises an engine block, so its absence is normal and means
+    "all defaults" (ADR 0009). An unhandled engine raises :class:`PipelineError`
+    with the list of engines this build can construct.
     """
     engine = config.transcriber.engine
     builder = _TRANSCRIBER_BUILDERS.get(engine)
@@ -562,11 +583,21 @@ def _present(path: Path, *, expected_size: int | None) -> bool:
 def _missing_artifacts(config: Config) -> list[str]:
     """Return one problem sentence per artifact that is missing or the wrong size.
 
-    Empty means both artifacts are present and this run may proceed offline.
-    The engine pin is resolved for the running platform, so an unsupported
-    platform is reported as such instead of as a spurious missing file.
+    Empty means the run may proceed offline. The engine pin is resolved for the
+    running platform, so an unsupported platform is reported as such instead of
+    as a spurious missing file.
+
+    The check is Whistle-specific: the whisper.cpp backend's artifacts (its built
+    ``libwhisper.so`` and its configured model) are validated by the whisper
+    adapter's own ``load()``, which raises a typed, actionable
+    :class:`~ges2t.transcribers.whisper_cpp.WhisperCppLoadError` that
+    :func:`run_service` treats as fatal. Naming the whisper artifacts here would
+    duplicate the config ticket that owns whisper startup validation.
     """
     problems: list[str] = []
+
+    if config.transcriber.engine != "whistle":
+        return problems
 
     weights = _weights_path(config)
     expected_weights_size = (
