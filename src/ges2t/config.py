@@ -31,6 +31,7 @@ from typing import Any
 
 __all__ = [
     "AUDIO_DEFAULT_DEVICE",
+    "BATCH_ONLY_ENGINES",
     "DEFAULT_ENGINE",
     "ENGINE_ALIASES",
     "INJECTION_DEFAULT_BACKEND",
@@ -80,6 +81,17 @@ ENGINE_ALIASES: Mapping[str, str] = {"whisper.cpp": WHISPER_CPP_ENGINE}
 
 #: The default engine selector, kept in sync with :data:`KNOWN_ENGINES`.
 DEFAULT_ENGINE: str = KNOWN_ENGINES[0]
+
+#: Engines whose shipped implementation is **batch-only**: each declares
+#: ``Transcriber.supports_streaming = False`` (ADR 0010; ADR 0021 §3 for
+#: whisper.cpp), so streaming on that engine is not possible at all. An omitted
+#: ``streaming.enabled`` resolves to ``False`` for these engines and to ``True``
+#: otherwise; an **explicit** value always wins (ticket 50). This is a pure
+#: engine-name declaration, not a hardware probe: the device-aware model default
+#: stays at the composition root (ADR 0009). A guard test builds every engine in
+#: :data:`KNOWN_ENGINES` and asserts this set agrees with
+#: ``Transcriber.supports_streaming``, so the two cannot drift.
+BATCH_ONLY_ENGINES: frozenset[str] = frozenset({WHISPER_CPP_ENGINE})
 
 #: The only ``hotkey.mode`` values the generic layer accepts (ADR 0009).
 KNOWN_HOTKEY_MODES: tuple[str, ...] = ("ptt", "toggle")
@@ -162,7 +174,16 @@ class UIConfig:
 
 @dataclass(frozen=True)
 class StreamingConfig:
-    """App-level streaming switch; engines own their own streaming knobs."""
+    """App-level streaming switch; engines own their own streaming knobs.
+
+    ``enabled`` is the **effective** value after the engine-aware default: for
+    an engine in :data:`BATCH_ONLY_ENGINES` an omitted key resolves to ``False``
+    (streaming is impossible there anyway, ADR 0010), and it resolves to ``True``
+    for an engine that streams (ADR 0011). An explicitly written value is used
+    verbatim, so ``enabled = true`` on a batch-only engine is still an explicit
+    request and still refused at startup (ticket 45/50). :func:`default_config`,
+    which describes the shipped ``whistle`` default, is therefore ``True``.
+    """
 
     enabled: bool = True
 
@@ -424,7 +445,11 @@ def load_config(path: Path | None = None) -> ConfigLoadResult:
         ),
         streaming=StreamingConfig(
             enabled=_read_bool(
-                streaming_table, "enabled", default=True, path=resolved, section="streaming"
+                streaming_table,
+                "enabled",
+                default=engine_value not in BATCH_ONLY_ENGINES,
+                path=resolved,
+                section="streaming",
             )
         ),
         engine_blocks=_read_engine_blocks(raw, path=resolved),

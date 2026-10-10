@@ -119,3 +119,29 @@ the model is loaded **once at service start**.
 
 Unchanged and still open: if whisper.cpp disappoints, the backend is one config value away from
 `whistle`, and the whole integration sits behind the ADR 0010 `Transcriber` Protocol.
+
+## Amendment 2026-10-10 — §8's streaming refusal applies to an **explicit** `true` only
+
+**Ticket `streaming-default-for-batch-engines`.** Decision §8 said a whisper config is "rejected at
+startup when `streaming.enabled = true`". Written before the engine-aware default existed, that
+described a state where `streaming.enabled` defaulted to `true` for **every** engine, so an
+*omitted* value reached the whisper validation as `true` and the minimal, obvious config
+
+```toml
+[transcriber]
+engine = "whisper_cpp"
+```
+
+was refused for a setting the user had never chosen. That conflated "the user asked for streaming"
+with "streaming is on because it is the default"; only the former is a contradiction worth refusing.
+
+**Narrowed rule.** With `transcriber.engine = "whisper_cpp"`, the config is rejected when
+`streaming.enabled` is **explicitly** `true`. An **omitted** `streaming.enabled` resolves to `false`
+for a batch-only engine — the default follows the engine, which is ADR 0011's capability rule applied
+to the shipped setting — so the minimal config above starts, batch-only, and the service states the
+consequence in one line rather than silently dropping incremental typing. An explicit `false` is
+unchanged, and `whistle` is unchanged (it still streams with the value omitted).
+
+**Unchanged in §8:** the model-not-acquired and library-not-built rejections, and "model-vs-GPU
+sizing is deliberately not checked". This is a refinement of the strictness, not a reversal: an
+explicit request for streaming on whisper is still a hard startup error.

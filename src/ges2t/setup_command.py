@@ -395,9 +395,9 @@ def config_guidance(plan: SetupPlan, *, path: Path | None = None) -> str:
     if engine == WHISPER_CPP_ENGINE:
         lines += [
             "",
-            "whisper.cpp is batch-only, so also set, under [streaming]:",
-            "",
-            "    enabled = false",
+            "whisper.cpp is batch-only, so streaming is off by default for it and "
+            "there is no text until the utterance ends. No [streaming] line is "
+            "needed; setting streaming.enabled = true would be refused at startup.",
         ]
     return "\n".join(lines)
 
