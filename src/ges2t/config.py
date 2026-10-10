@@ -54,7 +54,9 @@ __all__ = [
 #: single source of truth: the factory (ADR 0010) and the error message below
 #: both read it, so they cannot drift apart. Adding an engine means adding its
 #: name here and a matching ``[engine.<name>]`` adapter; the schema does not change.
-KNOWN_ENGINES: tuple[str, ...] = ("whistle",)
+#: The **first** entry is the default (:data:`DEFAULT_ENGINE`); ``whistle`` stays
+#: first so the shipped live/incremental typing is unchanged (ADR 0021 §1).
+KNOWN_ENGINES: tuple[str, ...] = ("whistle", "whisper_cpp")
 
 #: The default engine selector, kept in sync with :data:`KNOWN_ENGINES`.
 DEFAULT_ENGINE: str = KNOWN_ENGINES[0]

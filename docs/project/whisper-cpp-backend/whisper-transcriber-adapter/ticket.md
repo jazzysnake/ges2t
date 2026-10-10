@@ -15,8 +15,9 @@ the reason the subprocess shape was rejected.
 Measured properties that shape the adapter ([ADR 0021](../../../adr/0021-whisper-cpp-second-backend.md)):
 
 - **`supports_streaming = False`**; do not implement `stream()`.
-- `medium-q5_0` on Vulkan is ~1.7–3 s for 25 s of audio; CPU is ~6× real time (fallback only, and the
-  CPU-only default model is `small-q5_0`).
+- `medium-q5_0` on Vulkan is ~1.7 s for 25 s of audio; on CPU-only machines it is still faster than
+  realtime (RTF 1.30, ~19 s for the 25 s clip) and the CPU-only default model is `small-q8_0`
+  (RTF 4.3, ~6 s) — a fallback chosen for latency, not because CPU is unusable.
 - The 16 kHz mono float32 `AudioBuffer` contract **is** whisper's input contract — **no resampling**.
 - The decode is **pinned**: `-nt` (no timestamps) and greedy. `-nt` changes the decode, and the
   measured accuracy depends on it.

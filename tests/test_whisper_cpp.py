@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from ges2t.config import Config, TranscriberConfig
+from ges2t.config import Config, StreamingConfig, TranscriberConfig
 from ges2t.interfaces import AudioBuffer, Transcriber
 from ges2t.pipeline import PipelineError
 from tests.fakes import FakeAudioSource, FakeInjector
@@ -547,9 +547,11 @@ def test_build_transcriber_rejects_an_invalid_whisper_block() -> None:
         pipeline.build_transcriber(config)
 
 
-def test_missing_artifacts_defers_a_whisper_engine_to_the_adapter() -> None:
+def test_the_generic_missing_artifacts_check_is_whistle_specific() -> None:
     from ges2t import pipeline
 
+    # The whisper artifacts have their own check (_whisper_missing_artifacts,
+    # ticket 45) so the Whistle path never assumes a whisper artifact.
     config = Config(transcriber=TranscriberConfig(engine="whisper_cpp"))
     assert pipeline._missing_artifacts(config) == []  # noqa: SLF001
 
@@ -569,8 +571,15 @@ def test_startup_builds_and_loads_the_whisper_transcriber_once(
     monkeypatch.setattr(pipeline, "build_transcriber", lambda config: transcriber)
     monkeypatch.setattr(pipeline, "build_audio_source", lambda config: FakeAudioSource())
     monkeypatch.setattr(pipeline, "build_injector", lambda config: FakeInjector())
+    # The real whisper artifacts are user-owned (~500 MB model, a cmake-built
+    # engine) and absent here; the artifact matrix is exercised separately. This
+    # test is about the *load-once* wiring, so the presence check is stubbed.
+    monkeypatch.setattr(pipeline, "_whisper_missing_artifacts", lambda config: [])
 
-    config = Config(transcriber=TranscriberConfig(engine="whisper_cpp"))
+    config = Config(
+        transcriber=TranscriberConfig(engine="whisper_cpp"),
+        streaming=StreamingConfig(enabled=False),
+    )
     service = pipeline._startup(config, NullStatusUI())  # noqa: SLF001
 
     assert service is not None
@@ -591,8 +600,14 @@ def test_a_whisper_load_failure_is_fatal_with_a_clear_message(
     monkeypatch.setattr(pipeline, "build_transcriber", lambda config: failing)
     monkeypatch.setattr(pipeline, "build_audio_source", lambda config: FakeAudioSource())
     monkeypatch.setattr(pipeline, "build_injector", lambda config: FakeInjector())
+    # This test is about a *load* failure being fatal; the presence check would
+    # otherwise refuse first, so it is satisfied here (the matrix is separate).
+    monkeypatch.setattr(pipeline, "_whisper_missing_artifacts", lambda config: [])
 
-    config = Config(transcriber=TranscriberConfig(engine="whisper_cpp"))
+    config = Config(
+        transcriber=TranscriberConfig(engine="whisper_cpp"),
+        streaming=StreamingConfig(enabled=False),
+    )
     result = pipeline.run_service(config, status_ui=NullStatusUI())
 
     assert result != 0

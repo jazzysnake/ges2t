@@ -43,7 +43,7 @@ def test_empty_mapping_yields_all_defaults() -> None:
     result = WhisperCppConfig.from_mapping({})
     assert isinstance(result, WhisperCppConfigResult)
     assert result.config == WhisperCppConfig()
-    assert result.config.model == "small-q8_0"
+    assert result.config.model is None  # omitted: resolved at build time (ticket 45)
     assert result.config.language == ""
     assert result.config.threads is None
     assert result.config.gpu is GpuPreference.AUTO
@@ -52,7 +52,7 @@ def test_empty_mapping_yields_all_defaults() -> None:
 
 def test_default_values_match_the_documented_schema() -> None:
     config = WhisperCppConfig()
-    assert config.model == DEFAULT_MODEL == "small-q8_0"
+    assert config.model is DEFAULT_MODEL is None
     assert config.language == DEFAULT_LANGUAGE == ""
     assert config.threads is DEFAULT_THREADS is None
     assert config.gpu is DEFAULT_GPU is GpuPreference.AUTO
@@ -60,13 +60,11 @@ def test_default_values_match_the_documented_schema() -> None:
     assert KNOWN_KEYS == frozenset({"model", "language", "threads", "gpu"})
 
 
-def test_default_model_is_a_catalogue_entry() -> None:
-    # A default that the model store cannot acquire would be a configuration
-    # landmine; the pin must be a real, upstream-published file.
-    from ges2t import model_store
-
-    parsed = model_store.parse_whisper_model_name(DEFAULT_MODEL)
-    assert parsed.name == DEFAULT_MODEL
+def test_an_omitted_model_is_left_unresolved_for_the_build_time_rule() -> None:
+    # The device-aware default (ADR 0021 §4) is applied by the composition root
+    # through ges2t.whisper_engine.default_whisper_model, never baked in here: a
+    # static default would contradict the rule on a Vulkan machine (ticket 45).
+    assert WhisperCppConfig.from_mapping({}).config.model is None
 
 
 def test_config_is_frozen() -> None:

@@ -45,11 +45,18 @@ See [streaming REPORT](../project/research/whisper-cpp-streaming/REPORT.md).
 ### Why **`medium q5_0` on GPU, `small q8_0` on CPU-only**
 The size sweep found `medium q5_0` the **most accurate model in every condition tested** (car 0.062,
 quiet-short 0.296, quiet-long 0.111) and, on Vulkan, the best accuracy-per-second — 1.72 s for the
-25 s clip, Pareto-dominating every CPU configuration except `tiny`. **CPU, however, is ~6× real time**
-(medium ~24 s for a 30 s clip), so on a CPU-only machine the sensible default is the cheaper
-`small q8_0` (WER 0.141, still better than Whistle's 0.281; upstream publishes **no** `q5_0` for `small`, and `q8_0` scored identically). Quantisation is accuracy-invariant between
+25 s clip, Pareto-dominating every CPU configuration except `tiny`. **CPU is slower than Vulkan but
+still faster than realtime in batch**: on that same 25 s clip `medium q5_0` costs **RTF 1.30**
+(~19.3 s, ≈0.77× realtime) and the cheaper `small q8_0` **RTF 4.3** (~5.9 s, ≈0.23× realtime)
+(`RTF = audio_seconds / wall_seconds`;
+[provider REPORT §8](../project/research/whisper-cpp-provider/REPORT.md)). So on a CPU-only machine the
+sensible default is the **lower-latency** `small q8_0` — not because `medium` is unusable — and it is
+still better than Whistle's 0.281 (WER 0.141; upstream publishes **no** `q5_0` for `small`, and
+`q8_0` scored identically). Quantisation is accuracy-invariant between
 `q5_0`/`q8_0` and **`f16` is never better** (only slower and larger), so `q5_0` is chosen for size.
-See [provider REPORT §3, §4, §8, §9](../project/research/whisper-cpp-provider/REPORT.md).
+(The "~6× real time" figure seen elsewhere is whisper's **streaming** CPU duty, a regime this ADR's
+batch-only decision excludes.) See
+[provider REPORT §3, §4, §8, §9](../project/research/whisper-cpp-provider/REPORT.md).
 
 ### Why **`-nt` is pinned**
 `-nt` is a **decode** switch, not an output-format switch: the same model on the same clip scores
@@ -67,7 +74,8 @@ the model is loaded **once at service start**.
 ## Decision
 
 1. **whisper.cpp is a second backend**, selected by `transcriber.engine = "whisper_cpp"`; the
-   **default backend remains `needle`**, so the shipped live/incremental typing is unchanged.
+   **default backend remains `whistle`** (the Whistle model on the Needle 3 engine), so the
+   shipped live/incremental typing is unchanged.
 2. **In-process integration**: `ctypes` over `libwhisper.so` and the `libggml*.so` libraries, with the
    model **loaded once at service start and kept resident**. No per-utterance subprocess, no reload.
 3. **Batch-only**: `supports_streaming = False`. Selecting whisper trades away live/incremental typing
@@ -89,8 +97,8 @@ the model is loaded **once at service start**.
    at startup when `streaming.enabled = true`, when the configured model is not acquired, or when the
    whisper library is not built. **Model-vs-GPU sizing is deliberately not checked.**
 9. **Licence**: whisper.cpp and the Whisper weights are MIT.
-10. **The needle/Whistle model is selectable too**, with `whistle` as its default; the **needle
-    backend remains the shipped default** because it keeps live/incremental typing, which whisper
+10. **The needle/Whistle model is selectable too**, with `whistle` as its default; the **`whistle`
+    engine remains the shipped default** because it keeps live/incremental typing, which whisper
     cannot.
 
 ## Consequences
@@ -110,4 +118,4 @@ the model is loaded **once at service start**.
 ## Escape hatch
 
 Unchanged and still open: if whisper.cpp disappoints, the backend is one config value away from
-`needle`, and the whole integration sits behind the ADR 0010 `Transcriber` Protocol.
+`whistle`, and the whole integration sits behind the ADR 0010 `Transcriber` Protocol.

@@ -15,7 +15,8 @@ supporting the full whisper.cpp model range (`tiny` … `large-v3-turbo`, `q5_0`
 **`medium-q5_0` as the default on GPU devices and `small-q8_0` on CPU-only machines** (upstream
 publishes no `small-q5_0`; `q8_0` scored identically).
 
-It is **batch-only**. The **default backend stays `needle`/Whistle**, so the shipped live and
+It is **batch-only**. The **default engine stays `whistle`** (the Whistle model on the Needle 3
+engine), so the shipped live and
 incremental typing are unchanged; choosing whisper trades that away for accuracy — **~4.5× fewer
 errors than Whistle** on the reference recording (`-nt`; ~1.8× on the CLI default), at ~1.7–3 s per
 25 s utterance on the Radeon 780M.
@@ -37,7 +38,7 @@ batch-only limitation documented. The default backend is unchanged.
 ## Acceptance criteria
 
 - [ ] `uv run pytest` green (headless) and `uv run mypy src/ges2t tests` 0 errors — ADR 0014/0019.
-- [ ] `transcriber.engine = "whisper_cpp"` selects it; the **default stays `needle`** and Whistle's
+- [ ] `transcriber.engine = "whisper_cpp"` selects it; the **default stays `whistle`** and Whistle's
       behaviour is unchanged.
 - [ ] The model loads **once, at service start**, through `ctypes` over `libwhisper.so`; there is **no
       per-utterance spawn or reload**. The non-model round trip is **measured and reported as a number**

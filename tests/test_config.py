@@ -222,8 +222,8 @@ def test_engine_block_that_is_not_a_table_is_rejected(tmp_path: Path) -> None:
 
 
 def test_unknown_engine_name_lists_the_known_names(tmp_path: Path) -> None:
-    message = _load_error(tmp_path, '[transcriber]\nengine = "whisper_cpp"\n')
-    assert "whisper_cpp" in message
+    message = _load_error(tmp_path, '[transcriber]\nengine = "sphinx"\n')
+    assert "sphinx" in message
     assert "known engines" in message
     for name in KNOWN_ENGINES:
         assert name in message

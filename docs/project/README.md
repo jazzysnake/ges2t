@@ -85,8 +85,8 @@ documentation that takes a fresh machine to a working dictation.
 
 A second, **selectable** `Transcriber` on whisper.cpp, integrated **in-process** (`ctypes`, model
 resident from service start) and **batch-only**, supporting the full ggml model range and defaulting to
-`medium-q5_0` on GPU devices and `small-q8_0` on CPU-only ones. The **default backend stays
-`needle`/Whistle**, so shipped live/incremental typing is unchanged; choosing whisper trades it for
+`medium-q5_0` on GPU devices and `small-q8_0` on CPU-only ones. The **default engine stays
+`whistle`** (the Whistle model on the Needle 3 engine), so shipped live/incremental typing is unchanged; choosing whisper trades it for
 accuracy — **~4.5× fewer errors than Whistle** with `-nt` (~1.8× on the CLI default; see the
 [`-nt` addendum](research/whisper-cpp-provider/004-addendum-nt-decode.md)) at ~1.7–3 s per 25 s
 utterance on the Radeon 780M. Evidence:
@@ -99,7 +99,7 @@ utterance on the Radeon 780M. Evidence:
 | 42 | [whisper-engine-build](whisper-cpp-backend/whisper-engine-build/ticket.md) — build `libwhisper.so` + ggml (CPU/Vulkan); prerequisites checked, never installed | M | done | — | feat/whisper-engine-build (merged 3478b78) |
 | 43 | [whisper-transcriber-adapter](whisper-cpp-backend/whisper-transcriber-adapter/ticket.md) — in-process `ctypes` `Transcriber`, model resident from startup, `supports_streaming = False` | M | done | 41, 42 | feat/whisper-transcriber-adapter (merged 6e0a61d) |
 | 44 | [setup-backend-and-model-arguments](whisper-cpp-backend/setup-backend-and-model-arguments/ticket.md) — `ges2t setup [backend] [model]`, model argument ported to needle | M | done | 41, 42 | feat/setup-backend-and-model-arguments (merged 89a62ef) |
-| 45 | [whisper-backend-config-and-validation](whisper-cpp-backend/whisper-backend-config-and-validation/ticket.md) — config, GPU/CPU default rule, **strict startup validation** (carries ADR 0021) | S | to do | 43 | — |
+| 45 | [whisper-backend-config-and-validation](whisper-cpp-backend/whisper-backend-config-and-validation/ticket.md) — config, GPU/CPU default rule, **strict startup validation** (carries ADR 0021) | S | in review | 43 | feat/whisper-backend-config-and-validation |
 | 46 | [whisper-doctor](whisper-cpp-backend/whisper-doctor/ticket.md) — engine library / model / Vulkan checks | S | to do | 41, 42, 43 | — |
 | 47 | [engine-naming-and-setup-guidance](whisper-cpp-backend/engine-naming-and-setup-guidance/ticket.md) — one canonical engine spelling + a `whisper.cpp` alias; `setup` prints the config line | S | to do | 45 | — |
 

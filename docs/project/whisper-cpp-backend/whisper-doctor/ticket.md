@@ -9,8 +9,8 @@
 
 `ges2t doctor` runs 22 checks (ADR 0016) and is the user's single diagnostic surface. The whisper
 backend adds prerequisites that are currently invisible: the **built engine libraries**, the
-**configured model**, and **Vulkan availability** (which determines whether `medium-q5_0` is ~2 s or
-~6× real time, and which default model applies). A user whose whisper setup is broken should learn it
+**configured model**, and **Vulkan availability** (which determines whether `medium-q5_0` runs in ~1.7 s
+or ~19 s for the 25 s clip, and which default model applies). A user whose whisper setup is broken should learn it
 from `doctor`, not from a startup failure they cannot interpret.
 
 ## Definition of done
@@ -20,7 +20,8 @@ from `doctor`, not from a startup failure they cannot interpret.
 - [ ] A **model** check: the configured model is present, and with the existing `--verify` intent,
       hash-verified against its pinned sha256; name the exact file and expected size.
 - [ ] A **GPU/Vulkan** check: report whether a Vulkan device is available and which one; when not,
-      a **WARN** stating the CPU cost (~6× real time) and that the default model is `small-q8_0`.
+      a **WARN** stating the CPU cost (`medium-q5_0` ~19 s, still faster than realtime; RTF 1.30) and
+      that the default model is `small-q8_0`.
 - [ ] When `transcriber.engine = "whisper_cpp"` and `streaming.enabled = true`, the checks explain
       the **startup rejection** (this config will not start) rather than reporting a healthy-but-refused
       state.

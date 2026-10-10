@@ -635,14 +635,31 @@ class WhisperCppTranscriber:
         #: ges2t's own wall-clock decode time for the last :meth:`transcribe`,
         #: in seconds. whisper.cpp exposes no engine timing to pass through.
         self.last_transcribe_seconds: float | None = None
+        #: The resolved model name. ``None`` until resolved; the composition root
+        #: normally resolves an omitted ``[engine.whisper_cpp] model`` before
+        #: constructing this adapter (ticket 45), so this fallback only matters
+        #: for a directly-constructed adapter.
+        self._resolved_model: str | None = config.model
 
     # -- locations ----------------------------------------------------------
+
+    def _model_name(self) -> str:
+        """Return the model name, resolving the device-aware default when omitted.
+
+        An omitted ``model`` (``config.model is None``) is resolved through
+        :func:`ges2t.whisper_engine.default_whisper_model`, the same
+        single source of truth ``ges2t setup`` uses, so the loaded model matches
+        the one ``setup`` would fetch. The result is cached (ADR 0021 §4).
+        """
+        if self._resolved_model is None:
+            self._resolved_model = whisper_engine.default_whisper_model()
+        return self._resolved_model
 
     def _model_path(self) -> Path:
         """The model file this transcriber will load: the override or the managed pin."""
         if self._model_path_override is not None:
             return self._model_path_override
-        return model_store.whisper_model_path(self.config.model)
+        return model_store.whisper_model_path(self._model_name())
 
     def _library_path(self) -> Path:
         """The ``libwhisper.so`` path: the override or the installed engine's."""
@@ -693,13 +710,15 @@ class WhisperCppTranscriber:
         """Ensure the configured whisper.cpp model exists locally; return its path.
 
         Delegates to :mod:`ges2t.model_store`, the only module allowed to touch
-        the network (ADR 0018). When ``model_path_override`` was supplied the
-        caller owns the file, so it is returned untouched and nothing is fetched.
+        the network (ADR 0018). An omitted ``model`` is resolved through the
+        device-aware rule first (ADR 0021 §4). When ``model_path_override`` was
+        supplied the caller owns the file, so it is returned untouched and
+        nothing is fetched.
         """
         if self._model_path_override is not None:
             return self._model_path_override
         return model_store.ensure_whisper_model(
-            self.config.model, progress=progress
+            self._model_name(), progress=progress
         )
 
     def load(self) -> None:
@@ -718,7 +737,7 @@ class WhisperCppTranscriber:
         if not model_path.is_file():
             raise WhisperCppLoadError(
                 f"the whisper.cpp model is missing at {model_path}; run 'ges2t "
-                f"setup whisper.cpp {self.config.model}' to download it (the only "
+                f"setup whisper.cpp {self._model_name()}' to download it (the only "
                 "ges2t command that uses the network)"
             )
 

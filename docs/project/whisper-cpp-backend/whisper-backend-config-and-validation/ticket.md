@@ -1,7 +1,7 @@
 # whisper backend config and startup validation
 
 - **Priority:** P1
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** S
 - **Epic:** ../epic.md
 
@@ -13,11 +13,12 @@ Configuration is TOML at `~/.config/ges2t/config.toml` (ADR 0009); the backend i
 strictness here: **on launch, the config must be validated**, and a whisper config that cannot work
 must fail loudly rather than degrade.
 
-**The default backend does not change** — it stays `needle`.
+**The default engine does not change** — it stays `whistle` (the Whistle model on the Needle 3
+engine).
 
 ## Definition of done
 
-- [ ] `transcriber.engine = "whisper_cpp"` is accepted (added to `KNOWN_ENGINES`) and selects the adapter; `needle` remains the
+- [ ] `transcriber.engine = "whisper_cpp"` is accepted (added to `KNOWN_ENGINES`) and selects the adapter; `whistle` remains the
       default and its behaviour is unchanged.
 - [ ] The **needle model is selectable** too (default `whistle`), so neither engine's model is
       hardcoded (ADR 0021).
