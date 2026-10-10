@@ -59,28 +59,46 @@ Original orchestrator brief: `.pi/prompts/orchestrate-project.md`.
   first on resume** — it is faster than reading the environment table above.
 - 21 ADRs (0000–0020), **34 tickets**, 2 epics.
 
-## 5. Board state (34 of 38 done)
+## 5. Board state (35 of 40 done)
 
-**Done (34):** 1–18, 20–29, 32, 33, 34, 36, 37, 38, plus 25 (manual gate passed). Merge commits worth knowing:
-- 11 `338cdc2` · 12 `036d1e2` · 15 `2ba0a3a` · 17 (four rounds) · 18 `829937a` · 21 `11b1bf3` ·
-  22 `0a2074a` · 23 `b4aa911` · 24 `a6ba892` · 26 `ceee7a2` · 28 `37e8937` · 29 `f9df8a0` ·
-  **32 `1356f88`** · **25 `2646212`** · **33 `78f87fc`** · **36 `ddeb278`** · **37 `53d3c79`** ·
-  **38 `47431eb`** · **34 `5eeca4d`**
+**Done (35):** 1–19, 20–29, 32, 33, 34, 36, 37, 38, plus 25 (manual gate passed). Merge commits worth
+knowing: 11 `338cdc2` · 12 `036d1e2` · 15 `2ba0a3a` · 17 (four rounds) · 18 `829937a` · 21 `11b1bf3` ·
+22 `0a2074a` · 23 `b4aa911` · 24 `a6ba892` · 26 `ceee7a2` · 28 `37e8937` · 29 `f9df8a0` ·
+**32 `1356f88`** · **25 `2646212`** · **33 `78f87fc`** · **36 `ddeb278`** · **37 `53d3c79`** ·
+**38 `47431eb`** · **34 `5eeca4d`** · **19 `fcef28a`**
 
-**The incremental-typing chain is COMPLETE and live-verified by the user** (32 gate → 33 interface →
-34 payload). The user ran the acceptance test on merged `main` and **every checkbox passed**: text
-appears while speaking (lag "less than a second, likely", **explicitly not measured**), exactly one
-trailing space, and stop → delete → continue recovered a wrong word. **ADR 0011 is amended with the
-user's explicit sign-off** — the committed prefix is typed as it is committed; `pending` never is.
-Recorded in `docs/project/live-dictation-ux/incremental-typing/003-comment.md`.
+**The incremental-typing chain is COMPLETE and live-verified by the user** (32 gate → 33 interface → 34
+payload). Every checkbox passed on merged `main`: text appears while speaking (lag "less than a second,
+likely", **explicitly not measured**), exactly one trailing space, and stop → delete → continue recovered
+a wrong word. **ADR 0011 is amended with the user's explicit sign-off** — the committed prefix is typed
+as it is committed; `pending` never is. See
+`docs/project/live-dictation-ux/incremental-typing/003-comment.md`.
 
-**Remaining (4):**
+**⚠️ The accuracy question, and what the measurements actually support.** The user is hesitant to
+daily-drive because accuracy is not what they want. Ticket 39 measured four candidate levers on the
+user's 25 s ground-truth recording (the passage is recorded in that ticket — it had never been written
+into an artifact before):
+
+- **A noise filter is NOT justified** — this is the safe conclusion. A 60 Hz high-pass removes **86 %** of
+  the recording's AC power and buys **2 of 64 words**; pulling harder (85/120 Hz) buys **1 word each**; a
+  gain change produces a **byte-identical** transcript to the high-pass, which is a decoding-basin effect
+  rather than a graded signal-quality one. Clipping (0.315 % of samples) is not the cause.
+- **The dominant errors survive the filter** (`valley`→`rally`, `crews`→`cruise`, `flood`→`front`,
+  `river`→`reverse`) — **acoustic confusions of the 16 MB model**, which is ADR 0005's accepted risk.
+- **Streaming vs batch is the largest lever measured on this one recording, and its direction is NOT
+  settled.** Streaming 0.391 vs batch 0.281 by the harness's `word_diff` (6 words / −0.094 by standard
+  edit distance, which the scorer inflates). But **ADR 0011's own clean-clip measurement found the
+  windowed path *ahead* of one-shot (0.176 vs 0.191)** — the opposite direction. Ticket 35's
+  multi-length sweep decides it; do not present "switch to batch" as a fix until then.
+
+**Remaining (5):**
 | # | Ticket | State |
 |---|---|---|
-| **19** | user-documentation-and-setup-guide | **not started** — the last core ticket; deliberately last because it documents final behaviour. **Must document**: incremental typing as the default (and that there is **no opt-out that keeps streaming** — only `streaming.enabled = false`), the clipboard/streaming refusal, and the `ctrl+shift+v` default (ticket 38, decided — §11b is now closed) |
-| **35** | streaming-vs-batch-quality | **to do**, P2, **gates nothing** (`depends on: —`, `blocks: —`, verified). Measure streaming vs batch accuracy **against ground truth**, not streaming-vs-batch divergence |
+| **39** | accuracy-levers | **in review** (corrections `8d3092c` addressing F1–F3; re-review in flight). One recording only — see the accuracy block above |
+| **40** | bindable-hotkey-hint | **to do** — `doctor`/`cli` print the bare `ges2t toggle`, which is **not on a launcher's `PATH`** (verified twice). Shipped advice that cannot work |
+| **35** | streaming-vs-batch-quality | **to do**, P2, gates nothing. Now **more important than when filed** — it is the sweep that decides the accuracy question above |
 | **30** | tray-failure-diagnostics | filed follow-up; needs a read-only socket verb (**requires an ADR 0016 amendment**) |
-| **31** | speech-gate-recalibration | **`blocked`** on the board — implemented and review-passed, branch exists, **not merged**, parked at the user's direction pending their live test in **both** a quiet room and a noisy one. See §10 |
+| **31** | speech-gate-recalibration | **`blocked`** — implemented and review-passed, branch exists, **not merged**, parked pending the user's live test in **both** a quiet room and a noisy one. **Confirmed still unmerged**: `main`'s gate is ticket 29's; a commit titled "ticket 31" on main (`e1134f8`) is docs-only — a false alarm raised by ticket 19's review and checked. See §10 |
 
 ## 6. In-flight agents (collect these first on resume)
 
