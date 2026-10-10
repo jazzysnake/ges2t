@@ -117,6 +117,7 @@ conditionals. A guard test fails when a new bare identifier literal appears in `
 | # | Ticket | Size | Status | Depends on | Branch |
 |---|---|---|---|---|---|
 | 48 | [centralize-identifier-literals](code-quality/centralize-identifier-literals/ticket.md) — one definition per identifier string, compared via constants (`src/` only; tests keep literals) | M | done | — | feat/centralize-identifier-literals (merged dc8f278) |
+| 52 | [command-verb-identifiers](code-quality/command-verb-identifiers/ticket.md) — the socket command-verb family via constants (ticket 48's scoped-out residual) | XS | to do | 48 | — |
 
 ---
 
@@ -159,6 +160,7 @@ independent and may run in parallel (they touch disjoint files).
 | 29 | 46 · 47 · 49 (doctor · setup guidance · variant rebuild) |
 | 30 | 50 (engine-aware streaming default) |
 | 31 | 51 (ticket 49 review follow-ups) · 48 (identifier constants) |
+| 32 | 52 (command-verb identifiers; ticket 48's residual) |
 
 Serialization is also required wherever two tickets touch the same file: `10 → 11/12`
 (`cli.py`, `doctor.py`), `11 → 16` (`pipeline.py`), `17 → 18` (`pipeline.py`).
