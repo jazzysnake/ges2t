@@ -712,8 +712,8 @@ def _whisper_missing_artifacts(config: Config) -> list[str]:
     pin = model_store.whisper_model(model_name)
     if not _present(model_path, expected_size=pin.size_bytes):
         problems.append(
-            f"the whisper.cpp model {model_name!r} is not acquired or is "
-            f"incomplete at {model_path}"
+            f"the whisper.cpp model {model_name!r} (engine.whisper_cpp.model) is "
+            f"not acquired or is incomplete at {model_path}"
         )
     engine_directory = whisper_engine.engine_dir()
     if whisper_engine.verify_build(engine_directory) is None:

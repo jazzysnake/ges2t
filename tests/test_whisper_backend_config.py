@@ -259,6 +259,7 @@ def test_a_model_that_is_not_acquired_is_refused(
     )
     assert len(problem) == 1
     assert "tiny-q8_0" in problem[0]
+    assert "engine.whisper_cpp.model" in problem[0]
     assert "not acquired" in problem[0]
 
     with pytest.raises(PipelineError) as excinfo:

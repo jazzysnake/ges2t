@@ -70,7 +70,7 @@ _(more below as work lands)_
 1. **streaming enabled** (checked first, before artifacts) —
    `transcriber.engine = "whisper_cpp" cannot be combined with streaming.enabled = true: whisper.cpp is batch-only, so there would be no text until the utterance ends.`
    hint: `set streaming.enabled = false to run whisper.cpp batch-only, or set transcriber.engine = "whistle" (the default) to keep live and incremental typing`.
-2. **model not acquired** — `the whisper.cpp model 'tiny-q8_0' is not acquired or is incomplete at <path>`.
+2. **model not acquired** — `the whisper.cpp model 'tiny-q8_0' (engine.whisper_cpp.model) is not acquired or is incomplete at <path>`.
 3. **library not built** — `the whisper.cpp engine library is not built at <dir> (libwhisper.so is missing or incomplete)`.
    2 and 3 share the hint `run 'ges2t setup whisper.cpp <model>' to build the engine and download the model (the only ges2t command that uses the network)`.
 4. **`streaming.enabled = false` and a complete install** → validation is silent.
