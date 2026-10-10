@@ -1,7 +1,7 @@
 # whisper.cpp model catalogue and pinned acquisition
 
 - **Priority:** P1
-- **Status:** in review
+- **Status:** done
 - **Complexity:** S
 - **Epic:** ../epic.md
 
