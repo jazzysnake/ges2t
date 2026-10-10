@@ -249,8 +249,11 @@ mode, so when in doubt bind `toggle`. If you try `ptt-start`/`ptt-stop` and the 
 invocation is never sent, the recording never stops — bind `toggle` instead.
 
 `ges2t doctor` names the same subcommands at the end of every report, so you can use that
-list — but it prints them as bare `ges2t …`, which a shortcut cannot run; substitute your own
-absolute `.venv/bin/ges2t` path as above.
+list directly: it resolves the console script **it is itself running as** and prints every
+command by that **absolute path** (`…/.venv/bin/ges2t toggle`), which is exactly what a
+shortcut needs. When it cannot resolve the path to an existing file it falls back to the bare
+`ges2t …` form, which a shortcut can run only on a system install (where the script is on
+`PATH`); substitute your own absolute `.venv/bin/ges2t` path as above in that case.
 
 ## 8. Run it
 
@@ -529,7 +532,7 @@ the end of the report with their fix.
 $ uv run ges2t doctor
 ges2t doctor
 
-Package imports           OK    all 17 package modules import (Python 3.14.7)
+Package imports           OK    all 18 package modules import (Python 3.14.7)
 Architecture              OK    linux-x86_64 has a pinned engine artifact
 Model present             OK    whistle.cact is present at /home/matee/.local/share/ges2t/models/whistle/2.0.0/whistle.cact (16919407 bytes)
 Model verified            OK    not requested; pass --verify to hash the model against its pinned sha256
@@ -552,15 +555,15 @@ Service socket            OK    the service is listening at /run/user/1000/ges2t
 Keyboard layout           OK    resolved from the live compositor keymap; libxkbcommon compiled it
 Clipboard backend         OK    not selected (injection.backend = 'ydotool'); 'wl-copy' is not required
 Hotkey bindings           WARN  ges2t does not grab the hotkey itself; bind the command in KDE
-                                fix: System Settings -> Shortcuts -> Add -> Command or URL: bind 'ges2t toggle' (recommended), or 'ges2t ptt-start' and 'ges2t ptt-stop', plus 'ges2t cancel'
+                                fix: System Settings -> Shortcuts -> Add -> Command or URL: bind '/home/matee/Workspace/Personal/ges2t/.venv/bin/ges2t toggle' (recommended), or '/home/matee/Workspace/Personal/ges2t/.venv/bin/ges2t ptt-start' and '/home/matee/Workspace/Personal/ges2t/.venv/bin/ges2t ptt-stop', plus '/home/matee/Workspace/Personal/ges2t/.venv/bin/ges2t cancel'
 
 Summary: 22 checks, 20 ok, 2 warning(s), 0 failure(s).
 
 Recommended KDE key bindings (System Settings -> Shortcuts -> Add -> Command or URL):
-  ges2t toggle      start or stop with one key (recommended default)
-  ges2t ptt-start   press-to-talk: bind to the key press
-  ges2t ptt-stop    press-to-talk: bind to the key release
-  ges2t cancel      abort a recording without transcribing
+  /home/matee/Workspace/Personal/ges2t/.venv/bin/ges2t toggle     start or stop with one key (recommended default)
+  /home/matee/Workspace/Personal/ges2t/.venv/bin/ges2t ptt-start  press-to-talk: bind to the key press
+  /home/matee/Workspace/Personal/ges2t/.venv/bin/ges2t ptt-stop   press-to-talk: bind to the key release
+  /home/matee/Workspace/Personal/ges2t/.venv/bin/ges2t cancel     abort a recording without transcribing
 ges2t never edits your compositor settings or your config file (ADR 0004).
 ```
 
