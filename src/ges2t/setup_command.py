@@ -15,6 +15,17 @@ The surface it implements (ADR 0021 §6, ADR 0021 §10):
 * ``ges2t setup whisper.cpp [model]`` — **build** the whisper.cpp engine and
   **acquire** the named model. With no model, the ADR 0021 §4 default rule picks
   ``medium-q5_0`` when a Vulkan device is available, ``small-q8_0`` otherwise.
+  The canonical engine value ``whisper_cpp`` is accepted as the backend token
+  too, and after a successful run the exact ``transcriber.engine`` line is
+  printed (:func:`config_guidance`), because setup never edits the user's config
+  (ADR 0004).
+
+A GPU that loses its build to missing Vulkan *development* packages is reported
+by the shared :func:`ges2t.whisper_engine.cpu_only_build_hint`: a diagnostic,
+never an error, naming the missing package and the exact ``pacman`` line, while a
+machine with no Vulkan runtime at all gets no hint (there is no GPU path to
+lose). The wording has one definition, in
+:mod:`ges2t.whisper_engine`, so ``ges2t setup`` and ``ges2t doctor`` cannot drift.
 
 Two properties the ticket makes load-bearing:
 
@@ -37,13 +48,19 @@ operations, which ``ges2t setup`` is the only command to invoke (ADR 0018).
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from ges2t import model_store
+from ges2t.config import (
+    DEFAULT_ENGINE,
+    WHISPER_CPP_ENGINE,
+    default_config_path,
+    suggest_engine,
+)
 from ges2t.model_store import (
     DEFAULT_NEEDLE_MODEL,
     ModelStoreError,
@@ -59,6 +76,8 @@ from ges2t.whisper_engine import (
 )
 
 __all__ = [
+    "ACCEPTED_BACKEND_TOKENS",
+    "BACKEND_ALIASES",
     "DEFAULT_SETUP_BACKEND",
     "DEFAULT_WHISPER_MODEL_CPU",
     "DEFAULT_WHISPER_MODEL_GPU",
@@ -74,6 +93,7 @@ __all__ = [
     "UnknownBackendError",
     "WhisperEngineInstaller",
     "WhisperModelInstaller",
+    "config_guidance",
     "default_dependencies",
     "default_whisper_model",
     "plan_setup",
@@ -100,16 +120,21 @@ class SetupError(Exception):
 class UnknownBackendError(SetupError):
     """The backend argument is not one ``ges2t setup`` knows (ADR 0021 §6).
 
-    Names the valid set, and is raised by :func:`plan_setup` **before** any build
-    or download starts.
+    Names the valid set -- both the CLI tokens and the canonical engine spelling
+    (ticket 47) -- and, when the value is a near miss, points at the right token.
+    Raised by :func:`plan_setup` **before** any build or download starts.
     """
 
     def __init__(self, name: str) -> None:
         self.name = name
-        self.valid = tuple(backend.value for backend in SetupBackend)
-        super().__init__(
+        self.valid = ACCEPTED_BACKEND_TOKENS
+        message = (
             f"unknown backend {name!r}; valid backends: {', '.join(self.valid)}"
         )
+        suggestion = suggest_engine(name)
+        if suggestion is not None:
+            message += f"; did you mean {suggestion!r}?"
+        super().__init__(message)
 
 
 class PartialSetupError(SetupError):
@@ -135,11 +160,42 @@ class PartialSetupError(SetupError):
 
 
 class SetupBackend(StrEnum):
-    """The engines ``ges2t setup`` can prepare (ADR 0021 §6)."""
+    """The engines ``ges2t setup`` can prepare (ADR 0021 §6).
+
+    The value is the **CLI token**: ``whisper.cpp``, as ADR 0021 §6 fixes it.
+    :attr:`engine` is the canonical ``transcriber.engine`` value the same backend
+    configures, which is what :func:`config_guidance` prints because a TOML block
+    name cannot carry the dot (ticket 47).
+    """
 
     NEEDLE = "needle"
     WHISPER_CPP = "whisper.cpp"
 
+    @property
+    def engine(self) -> str:
+        """The canonical ``transcriber.engine`` value this backend configures."""
+        return _BACKEND_ENGINES[self]
+
+
+#: The canonical ``transcriber.engine`` value each setup backend configures. The
+#: needle backend runs the ``whistle`` engine, which is also the default.
+_BACKEND_ENGINES: Mapping[SetupBackend, str] = {
+    SetupBackend.NEEDLE: DEFAULT_ENGINE,
+    SetupBackend.WHISPER_CPP: WHISPER_CPP_ENGINE,
+}
+
+#: Non-enum backend tokens the parser accepts, folded to a :class:`SetupBackend`.
+#: ``whisper_cpp`` is the canonical *engine* spelling: a user who has read the
+#: config docs must not be told their backend token is unknown (ticket 47).
+BACKEND_ALIASES: Mapping[str, SetupBackend] = {
+    WHISPER_CPP_ENGINE: SetupBackend.WHISPER_CPP,
+}
+
+#: Every backend token :func:`plan_setup` accepts, for the error message.
+ACCEPTED_BACKEND_TOKENS: tuple[str, ...] = (
+    *(backend.value for backend in SetupBackend),
+    *BACKEND_ALIASES,
+)
 
 #: The backend ``ges2t setup`` sets up when none is named: the shipped default.
 DEFAULT_SETUP_BACKEND: SetupBackend = SetupBackend.NEEDLE
@@ -261,11 +317,16 @@ def _silent_progress(label: str) -> ProgressCallback:
 def _parse_backend(token: str | None) -> SetupBackend:
     """Resolve the backend argument, defaulting to needle; unknown names are typed.
 
-    The membership check is against :class:`SetupBackend`, so adding a backend is
-    a one-line change here and the error's valid set follows automatically.
+    Both the CLI token (``whisper.cpp``) and the canonical engine value
+    (``whisper_cpp``) are accepted and resolve to the same backend (ticket 47).
+    The membership check is against :class:`SetupBackend` plus
+    :data:`BACKEND_ALIASES`, so adding a backend is a one-line change here and
+    the error's valid set follows automatically.
     """
     if token is None:
         return DEFAULT_SETUP_BACKEND
+    if token in BACKEND_ALIASES:
+        return BACKEND_ALIASES[token]
     try:
         return SetupBackend(token)
     except ValueError as exc:
@@ -297,6 +358,48 @@ def plan_setup(
     else:
         resolved = default_whisper_model(system)
     return SetupPlan(backend=selected, model=resolved)
+
+
+# --- Post-setup guidance (ticket 47) -------------------------------------------
+#
+# ges2t never edits the user's configuration (ADR 0004, ADR 0009), so the exact
+# config line that selects the backend just set up is *printed* instead. The
+# CPU-only-build diagnostic is **not** here: it is the one shared wording in
+# :mod:`ges2t.whisper_engine` (``cpu_only_build_hint`` /
+# ``vulkan_dev_package_hint``), which ``ges2t doctor`` reads too (ticket 46), so
+# the two commands cannot drift.
+
+
+def config_guidance(plan: SetupPlan, *, path: Path | None = None) -> str:
+    """Return the exact ``config.toml`` change ``ges2t setup`` cannot make for the user.
+
+    ADR 0004 and ADR 0009: ges2t never edits the user's configuration, so the line
+    that selects the backend just set up is printed instead. ``whistle`` is the
+    default engine, so the needle path needs no line at all and says so. The path
+    is the resolved default (``$XDG_CONFIG_HOME/ges2t/config.toml``) unless one is
+    given.
+    """
+    target = path if path is not None else default_config_path()
+    engine = plan.backend.engine
+    if engine == DEFAULT_ENGINE:
+        return (
+            f"The default engine is {DEFAULT_ENGINE!r}, so no line is needed "
+            f"in {target}."
+        )
+    lines = [
+        f"Add this line to {target} to select the engine "
+        f"(ges2t never edits it for you):",
+        "",
+        f'    transcriber.engine = "{engine}"',
+    ]
+    if engine == WHISPER_CPP_ENGINE:
+        lines += [
+            "",
+            "whisper.cpp is batch-only, so also set, under [streaming]:",
+            "",
+            "    enabled = false",
+        ]
+    return "\n".join(lines)
 
 
 # --- Orchestration -------------------------------------------------------------

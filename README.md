@@ -215,6 +215,27 @@ it tells you to run `ges2t setup`
 ([ADR 0017](docs/adr/0017-model-acquisition-via-setup.md),
 [ADR 0018](docs/adr/0018-no-runtime-network.md)).
 
+### The whisper.cpp backend (opt-in)
+
+`ges2t setup whisper.cpp [model]` builds the whisper.cpp engine and fetches the ggml model
+(see section 10 for the model default). The **config value** for that engine is
+**`whisper_cpp`**; `whisper.cpp` is the spelling the `setup` command takes, for the same
+engine, and `setup` accepts either token. There is **one** engine value in the docs, plus this
+one accepted alias.
+
+On success `setup` prints the exact line to add to the configuration file, because it never
+edits your config ([ADR 0004](docs/adr/0004-global-hotkey-via-cli-and-service.md)):
+
+```
+transcriber.engine = "whisper_cpp"
+```
+
+If a Vulkan GPU is present but a Vulkan *development* package (`spirv-headers`,
+`vulkan-headers` or `shaderc`) is missing, the engine can only be built **CPU-only**. That is
+not an error — the build still succeeds — but `setup` prints a diagnostic naming the missing
+package and the exact `pacman` line that would enable the GPU build. A machine with no Vulkan
+runtime at all gets no such hint.
+
 ## 7. Bind a key (KDE)
 
 ges2t never grabs a hotkey itself — it has no input permissions and never observes your
@@ -393,7 +414,7 @@ paste_keys = ["ctrl+shift+v"]
 
 | Key | Default | Meaning |
 |---|---|---|
-| `transcriber.engine` | `"whistle"` | engine selector: `"whistle"` (default) or `"whisper_cpp"` |
+| `transcriber.engine` | `"whistle"` | engine selector: `"whistle"` (default) or `"whisper_cpp"`; the alias `"whisper.cpp"` is also accepted |
 | `transcriber.model_path` | `""` | `""` = the pinned artifact under `$XDG_DATA_HOME/ges2t` |
 | `hotkey.mode` | `"ptt"` | accepted values `"ptt"` and `"toggle"`; **does not bind anything** |
 | `hotkey.key` | `""` | documentation only |
@@ -456,6 +477,18 @@ Build and download it once with `ges2t setup whisper.cpp [model]` (the only netw
 ADR 0018). When `model` is omitted, the default follows the machine: **`medium-q5_0` when a
 Vulkan build is possible, `small-q8_0` otherwise** (upstream publishes no `small-q5_0`), the
 same rule `ges2t setup` uses. **Never `f16`** (larger, slower, never more accurate).
+
+`whisper.cpp` is the **CLI spelling**; the **config value** is `whisper_cpp`, and `setup`
+accepts either token. One engine value is documented here, with `whisper.cpp` as the accepted
+alias. `setup` prints the exact line to add (it never edits your config, ADR 0004):
+
+```toml
+transcriber.engine = "whisper_cpp"
+```
+
+The block is `[engine.whisper_cpp]`. Only that spelling is documented; a
+`[engine.whisper.cpp]` block is read as the same block, and writing both spellings is an
+error (one spelling is the rule).
 
 At startup with `transcriber.engine = "whisper_cpp"` the service **refuses to start** — rather
 than degrading — when `streaming.enabled = true`, when the model above is not acquired, or when

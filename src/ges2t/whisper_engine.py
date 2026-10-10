@@ -98,6 +98,7 @@ __all__ = [
     "WhisperCppBuilder",
     "WhisperEngineError",
     "check_prerequisites",
+    "cpu_only_build_hint",
     "default_build_root",
     "default_jobs",
     "default_whisper_model",
@@ -833,6 +834,29 @@ def vulkan_dev_package_hint(status: VulkanStatus) -> str | None:
         f"'{PACMAN_PREFIX} {' '.join(packages)}' and rebuild with "
         "'ges2t setup whisper.cpp <model>' to enable the GPU path"
     )
+
+
+def cpu_only_build_hint(
+    build: EngineBuild, *, system: SystemProbe | None = None
+) -> str | None:
+    """The shared GPU-path sentence for an **installed CPU-only** whisper engine.
+
+    This is the ``ges2t setup`` side of :func:`vulkan_dev_package_hint`: the
+    sentence itself has exactly one definition there, and this adds only the
+    variant gate ``setup`` needs -- it says "the engine builds CPU-only", which is
+    true only of the engine the manifest describes. ``None`` for a Vulkan build,
+    for a machine with no Vulkan runtime (handled by the shared function), and
+    when every dev piece is now present, so a caller can print the result
+    verbatim as a diagnostic (never an error).
+
+    ``system`` is the test seam; the default is the real host probe, which is
+    re-run rather than trusting the build-time manifest, so a dev package the
+    user has since installed does not produce stale "missing" advice.
+    """
+    if build.variant is not BuildVariant.CPU:
+        return None
+    probe = system if system is not None else HostSystemProbe()
+    return vulkan_dev_package_hint(inspect_vulkan(probe))
 
 
 # --- Manifest ------------------------------------------------------------------

@@ -309,10 +309,13 @@ def build_parser() -> argparse.ArgumentParser:
             "Acquire and verify the artifacts a backend needs (ADR 0017, ADR 0021).\n"
             "With no arguments this sets up the default 'needle' backend and its\n"
             "default model, 'whistle'. Name a backend to choose another: 'needle'\n"
-            "or 'whisper.cpp'. The model argument is accepted for either backend.\n"
+            "or 'whisper.cpp' (the canonical engine spelling 'whisper_cpp' is\n"
+            "accepted too). The model argument is accepted for either backend.\n"
             "For whisper.cpp a model is a <size>-<quant> ggml name such as\n"
             "medium-q5_0; omitting it picks medium-q5_0 on a Vulkan machine and\n"
-            "small-q8_0 on CPU only. This is the only ges2t command that uses the\n"
+            "small-q8_0 on CPU only. On success this prints the exact\n"
+            "transcriber.engine line to add to your config, which ges2t never\n"
+            "edits for you. This is the only ges2t command that uses the\n"
             "network; everything afterwards runs offline. Safe to re-run: valid\n"
             "artifacts are left alone."
         ),
@@ -322,7 +325,7 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         default=None,
         metavar="BACKEND",
-        help="backend to set up: 'needle' (default) or 'whisper.cpp'",
+        help="backend to set up: 'needle' (default) or 'whisper.cpp' (alias 'whisper_cpp')",
     )
     setup.add_argument(
         "model",
@@ -535,8 +538,14 @@ def _handle_setup(args: argparse.Namespace) -> int:
     exact ``pacman`` line is printed verbatim (never duplicated here).
     """
     from ges2t import model_store
-    from ges2t.setup_command import SetupError, plan_setup, run_setup
-    from ges2t.whisper_engine import WhisperEngineError
+    from ges2t.config import resolve_config_path
+    from ges2t.setup_command import (
+        SetupError,
+        config_guidance,
+        plan_setup,
+        run_setup,
+    )
+    from ges2t.whisper_engine import WhisperEngineError, cpu_only_build_hint
 
     try:
         plan = plan_setup(
@@ -570,6 +579,16 @@ def _handle_setup(args: argparse.Namespace) -> int:
     if outcome.whisper_model_path is not None:
         print(f"Model:  {outcome.whisper_model_path}")
     print("Setup complete.")
+    # setup cannot edit the user's config (ADR 0004), so it prints the exact line
+    # to add; and when a Vulkan GPU lost the build to a missing dev package, it
+    # says so -- a diagnostic, not an error, so the exit code is unchanged.
+    config_path = resolve_config_path(getattr(args, "config", None))
+    print(config_guidance(plan, path=config_path))
+    if outcome.whisper_engine is not None:
+        build_hint = cpu_only_build_hint(outcome.whisper_engine)
+        if build_hint is not None:
+            print()
+            print(build_hint)
     return EXIT_SUCCESS
 
 

@@ -32,8 +32,11 @@ from typing import Any
 __all__ = [
     "AUDIO_DEFAULT_DEVICE",
     "DEFAULT_ENGINE",
+    "ENGINE_ALIASES",
     "INJECTION_DEFAULT_BACKEND",
     "KNOWN_ENGINES",
+    "WHISPER_CPP_ENGINE",
+    "WHISTLE_ENGINE",
     "KNOWN_HOTKEY_MODES",
     "AudioConfig",
     "Config",
@@ -47,8 +50,19 @@ __all__ = [
     "default_config",
     "default_config_path",
     "load_config",
+    "normalize_engine",
     "resolve_config_path",
+    "suggest_engine",
 ]
+
+#: The engine value of the shipped default: the Whistle model on the Needle 3
+#: engine. Kept last among the two because :data:`KNOWN_ENGINES` orders it first.
+WHISTLE_ENGINE: str = "whistle"
+
+#: The **canonical** engine value of the whisper.cpp backend (ADR 0021). A TOML
+#: block name cannot contain the dot of the CLI token, so the underscore form is
+#: canonical and ``whisper.cpp`` is accepted only as an alias (ticket 47).
+WHISPER_CPP_ENGINE: str = "whisper_cpp"
 
 #: Engine names the generic layer accepts as ``transcriber.engine``. This is the
 #: single source of truth: the factory (ADR 0010) and the error message below
@@ -56,7 +70,13 @@ __all__ = [
 #: name here and a matching ``[engine.<name>]`` adapter; the schema does not change.
 #: The **first** entry is the default (:data:`DEFAULT_ENGINE`); ``whistle`` stays
 #: first so the shipped live/incremental typing is unchanged (ADR 0021 §1).
-KNOWN_ENGINES: tuple[str, ...] = ("whistle", "whisper_cpp")
+KNOWN_ENGINES: tuple[str, ...] = (WHISTLE_ENGINE, WHISPER_CPP_ENGINE)
+
+#: Non-canonical spellings the config layer forgives, folded to the canonical
+#: engine value by :func:`normalize_engine`. The ``whisper.cpp`` entry is the
+#: **CLI token** ``ges2t setup`` takes: a user who copies it into
+#: ``transcriber.engine`` must not be told the value is unknown (ticket 47).
+ENGINE_ALIASES: Mapping[str, str] = {"whisper.cpp": WHISPER_CPP_ENGINE}
 
 #: The default engine selector, kept in sync with :data:`KNOWN_ENGINES`.
 DEFAULT_ENGINE: str = KNOWN_ENGINES[0]
@@ -151,11 +171,15 @@ class StreamingConfig:
 class Config:
     """The fully resolved generic configuration.
 
-    ``engine_blocks`` holds every ``[engine.<name>]`` table exactly as parsed,
-    including blocks for engines that are not currently selected. The generic
-    layer never reads inside them. ``injection_blocks`` is the same idea for
-    ``[injection.<name>]``: raw, uninterpreted, and complete, so a backend that
-    is not currently selected is preserved for when the user switches back.
+    ``engine_blocks`` holds every ``[engine.<name>]`` table with its keys
+    normalised to the canonical engine value (``transcriber.engine``), including
+    blocks for engines that are not currently selected. The generic layer never
+    reads *inside* them; only the *name* is normalised, so
+    ``transcriber.engine = "whisper.cpp"`` and ``[engine.whisper.cpp]`` both
+    resolve to the ``whisper_cpp`` block (ticket 47). ``injection_blocks`` is the
+    same idea for ``[injection.<name>]``: raw, uninterpreted, and complete, so a
+    backend that is not currently selected is preserved for when the user
+    switches back.
     """
 
     transcriber: TranscriberConfig = TranscriberConfig()
@@ -166,6 +190,21 @@ class Config:
     streaming: StreamingConfig = StreamingConfig()
     engine_blocks: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     injection_blocks: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class _EngineBlock:
+    """One ``[engine.<name>]`` table after its name is normalised (ADR 0019).
+
+    ``canonical`` is the engine the block configures; ``spelling`` is the name it
+    was written under (so a duplicate error can name both spellings); ``body`` is
+    the raw, uninterpreted mapping that crosses the boundary to the adapter
+    (ADR 0009).
+    """
+
+    canonical: str
+    spelling: str
+    body: Mapping[str, Any]
 
 
 @dataclass(frozen=True)
@@ -203,6 +242,74 @@ def resolve_config_path(flag: str | Path | None) -> Path:
     return Path(flag)
 
 
+def normalize_engine(name: str) -> str:
+    """Return the canonical engine value for a user-supplied spelling.
+
+    ``whisper_cpp`` is canonical and ``whisper.cpp`` -- the token ``ges2t setup``
+    takes -- is folded to it (ticket 47). An unrecognised spelling is returned
+    unchanged, so the caller can report it against :data:`KNOWN_ENGINES` without
+    this function having to raise; that keeps the one normaliser usable from the
+    CLI parser, the config layer and the engine-block reader alike.
+    """
+    return ENGINE_ALIASES.get(name, name)
+
+
+def suggest_engine(name: str) -> str | None:
+    """Return the canonical engine a near-miss spelling probably meant, or ``None``.
+
+    Matching folds case and the separators that distinguish the two spellings
+    (``.``, ``-``, ``_``), so ``Whisper.CPP``, ``whisper-cpp`` and a bare
+    ``whisper`` all point at ``whisper_cpp``. This is guidance only: the value is
+    still rejected, it is never silently substituted (ADR 0020).
+    """
+    key = _engine_key(name)
+    if not key:
+        return None
+    spellings: tuple[tuple[str, str], ...] = (
+        *((alias, canonical) for alias, canonical in ENGINE_ALIASES.items()),
+        *((engine, engine) for engine in KNOWN_ENGINES),
+    )
+    for spelling, canonical in spellings:
+        spelling_key = _engine_key(spelling)
+        if key == spelling_key or (len(key) >= 4 and spelling_key.startswith(key)):
+            return canonical
+    return None
+
+
+def _engine_key(name: str) -> str:
+    """Fold a spelling to lowercase alphanumerics for :func:`suggest_engine`."""
+    return "".join(character for character in name.lower() if character.isalnum())
+
+
+def _unknown_engine_error(path: Path, name: str) -> ConfigError:
+    """Build the rejection that names the valid set and, when possible, the right value.
+
+    The valid set is :data:`KNOWN_ENGINES`; when the rejected value looks like the
+    CLI token (``whisper.cpp``) or a near miss (``whisper``), the message names
+    the canonical value and the ``ges2t setup`` token, so the spelling trap is
+    self-correcting (ticket 47).
+    """
+    known = ", ".join(repr(engine) for engine in KNOWN_ENGINES)
+    message = (
+        f"{path}: transcriber.engine = {name!r} is not a known engine; "
+        f"known engines: {known}"
+    )
+    suggestion = suggest_engine(name)
+    if suggestion is None:
+        return ConfigError(message)
+    message += f"; did you mean {suggestion!r}?"
+    if suggestion == WHISPER_CPP_ENGINE:
+        cli_token = next(
+            alias for alias, canonical in ENGINE_ALIASES.items()
+            if canonical == WHISPER_CPP_ENGINE
+        )
+        message += (
+            f" ('{cli_token}' is the spelling 'ges2t setup' takes; the config "
+            f"value is {WHISPER_CPP_ENGINE!r})"
+        )
+    return ConfigError(message)
+
+
 def load_config(path: Path | None = None) -> ConfigLoadResult:
     """Load and validate the generic configuration (ADR 0009).
 
@@ -210,8 +317,10 @@ def load_config(path: Path | None = None) -> ConfigLoadResult:
     TOML or a wrong-typed value raises :class:`ConfigError`. Unknown keys in
     the generic sections are collected into :attr:`ConfigLoadResult.warnings`.
     Keys inside ``[engine.*]`` tables are never inspected: every such table
-    crosses the boundary verbatim as a raw mapping. ``[injection.<name>]`` blocks
-    are preserved the same way, while ``injection.backend`` is the selector.
+    crosses the boundary verbatim as a raw mapping, with only its *name*
+    normalised to the canonical engine value (ticket 47).
+    ``[injection.<name>]`` blocks are preserved the same way, while
+    ``injection.backend`` is the selector.
     """
     resolved = path if path is not None else default_config_path()
 
@@ -251,24 +360,26 @@ def load_config(path: Path | None = None) -> ConfigLoadResult:
         streaming_table, _STREAMING_KEYS, path=resolved, section="streaming", warnings=warnings
     )
 
-    transcriber = TranscriberConfig(
-        engine=_read_str(
+    # The selector is normalised before it is either stored or checked, so
+    # ``whisper.cpp`` and ``whisper_cpp`` produce the same ``TranscriberConfig``
+    # and the same engine block is read for both (ticket 47).
+    engine_value = normalize_engine(
+        _read_str(
             transcriber_table,
             "engine",
             default=DEFAULT_ENGINE,
             path=resolved,
             section="transcriber",
-        ),
+        )
+    )
+    if engine_value not in KNOWN_ENGINES:
+        raise _unknown_engine_error(resolved, engine_value)
+    transcriber = TranscriberConfig(
+        engine=engine_value,
         model_path=_read_str(
             transcriber_table, "model_path", default="", path=resolved, section="transcriber"
         ),
     )
-    if transcriber.engine not in KNOWN_ENGINES:
-        known = ", ".join(repr(name) for name in KNOWN_ENGINES)
-        raise ConfigError(
-            f"{resolved}: transcriber.engine = {transcriber.engine!r} is not a known engine; "
-            f"known engines: {known}"
-        )
 
     hotkey = HotkeyConfig(
         mode=_read_str(
@@ -346,17 +457,67 @@ def _expect_table(raw: Mapping[str, Any], key: str, *, path: Path) -> Mapping[st
 
 
 def _read_engine_blocks(raw: Mapping[str, Any], *, path: Path) -> dict[str, Mapping[str, Any]]:
-    """Collect every ``[engine.<name>]`` table, uninterpreted, including unselected ones."""
+    """Collect every ``[engine.<name>]`` table, keyed by canonical engine name.
+
+    Block names go through :func:`normalize_engine` for the same reason the
+    selector does: ``transcriber.engine = "whisper.cpp"`` normalises to
+    ``whisper_cpp``, so the block it reads must be keyed ``whisper_cpp`` too
+    (ticket 47). A block written with an alias spelling is read as well, either
+    as a quoted key (``[engine."whisper.cpp"]``) or in TOML's dotted form
+    (``[engine.whisper.cpp]``, which parses as ``{"whisper": {"cpp": …}}``).
+    Two spellings of the same engine in one file are a hard error naming both,
+    rather than a silent precedence.
+    """
     table = _expect_table(raw, "engine", path=path)
     blocks: dict[str, Mapping[str, Any]] = {}
+    spellings: dict[str, str] = {}
     for name, block in table.items():
         if not isinstance(block, Mapping):
             dotted = f"engine.{name}"
             raise ConfigError(
                 f"{path}: key {dotted!r}: expected table, got {_describe_value(block)}"
             )
-        blocks[name] = block
+        resolved = _canonical_engine_block(name, block)
+        if resolved is None:
+            # A block for an engine this build does not know: preserved verbatim
+            # and ignored, exactly as ADR 0009 requires (a user may keep it while
+            # running another engine).
+            blocks[name] = block
+            continue
+        if resolved.canonical in blocks:
+            first = spellings[resolved.canonical]
+            raise ConfigError(
+                f"{path}: engine blocks {'engine.' + first!r} and "
+                f"{'engine.' + resolved.spelling!r} are both spellings of the "
+                f"{resolved.canonical!r} engine; keep one"
+            )
+        spellings[resolved.canonical] = resolved.spelling
+        blocks[resolved.canonical] = resolved.body
     return blocks
+
+
+def _canonical_engine_block(
+    name: str, block: Mapping[str, Any]
+) -> _EngineBlock | None:
+    """Resolve one parsed ``[engine.<name>]`` entry to its canonical engine.
+
+    ``None`` means the entry is not an engine this build knows, so it stays an
+    ignored block. A named alias (``whisper.cpp``) resolves directly; TOML's
+    dotted form resolves by folding the single nested key through the same
+    normaliser, so ``[engine.whisper.cpp]`` reads as ``[engine.whisper_cpp]``.
+    """
+    canonical = normalize_engine(name)
+    if canonical in KNOWN_ENGINES:
+        return _EngineBlock(canonical=canonical, spelling=name, body=block)
+    if len(block) == 1:
+        ((nested_name, nested_body),) = block.items()
+        dotted = f"{name}.{nested_name}"
+        canonical_dotted = normalize_engine(dotted)
+        if canonical_dotted in KNOWN_ENGINES and isinstance(nested_body, Mapping):
+            return _EngineBlock(
+                canonical=canonical_dotted, spelling=dotted, body=nested_body
+            )
+    return None
 
 
 def _read_injection_blocks(

@@ -11,7 +11,7 @@ through fakes — the fake builder's contract is the same one
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
@@ -30,6 +30,7 @@ from ges2t.setup_command import (
     SetupDependencies,
     SetupPlan,
     UnknownBackendError,
+    config_guidance,
     default_whisper_model,
     plan_setup,
     run_setup,
@@ -44,6 +45,9 @@ from ges2t.whisper_engine import (
     EngineLibraries,
     VulkanStatus,
     WhisperEngineError,
+    cpu_only_build_hint,
+    inspect_vulkan,
+    vulkan_dev_package_hint,
 )
 
 # --- fakes ---------------------------------------------------------------------
@@ -259,6 +263,17 @@ def test_explicit_whisper_backend_and_model_is_accepted() -> None:
     )
 
 
+def test_canonical_whisper_engine_spelling_is_accepted_as_the_backend_token() -> None:
+    # "whisper_cpp" is the config value; a user who has read the config docs must
+    # not be told it is an unknown backend (ticket 47).
+    assert plan_setup("whisper_cpp", "medium-q5_0") == SetupPlan(
+        SetupBackend.WHISPER_CPP, "medium-q5_0"
+    )
+    assert SetupBackend.WHISPER_CPP.value == "whisper.cpp"
+    assert SetupBackend.WHISPER_CPP.engine == "whisper_cpp"
+    assert SetupBackend.NEEDLE.engine == "whistle"
+
+
 def test_unpublished_whisper_quant_is_typed_and_names_the_valid_set() -> None:
     # ``small-q5_0`` is not published upstream (that is *why* the CPU default is
     # small-q8_0); the validation must reject it before any build or download.
@@ -279,8 +294,12 @@ def test_unknown_backend_is_typed_and_names_the_valid_set() -> None:
         plan_setup("whisper", None)
     error = excinfo.value
     assert error.name == "whisper"
-    assert error.valid == ("needle", "whisper.cpp")
-    assert "whisper.cpp" in str(error)
+    assert error.valid == ("needle", "whisper.cpp", "whisper_cpp")
+    message = str(error)
+    for token in error.valid:
+        assert token in message
+    # A near miss points at the right spelling as well as listing the set.
+    assert "did you mean 'whisper_cpp'?" in message
 
 
 # --- the GPU/CPU default rule (falsifiable) -----------------------------------
@@ -398,3 +417,127 @@ def test_needle_engine_failure_propagates_after_the_model_is_fetched(
         )
 
     assert fakes.log == ["needle-model", "needle-engine"]
+
+
+# --- the config line setup cannot write itself (ticket 47) ---------------------
+
+
+def test_config_guidance_prints_the_exact_engine_line() -> None:
+    plan = SetupPlan(SetupBackend.WHISPER_CPP, "medium-q5_0")
+    guidance = config_guidance(plan, path=Path("/home/u/.config/ges2t/config.toml"))
+    assert 'transcriber.engine = "whisper_cpp"' in guidance
+    assert "/home/u/.config/ges2t/config.toml" in guidance
+    # The consequence of the batch-only engine is spelled out too, so the user
+    # does not hit ticket 45's startup refusal after adding only the engine line.
+    assert "batch-only" in guidance
+    assert "enabled = false" in guidance
+
+
+def test_config_guidance_for_the_default_engine_says_no_line_is_needed() -> None:
+    plan = SetupPlan(SetupBackend.NEEDLE, "whistle")
+    guidance = config_guidance(plan, path=Path("/home/u/.config/ges2t/config.toml"))
+    assert "whistle" in guidance
+    assert "no line is needed" in guidance
+    assert "transcriber.engine" not in guidance
+
+
+def test_config_guidance_defaults_to_the_xdg_config_path() -> None:
+    plan = SetupPlan(SetupBackend.WHISPER_CPP, "medium-q5_0")
+    guidance = config_guidance(plan)
+    assert "ges2t/config.toml" in guidance
+
+
+# --- the CPU-only-build diagnostic (ticket 47, falsifiable) --------------------
+
+
+def _build_with(
+    tmp_path: Path, *, variant: BuildVariant, vulkan: VulkanStatus
+) -> EngineBuild:
+    """Return the fake build with its variant and recorded Vulkan status replaced."""
+    return replace(make_engine_build(tmp_path), variant=variant, vulkan=vulkan)
+
+
+#: A machine with the Vulkan runtime but no ``spirv-headers``: a GPU is present,
+#: so a CPU-only build is a surprise the user should be told about.
+_GPU_WITHOUT_SPIRV: VulkanStatus = VulkanStatus(
+    runtime=Path("/fake/lib/libvulkan.so.1"),
+    headers=Path("/fake/include/vulkan/vulkan.h"),
+    spirv_headers=None,
+    shader_compiler=Path("/fake/bin/glslc"),
+)
+
+
+def test_cpu_only_hint_is_silent_when_there_is_no_vulkan_runtime(
+    tmp_path: Path,
+) -> None:
+    # "No GPU at all": no hint, because there is no GPU path to lose.
+    no_gpu = VulkanStatus(
+        runtime=None, headers=None, spirv_headers=None, shader_compiler=None
+    )
+    build = _build_with(tmp_path, variant=BuildVariant.CPU, vulkan=no_gpu)
+    assert cpu_only_build_hint(build, system=FakeSystemProbe()) is None
+
+
+def test_cpu_only_hint_names_the_missing_dev_package_and_the_pacman_line(
+    tmp_path: Path,
+) -> None:
+    build = _build_with(tmp_path, variant=BuildVariant.CPU, vulkan=_GPU_WITHOUT_SPIRV)
+    # The probe agrees: runtime, vulkan headers and glslc are present, the
+    # SPIR-V header is not.
+    probe = FakeSystemProbe(
+        executables=(SHADER_COMPILER_NAME,),
+        headers=(VULKAN_HEADER_PATH,),
+        libraries=(VULKAN_LIBRARY_NAME,),
+    )
+    hint = cpu_only_build_hint(build, system=probe)
+    assert hint is not None
+    assert "spirv-headers" in hint
+    assert "CPU-only" in hint
+    assert "sudo pacman -S spirv-headers" in hint
+    assert "ges2t setup whisper.cpp" in hint
+
+
+def test_cpu_only_hint_is_the_shared_sentence_itself(tmp_path: Path) -> None:
+    # The single-source property (tickets 46/47): the setup diagnostic is not a
+    # second wording, it is exactly ``vulkan_dev_package_hint`` of the live
+    # status. If the shared function changes, setup changes with it.
+    build = _build_with(tmp_path, variant=BuildVariant.CPU, vulkan=_GPU_WITHOUT_SPIRV)
+    probe = FakeSystemProbe(
+        executables=(SHADER_COMPILER_NAME,),
+        headers=(VULKAN_HEADER_PATH,),
+        libraries=(VULKAN_LIBRARY_NAME,),
+    )
+    shared = vulkan_dev_package_hint(inspect_vulkan(probe))
+    assert shared is not None
+    assert cpu_only_build_hint(build, system=probe) == shared
+
+
+def test_cpu_only_hint_names_every_missing_dev_package(tmp_path: Path) -> None:
+    build = _build_with(tmp_path, variant=BuildVariant.CPU, vulkan=_GPU_WITHOUT_SPIRV)
+    probe = FakeSystemProbe(libraries=(VULKAN_LIBRARY_NAME,))
+    hint = cpu_only_build_hint(build, system=probe)
+    assert hint == vulkan_dev_package_hint(inspect_vulkan(probe))
+    assert hint is not None
+    # The one ``pacman`` line names only the pieces actually missing.
+    assert hint.count("sudo pacman -S") == 1
+    for package in ("vulkan-headers", "spirv-headers", "shaderc"):
+        assert package in hint
+    assert hint.count("spirv-headers") == 2  # the list and the pacman line
+
+
+def test_cpu_only_hint_is_silent_for_a_vulkan_build(tmp_path: Path) -> None:
+    full = VulkanStatus(
+        runtime=Path("/fake/lib/libvulkan.so.1"),
+        headers=Path("/fake/include/vulkan/vulkan.h"),
+        spirv_headers=Path("/fake/include/spirv/unified1/spirv.h"),
+        shader_compiler=Path("/fake/bin/glslc"),
+    )
+    build = _build_with(tmp_path, variant=BuildVariant.VULKAN, vulkan=full)
+    assert cpu_only_build_hint(build, system=_vulkan_probe()) is None
+
+
+def test_cpu_only_hint_is_silent_when_nothing_dev_is_missing(tmp_path: Path) -> None:
+    # A CPU-only build whose missing dev piece has since been installed: the
+    # "install X" advice would now be wrong, so it is not printed.
+    build = _build_with(tmp_path, variant=BuildVariant.CPU, vulkan=_GPU_WITHOUT_SPIRV)
+    assert cpu_only_build_hint(build, system=_vulkan_probe()) is None
