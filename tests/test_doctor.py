@@ -384,6 +384,14 @@ def test_engine_present_fail_when_no_pin_exists(tmp_path: Path) -> None:
 #: A Vulkan dev piece that is *missing* on the reference machine (ticket 47).
 _RUNTIME_ONLY_PROBE = FakeSystemProbe(libraries=(whisper_engine.VULKAN_LIBRARY_NAME,))
 
+#: The reference machine's shape: runtime, headers and ``glslc`` present, ``spirv-headers``
+#: missing (ticket 47's user report: an AMD GPU, a working runtime, no ``spirv-headers``).
+_MISSING_SPIRV_PROBE = FakeSystemProbe(
+    executables=(whisper_engine.SHADER_COMPILER_NAME,),
+    headers=(whisper_engine.VULKAN_HEADER_PATH,),
+    libraries=(whisper_engine.VULKAN_LIBRARY_NAME,),
+)
+
 
 def _vulkan_probe() -> FakeSystemProbe:
     """A machine whose Vulkan runtime, headers and ``glslc`` are all present."""
@@ -644,6 +652,26 @@ def test_vulkan_warns_with_the_missing_dev_package_when_a_gpu_is_present(
     assert "CPU-only" in result.summary
     assert result.fix is not None
     assert "spirv-headers" in result.fix and "pacman" in result.fix
+
+
+def test_vulkan_names_only_spirv_headers_when_that_is_the_missing_piece(
+    tmp_path: Path,
+) -> None:
+    # The reference machine's exact shape (ticket 47): GPU + runtime present, one
+    # dev package missing. Only that package may be named -- one package enables
+    # the GPU path.
+    result = check_vulkan(
+        _whisper_config(),
+        system=_MISSING_SPIRV_PROBE,
+        directory=tmp_path / "absent",
+    )
+
+    assert result.status is CheckStatus.WARN
+    assert "spirv-headers" in result.summary
+    assert "vulkan-headers" not in result.summary
+    assert "shaderc" not in result.summary
+    assert result.fix is not None
+    assert "sudo pacman -S spirv-headers" in result.fix
 
 
 def test_vulkan_ok_with_a_vulkan_engine(tmp_path: Path) -> None:
