@@ -66,6 +66,7 @@ from ges2t.config import (
     default_config_path,
     load_config,
 )
+from ges2t.console_script import BARE_COMMAND, resolve_console_script
 from ges2t.injectors.keymap import XkbError, XkbKeymap
 from ges2t.injectors.layout import (
     AUTO_LAYOUT,
@@ -87,7 +88,6 @@ from ges2t.ui.status import TrayFailure
 __all__ = [
     "EXIT_FAILURE",
     "EXIT_SUCCESS",
-    "KDE_BINDING_SECTION",
     "CheckResult",
     "CheckStatus",
     "DoctorOptions",
@@ -116,6 +116,8 @@ __all__ = [
     "diagnose_config",
     "diagnose_engine_config",
     "diagnose_injection_config",
+    "hotkey_fix",
+    "kde_binding_section",
     "render_report",
     "run_doctor",
 ]
@@ -145,27 +147,66 @@ PIPEWIRE_QUERY_TIMEOUT_SECONDS: float = 5.0
 #: Bounded connect probe for a Unix socket (the ydotoold daemon, the service).
 SOCKET_PROBE_TIMEOUT_SECONDS: float = 0.2
 
-#: The hotkey is never grabbed by ges2t (ADR 0004); this is its fixed warning.
-HOTKEY_FIX: str = (
-    "System Settings -> Shortcuts -> Add -> Command or URL: bind 'ges2t toggle' "
-    "(recommended), or 'ges2t ptt-start' and 'ges2t ptt-stop', plus 'ges2t cancel'"
+#: The hotkey is never grabbed by ges2t (ADR 0004).
+HOTKEY_SUMMARY: str = "ges2t does not grab the hotkey itself; bind the command in KDE"
+
+#: The bindable subcommands in recommendation order, each with its one-line
+#: purpose. The command form is built from the resolved console script so the
+#: printed advice is literally bindable (ticket 40).
+_BINDABLE_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("toggle", "start or stop with one key (recommended default)"),
+    ("ptt-start", "press-to-talk: bind to the key press"),
+    ("ptt-stop", "press-to-talk: bind to the key release"),
+    ("cancel", "abort a recording without transcribing"),
 )
 
-#: Printed once at the end of every report, for copying (ADR 0004, ADR 0016).
-KDE_BINDING_SECTION: str = (
-    "Recommended KDE key bindings (System Settings -> Shortcuts -> Add -> Command or URL):\n"
-    "  ges2t toggle      start or stop with one key (recommended default)\n"
-    "  ges2t ptt-start   press-to-talk: bind to the key press\n"
-    "  ges2t ptt-stop    press-to-talk: bind to the key release\n"
-    "  ges2t cancel      abort a recording without transcribing\n"
-    "ges2t never edits your compositor settings or your config file (ADR 0004)."
-)
+
+def hotkey_fix(*, console_script: str | None = None) -> str:
+    """Return the always-WARN fix line: bind the *resolved* console script.
+
+    ``console_script`` is the absolute path that
+    :func:`ges2t.console_script.resolve_console_script` returned, or ``None``
+    when it could not be resolved to an existing file; ``None`` (and the empty
+    string) falls back to the bare command. A path that does not exist is never
+    recommended, because a plausible-looking wrong path is worse than the
+    honest generic one (ticket 40).
+    """
+    executable = console_script if console_script else BARE_COMMAND
+    return (
+        "System Settings -> Shortcuts -> Add -> Command or URL: bind "
+        f"'{executable} toggle' (recommended), or '{executable} ptt-start' and "
+        f"'{executable} ptt-stop', plus '{executable} cancel'"
+    )
+
+
+def kde_binding_section(*, console_script: str | None = None) -> str:
+    """Render the copy-paste bindings, each as the resolved absolute command.
+
+    Printed once at the end of every report (ADR 0004, ADR 0016). When the
+    console script cannot be resolved, the bare command is named instead
+    (ticket 40).
+    """
+    executable = console_script if console_script else BARE_COMMAND
+    commands = tuple(f"{executable} {name}" for name, _ in _BINDABLE_COMMANDS)
+    width = max(len(command) for command in commands)
+    lines = [
+        "Recommended KDE key bindings "
+        "(System Settings -> Shortcuts -> Add -> Command or URL):",
+        *(
+            f"  {command:<{width}}  {purpose}"
+            for command, (_, purpose) in zip(commands, _BINDABLE_COMMANDS)
+        ),
+        "ges2t never edits your compositor settings or your config file (ADR 0004).",
+    ]
+    return "\n".join(lines)
+
 
 #: The package's own modules; importing one of these failing is a broken install.
 _OWN_MODULES: tuple[str, ...] = (
     "ges2t",
     "ges2t.cli",
     "ges2t.config",
+    "ges2t.console_script",
     "ges2t.interfaces",
     "ges2t.model_store",
     "ges2t.socket_proto",
@@ -247,6 +288,9 @@ class DoctorReport:
     """Every check's result, in report order, plus the derived exit code."""
 
     results: tuple[CheckResult, ...]
+    #: The resolved absolute path to this process's console script, or ``None``
+    #: for the bare-command fallback. It makes the printed bindings bindable.
+    console_script: str | None = None
 
     @property
     def failures(self) -> tuple[CheckResult, ...]:
@@ -305,6 +349,8 @@ TrayFailureProbe = Callable[[], TrayFailure | None]
 LayoutResolver = Callable[[str, str], ResolvedLayout]
 #: Compiles a resolved layout, proving libxkbcommon and the XKB data work.
 LayoutCompiler = Callable[[ResolvedLayout], None]
+#: Resolves this process's own console script to an absolute path, or ``None``.
+ConsoleScriptResolver = Callable[[], str | None]
 #: A config loader; injected so tests never read the user's real file.
 ConfigLoader = Callable[[], ConfigLoadResult]
 #: A callable returning a :class:`CheckResult`.
@@ -502,6 +548,7 @@ class DoctorProbes:
     tray_assertion: TrayAssertion = _default_tray_assertion
     layout_resolver: LayoutResolver = _default_layout_resolver
     layout_compiler: LayoutCompiler = _compile_resolved_layout
+    console_script: ConsoleScriptResolver = resolve_console_script
     listening_probe: SocketProbe = is_service_listening
     tray_failure_probe: TrayFailureProbe | None = None
 
@@ -998,12 +1045,17 @@ def check_clipboard_backend(*, backend: str, lookup: BinaryLookup | None = None)
     return _ok(name, f"injection.backend = 'clipboard' and 'wl-copy' is at {found}")
 
 
-def check_hotkey_bindings() -> CheckResult:
-    """The hotkey lives in the compositor, so this is always a warning (ADR 0004)."""
+def check_hotkey_bindings(*, console_script: str | None = None) -> CheckResult:
+    """The hotkey lives in the compositor, so this is always a warning (ADR 0004).
+
+    ``console_script`` is the resolved absolute path to this program's console
+    script, or ``None`` when it could not be resolved to an existing file; the
+    fix then falls back to the bare command (ticket 40).
+    """
     return _warn(
         "Hotkey bindings",
-        "ges2t does not grab the hotkey itself; bind the command in KDE",
-        HOTKEY_FIX,
+        HOTKEY_SUMMARY,
+        hotkey_fix(console_script=console_script),
     )
 
 
@@ -1202,6 +1254,7 @@ def build_report(config: Config, options: DoctorOptions) -> DoctorReport:
     ydotool = _ydotool_settings(config)
     model_target = _model_target(config)
     engine_target = _engine_target()
+    console_script = probes.console_script()
 
     results: list[CheckResult] = [
         _guard(
@@ -1286,9 +1339,9 @@ def build_report(config: Config, options: DoctorOptions) -> DoctorReport:
                 backend=config.injection.backend, lookup=probes.binary_lookup
             ),
         ),
-        check_hotkey_bindings(),
+        check_hotkey_bindings(console_script=console_script),
     ]
-    return DoctorReport(results=tuple(results))
+    return DoctorReport(results=tuple(results), console_script=console_script)
 
 
 def render_report(report: DoctorReport) -> str:
@@ -1317,7 +1370,7 @@ def render_report(report: DoctorReport) -> str:
             lines.append(f"  {result.name}: {result.summary}")
             lines.append(f"    fix: {result.fix}")
     lines.append("")
-    lines.append(KDE_BINDING_SECTION)
+    lines.append(kde_binding_section(console_script=report.console_script))
     return "\n".join(lines) + "\n"
 
 

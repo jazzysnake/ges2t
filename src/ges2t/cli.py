@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from ges2t import __version__
+from ges2t.console_script import BARE_COMMAND, resolve_console_script
 from ges2t.service import Command, CommandResponse, ServiceState
 from ges2t.socket_proto import ServiceNotRunningError
 
@@ -52,8 +53,8 @@ __all__ = [
     "EXIT_INTERRUPTED",
     "EXIT_SERVICE_NOT_RUNNING",
     "EXIT_SUCCESS",
-    "KDE_SHORTCUT_HINT",
     "build_parser",
+    "kde_shortcut_hint",
     "main",
 ]
 
@@ -78,15 +79,27 @@ EXIT_INTERRUPTED = 130
 #: When set (to anything non-empty), failures print a full traceback.
 DEBUG_ENVIRONMENT_VARIABLE = "GES2T_DEBUG"
 
-#: The one true way to bind a command to a key (ADR 0004). It appears in the
-#: help text of every command that is meant to be bound to a key.
-KDE_SHORTCUT_HINT = (
-    "Binding (KDE): System Settings -> Shortcuts -> Add -> Command or URL, then\n"
-    "enter the ges2t command shown above. True press-and-hold (ptt-start/ptt-stop)\n"
-    "works only when the compositor can fire separate key-press and key-release\n"
-    "commands; if it cannot, bind 'ges2t toggle' instead. ges2t never edits your\n"
-    "compositor settings or your config file."
-)
+def kde_shortcut_hint(*, console_script: str | None = None) -> str:
+    """Return the one true way to bind a command to a key (ADR 0004).
+
+    It appears in the help text of every command that is meant to be bound to a
+    key. ``console_script`` is the absolute path to this program's console script
+    that :func:`ges2t.console_script.resolve_console_script` returned, or ``None``
+    when it could not be resolved to an existing file; ``None`` (and the empty
+    string) falls back to the bare command. The bare name and ``uv run`` do not
+    start from a desktop launcher, so the absolute path is what the user must
+    bind (ticket 40).
+    """
+    executable = console_script if console_script else BARE_COMMAND
+    return (
+        "Binding (KDE): System Settings -> Shortcuts -> Add -> Command or URL, then\n"
+        f"enter '{executable} toggle' (recommended), or '{executable} ptt-start' and\n"
+        f"'{executable} ptt-stop', or '{executable} cancel'. True press-and-hold\n"
+        "(ptt-start/ptt-stop) works only when the compositor can fire separate\n"
+        f"key-press and key-release commands; if it cannot, bind '{executable} toggle'\n"
+        "instead. ges2t never edits your compositor settings or your config file."
+    )
+
 
 #: Shown at the bottom of the top-level ``--help``.
 _TOP_LEVEL_EPILOG = (
@@ -233,6 +246,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", metavar="COMMAND", title="commands")
     common = _common_parent()
+    hint = kde_shortcut_hint(console_script=resolve_console_script())
 
     subparsers.add_parser(
         "run",
@@ -254,7 +268,7 @@ def build_parser() -> argparse.ArgumentParser:
             "transcribe if it is recording. This is the recommended default key\n"
             "binding (ADR 0004)."
         ),
-        epilog=KDE_SHORTCUT_HINT,
+        epilog=hint,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subparsers.add_parser(
@@ -262,7 +276,7 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[common],
         help="start recording (press-to-talk, key press)",
         description="Begin a press-to-talk recording.",
-        epilog=KDE_SHORTCUT_HINT,
+        epilog=hint,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subparsers.add_parser(
@@ -270,7 +284,7 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[common],
         help="stop recording and transcribe (press-to-talk, key release)",
         description="End a press-to-talk recording and transcribe it.",
-        epilog=KDE_SHORTCUT_HINT,
+        epilog=hint,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subparsers.add_parser(
@@ -278,7 +292,7 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[common],
         help="abort the current recording without transcribing",
         description="Abort the current recording; nothing is transcribed or typed.",
-        epilog=KDE_SHORTCUT_HINT,
+        epilog=hint,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subparsers.add_parser(
@@ -307,7 +321,7 @@ def build_parser() -> argparse.ArgumentParser:
             "backend, the configuration (including unknown keys), the service and\n"
             "socket, and pw-record. Exits non-zero when something is broken."
         ),
-        epilog=KDE_SHORTCUT_HINT,
+        epilog=hint,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     doctor.add_argument(

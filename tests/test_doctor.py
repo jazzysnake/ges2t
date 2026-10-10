@@ -56,6 +56,8 @@ from ges2t.doctor import (
     diagnose_config,
     diagnose_engine_config,
     diagnose_injection_config,
+    hotkey_fix,
+    kde_binding_section,
     render_report,
     run_doctor,
 )
@@ -124,6 +126,7 @@ _PASSING_PROBES = DoctorProbes(
     layout_compiler=lambda resolved: None,
     listening_probe=lambda path: True,
     tray_failure_probe=None,
+    console_script=lambda: "/opt/ges2t/bin/ges2t",
 )
 
 
@@ -784,6 +787,53 @@ def test_hotkey_bindings_always_warns_with_the_system_settings_path() -> None:
     assert result.fix is not None and "System Settings" in result.fix
 
 
+def test_hotkey_bindings_names_the_resolved_console_script() -> None:
+    result = check_hotkey_bindings(console_script="/opt/ges2t/bin/ges2t")
+
+    assert result.fix is not None
+    assert "/opt/ges2t/bin/ges2t toggle" in result.fix
+    assert "bind 'ges2t toggle'" not in result.fix
+
+
+def test_hotkey_bindings_falls_back_to_the_bare_command() -> None:
+    for value in (None, ""):
+        result = check_hotkey_bindings(console_script=value)
+
+        assert result.fix is not None
+        assert "bind 'ges2t toggle'" in result.fix
+        assert "/" not in result.fix
+
+
+def test_hotkey_fix_names_every_resolved_command() -> None:
+    fix = hotkey_fix(console_script="/opt/ges2t/bin/ges2t")
+
+    for subcommand in ("toggle", "ptt-start", "ptt-stop", "cancel"):
+        assert f"/opt/ges2t/bin/ges2t {subcommand}" in fix
+
+
+def test_hotkey_fix_falls_back_to_the_bare_command() -> None:
+    for value in (None, ""):
+        fix = hotkey_fix(console_script=value)
+
+        assert "bind 'ges2t toggle'" in fix
+        assert "/" not in fix
+
+
+def test_kde_binding_section_uses_the_resolved_path_for_every_command() -> None:
+    section = kde_binding_section(console_script="/opt/ges2t/bin/ges2t")
+
+    for subcommand in ("toggle", "ptt-start", "ptt-stop", "cancel"):
+        assert f"/opt/ges2t/bin/ges2t {subcommand}" in section
+    assert "  ges2t toggle" not in section
+
+
+def test_kde_binding_section_falls_back_to_the_bare_command() -> None:
+    section = kde_binding_section(console_script=None)
+
+    assert "  ges2t toggle" in section
+    assert "/" not in section
+
+
 # -- configuration diagnosis -----------------------------------------------
 
 
@@ -891,6 +941,21 @@ def test_build_report_runs_every_check_and_merges_block_warnings(tmp_path: Path)
     assert "bogus_key" in warnings_line.summary
 
 
+def test_build_report_carries_the_resolved_console_script_into_the_bindings(
+    tmp_path: Path,
+) -> None:
+    probes = replace(_PASSING_PROBES, console_script=lambda: "/opt/ges2t/bin/ges2t")
+
+    report = build_report(
+        default_config(), DoctorOptions(config_path=tmp_path / "missing.toml", probes=probes)
+    )
+
+    assert report.console_script == "/opt/ges2t/bin/ges2t"
+    hotkey = next(r for r in report.results if r.name == "Hotkey bindings")
+    assert hotkey.fix is not None and "/opt/ges2t/bin/ges2t toggle" in hotkey.fix
+    assert "/opt/ges2t/bin/ges2t toggle" in render_report(report)
+
+
 def test_build_report_reports_a_generic_config_error_as_a_line(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     config_path.write_text("[audio]\ndevice = 123\n")
@@ -977,6 +1042,20 @@ def test_render_report_relists_failures_and_prints_the_bindings() -> None:
     assert "run 'ges2t setup'" in rendered
     assert "Recommended KDE key bindings" in rendered
     assert "ges2t toggle" in rendered
+
+
+def test_render_report_uses_the_reports_resolved_console_script() -> None:
+    report = DoctorReport(
+        results=(
+            CheckResult("Hotkey bindings", CheckStatus.WARN, "bind it", fix="do it"),
+        ),
+        console_script="/opt/ges2t/bin/ges2t",
+    )
+
+    rendered = render_report(report)
+
+    assert "/opt/ges2t/bin/ges2t toggle" in rendered
+    assert "\n  ges2t toggle" not in rendered
 
 
 def test_run_doctor_performs_no_network_io(
