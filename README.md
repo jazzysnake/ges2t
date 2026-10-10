@@ -27,9 +27,8 @@ The only machine this project has been verified on is:
 
 Every command, path and default in this document was read out of the code in this repository
 and, where it can be run safely, actually run on that machine. Steps that could **not** be
-executed by whoever wrote this document (anything requiring the Plasma settings GUI, a fresh
-download, or a real microphone) are marked **(unverified)** and the verification gap is
-recorded in
+executed by whoever wrote this document (anything requiring the Plasma settings GUI or a real
+microphone) are marked **(unverified)** and the verification gap is recorded in
 [`docs/project/live-dictation-ux/user-documentation-and-setup-guide/001-comment.md`](docs/project/live-dictation-ux/user-documentation-and-setup-guide/001-comment.md).
 
 ## 3. Requirements
@@ -249,8 +248,9 @@ not of ges2t, and it was **not verified on Plasma 6.7.5 by this documentation**
 mode, so when in doubt bind `toggle`. If you try `ptt-start`/`ptt-stop` and the second
 invocation is never sent, the recording never stops — bind `toggle` instead.
 
-`ges2t doctor` prints the same recommended commands at the end of every report, so you can
-copy them from there.
+`ges2t doctor` names the same subcommands at the end of every report, so you can use that
+list — but it prints them as bare `ges2t …`, which a shortcut cannot run; substitute your own
+absolute `.venv/bin/ges2t` path as above.
 
 ## 8. Run it
 
@@ -555,6 +555,13 @@ Hotkey bindings           WARN  ges2t does not grab the hotkey itself; bind the 
                                 fix: System Settings -> Shortcuts -> Add -> Command or URL: bind 'ges2t toggle' (recommended), or 'ges2t ptt-start' and 'ges2t ptt-stop', plus 'ges2t cancel'
 
 Summary: 22 checks, 20 ok, 2 warning(s), 0 failure(s).
+
+Recommended KDE key bindings (System Settings -> Shortcuts -> Add -> Command or URL):
+  ges2t toggle      start or stop with one key (recommended default)
+  ges2t ptt-start   press-to-talk: bind to the key press
+  ges2t ptt-stop    press-to-talk: bind to the key release
+  ges2t cancel      abort a recording without transcribing
+ges2t never edits your compositor settings or your config file (ADR 0004).
 ```
 
 `doctor` performs no network I/O, writes nothing to disk, and touches no config or system

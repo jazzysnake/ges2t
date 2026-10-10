@@ -369,6 +369,11 @@ Marked `(unverified)` in the README, and listed here with the reason:
    deleting the user's verified artifacts. The pin values (URLs, sha256, sizes) were read
    from `src/ges2t/model_store.py` and the idempotent *check* path was exercised through
    `models`/`models --verify`.
+
+   > **Corrected — `002-review.md` F-B.** The reason given in this item is false. An isolated
+   > `XDG_DATA_HOME` verifies a fresh download with no side effects on the user's artifacts,
+   > and the review did exactly that. The download is therefore **verified**, not unverified.
+   > See [Corrections after review](#corrections-after-review-002-review) below.
 5. **The tray icon's overflow-area behaviour.** "Plasma hides new AppIndicator icons in the
    tray's expanded area" is user-facing guidance, not something this ticket measured; the
    *cause* of a genuinely invisible tray that this project did hit is different and is
@@ -432,3 +437,25 @@ No source file was changed. These are reported, not fixed:
   test, exactly like ticket 34's.
 - **Two things for a possible follow-up ticket:** the misleading `ges2t toggle` binding
   advice (finding 1) and the ticket-31 board/code mismatch (finding 4).
+
+## Corrections after review (002-review)
+
+The independent review ([002-review.md](002-review.md)) passed this work with two minor
+accuracy findings. Both are corrected here and in `README.md`; no source file, test or
+`docs/setup/` logic changed.
+
+- **F-A — the README's doctor report claimed to be verbatim but omitted the KDE-bindings
+  block.** `README.md` §11 now ends the report with the six trailing lines that `doctor`
+  always appends after the summary (`KDE_BINDING_SECTION`), so the code block is the real,
+  complete output. The adjacent "copy them from there" advice was fixed too: `doctor` prints
+  the subcommands as bare `ges2t …`, not as bindable paths, so the README now says to use the
+  list and substitute the absolute `.venv/bin/ges2t` path (the bare form is what finding 1
+  above proved is not reliably bindable).
+- **F-B — the fresh `ges2t setup` download is verified, not unverified.** Item 4 above is
+  corrected: the review ran a fresh download under an isolated `XDG_DATA_HOME` (a temporary
+  directory, so the user's verified artifacts were untouched) — exit 0, with
+  `models/whistle/2.0.0/whistle.cact` (16,919,407 B) and `engine/3.2.0/libneedle.so`
+  (1,581,448 B) installed at the documented paths, both sha256 matching the pins, and a
+  second run that rewrote nothing (idempotent). The reason in item 4 ("would have required
+  deleting the user's verified artifacts") is therefore false, and `README.md` §2 no longer
+  lists "a fresh download" among the steps it could not execute.
