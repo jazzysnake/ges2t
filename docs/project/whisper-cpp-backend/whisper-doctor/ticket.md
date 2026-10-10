@@ -1,7 +1,7 @@
 # whisper backend doctor checks
 
 - **Priority:** P1
-- **Status:** in review
+- **Status:** done
 - **Complexity:** S
 - **Epic:** ../epic.md
 
