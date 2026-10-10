@@ -45,7 +45,7 @@ _(evidence appended below as work lands)_
   `DoctorProbes` fields (`whisper_engine_dir`, `system_probe`), and the wiring in `build_report`
   (inserted after the existing "Engine present", so `names[:8]` is the pinned report order).
   **No existing check function was modified.**
-- `tests/test_doctor.py`, `tests/test_whisper_engine.py` — 28 new tests (see below).
+- `tests/test_doctor.py`, `tests/test_whisper_engine.py` — 29 new tests (see below).
 
 ## The three new checks and their exact messages
 
@@ -126,15 +126,35 @@ and `src/` restored (`git status` clean after each).
 
 ```
 $ uv run pytest -q
-1157 passed in 8.15s
+1158 passed in 8.70s
 
 $ rm -rf .mypy_cache __pycache__ && uv run mypy src/ges2t tests
 Success: no issues found in 64 source files
 ```
 
 The orchestrator's `923 passed` baseline predates tickets 41–45; the branch point (`df4738f`) is
-`1129 passed`, and this ticket adds 28 tests (1157 = 1129 + 28). No test was deleted, skipped or
+`1129 passed`, and this ticket adds 29 tests (1158 = 1129 + 29). No test was deleted, skipped or
 weakened.
+
+## End-to-end CLI run (read-only; a nonexistent `--config`, so the user's file is untouched)
+
+```
+$ uv run ges2t doctor --config /tmp/ges2t-does-not-exist.toml
+...
+Whisper engine built      OK    skipped: transcriber.engine is 'whistle' (whisper.cpp not selected)
+Whisper model             OK    skipped: transcriber.engine is 'whistle' (whisper.cpp not selected)
+Vulkan device             OK    skipped: transcriber.engine is 'whistle' (whisper.cpp not selected)
+...
+Summary: 25 checks, 22 ok, 2 warning(s), 1 failure(s).
+```
+
+The three new checks sit right after "Engine present"; with the default `whistle` engine they are
+`OK`/skipped (never false failures), the 22 pre-existing checks are all present, and the only two
+warnings are the by-design ones (Hotkey bindings, Tray failures). The single failure in this run is
+`Tray backend` and is an artifact of **this worktree's fresh `.venv`** (uv created it without
+`--system-site-packages`, so `gi` is not importable); it is unrelated to this ticket and the main
+worktree's venv has `gi`. The check runs no microphone, clipboard, keystroke, window, notification,
+`sudo`, service or network action — every probe is an inspection (ADR 0016).
 
 ## Notes for the reviewer
 
