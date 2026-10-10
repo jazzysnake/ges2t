@@ -21,7 +21,7 @@ from `doctor`, not from a startup failure they cannot interpret.
       hash-verified against its pinned sha256; name the exact file and expected size.
 - [ ] A **GPU/Vulkan** check: report whether a Vulkan device is available and which one; when not,
       a **WARN** stating the CPU cost (~6× real time) and that the default model is `small-q8_0`.
-- [ ] When `transcriber.backend = "whisper_cpp"` and `streaming.enabled = true`, the checks explain
+- [ ] When `transcriber.engine = "whisper_cpp"` and `streaming.enabled = true`, the checks explain
       the **startup rejection** (this config will not start) rather than reporting a healthy-but-refused
       state.
 - [ ] With `needle` selected, the whisper checks are `OK`/skipped rather than false failures.

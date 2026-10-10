@@ -37,7 +37,7 @@ batch-only limitation documented. The default backend is unchanged.
 ## Acceptance criteria
 
 - [ ] `uv run pytest` green (headless) and `uv run mypy src/ges2t tests` 0 errors — ADR 0014/0019.
-- [ ] `transcriber.backend = "whisper_cpp"` selects it; the **default stays `needle`** and Whistle's
+- [ ] `transcriber.engine = "whisper_cpp"` selects it; the **default stays `needle`** and Whistle's
       behaviour is unchanged.
 - [ ] The model loads **once, at service start**, through `ctypes` over `libwhisper.so`; there is **no
       per-utterance spawn or reload**. The non-model round trip is **measured and reported as a number**
@@ -56,7 +56,7 @@ batch-only limitation documented. The default backend is unchanged.
       dev packages for a GPU build) and **fails with the exact package list**; no `sudo`, no package
       installs, no fetching of build tooling. No Vulkan runtime → **CPU-only build**.
 - [ ] `ges2t doctor` checks the built library, the resolved model, and Vulkan availability.
-- [ ] **Manual, on the reference machine (user-owned):** with `transcriber.backend = "whisper_cpp"`,
+- [ ] **Manual, on the reference machine (user-owned):** with `transcriber.engine = "whisper_cpp"`,
       speak → the correct text is typed into an editor **and** a terminal.
 - [ ] Every ticket's `docs/project/README.md` row is `done`.
 

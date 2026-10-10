@@ -8,7 +8,7 @@
 ## Current state / context
 
 Configuration is TOML at `~/.config/ges2t/config.toml` (ADR 0009); the backend is chosen by
-`transcriber.backend`. Ticket 34 set the precedent for **refusing to start** on a contradictory config
+`transcriber.engine`. Ticket 34 set the precedent for **refusing to start** on a contradictory config
 (`clipboard` + streaming is a hard startup error naming both settings). The user requires the same
 strictness here: **on launch, the config must be validated**, and a whisper config that cannot work
 must fail loudly rather than degrade.
@@ -17,16 +17,17 @@ must fail loudly rather than degrade.
 
 ## Definition of done
 
-- [ ] `transcriber.backend = "whisper_cpp"` is accepted and selects the adapter; `needle` remains the
+- [ ] `transcriber.engine = "whisper_cpp"` is accepted (added to `KNOWN_ENGINES`) and selects the adapter; `needle` remains the
       default and its behaviour is unchanged.
 - [ ] The **needle model is selectable** too (default `whistle`), so neither engine's model is
       hardcoded (ADR 0021).
-- [ ] A `[transcriber.whisper_cpp]` block (named consistently with the existing config vocabulary):
+- [ ] The existing `[engine.whisper_cpp]` block (ticket 43's, named in the project's `[engine.<name>]`
+      vocabulary — **not** a new `[transcriber.…]` namespace):
       **model** (default per the GPU/CPU rule below), **gpu** (default: auto), **threads** (default:
       the machine's). Every value validated with a typed, actionable error.
 - [ ] **Default model rule** (ADR 0021): `medium-q5_0` when a Vulkan device is available, `small-q8_0`
       otherwise; overridable. It is falsifiable in a test.
-- [ ] **Startup validation** — with `transcriber.backend = "whisper_cpp"`, the service **refuses to
+- [ ] **Startup validation** — with `transcriber.engine = "whisper_cpp"`, the service **refuses to
       start** (clear error naming the offending setting(s)) when:
       - `streaming.enabled = true`;
       - the configured model is not acquired on disk;

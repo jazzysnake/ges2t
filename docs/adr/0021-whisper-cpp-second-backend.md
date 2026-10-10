@@ -66,7 +66,7 @@ the model is loaded **once at service start**.
 
 ## Decision
 
-1. **whisper.cpp is a second backend**, selected by `transcriber.backend = "whisper_cpp"`; the
+1. **whisper.cpp is a second backend**, selected by `transcriber.engine = "whisper_cpp"`; the
    **default backend remains `needle`**, so the shipped live/incremental typing is unchanged.
 2. **In-process integration**: `ctypes` over `libwhisper.so` and the `libggml*.so` libraries, with the
    model **loaded once at service start and kept resident**. No per-utterance subprocess, no reload.
@@ -85,7 +85,7 @@ the model is loaded **once at service start**.
 7. **Setup requires, and never installs, its prerequisites**: it checks for the C++ toolchain,
    `cmake`, and — for the GPU build — the Vulkan dev packages, and fails with the exact `pacman` line.
    No `sudo`, no package installs, no fetching of build tooling. No Vulkan runtime → **CPU-only build**.
-8. **Startup validation is strict**: with `transcriber.backend = "whisper_cpp"`, a config is rejected
+8. **Startup validation is strict**: with `transcriber.engine = "whisper_cpp"`, a config is rejected
    at startup when `streaming.enabled = true`, when the configured model is not acquired, or when the
    whisper library is not built. **Model-vs-GPU sizing is deliberately not checked.**
 9. **Licence**: whisper.cpp and the Whisper weights are MIT.
