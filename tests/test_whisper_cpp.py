@@ -577,6 +577,30 @@ def test_startup_builds_and_loads_the_whisper_transcriber_once(
     assert len(fake.loaded) == 1  # loaded exactly once, at startup
 
 
+def test_a_whisper_load_failure_is_fatal_with_a_clear_message(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from ges2t import pipeline
+    from ges2t.ui.status import NullStatusUI
+
+    class _FailingWhisper(WhisperCppTranscriber):
+        def load(self) -> None:
+            raise WhisperCppLoadError("the whisper.cpp engine library is missing at /nope/libwhisper.so")
+
+    failing = _FailingWhisper(WhisperCppConfig())
+    monkeypatch.setattr(pipeline, "build_transcriber", lambda config: failing)
+    monkeypatch.setattr(pipeline, "build_audio_source", lambda config: FakeAudioSource())
+    monkeypatch.setattr(pipeline, "build_injector", lambda config: FakeInjector())
+
+    config = Config(transcriber=TranscriberConfig(engine="whisper_cpp"))
+    result = pipeline.run_service(config, status_ui=NullStatusUI())
+
+    assert result != 0
+    stderr = capsys.readouterr().err
+    assert "could not start the service" in stderr
+    assert "libwhisper.so" in stderr
+
+
 def test_build_transcriber_still_rejects_an_unknown_engine() -> None:
     from ges2t import pipeline
 

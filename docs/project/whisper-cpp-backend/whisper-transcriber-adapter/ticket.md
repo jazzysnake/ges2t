@@ -1,7 +1,7 @@
 # whisper.cpp Transcriber adapter (in-process)
 
 - **Priority:** P1
-- **Status:** in progress
+- **Status:** in review
 - **Complexity:** M
 - **Epic:** ../epic.md
 
@@ -23,27 +23,28 @@ Measured properties that shape the adapter ([ADR 0021](../../../adr/0021-whisper
 
 ## Definition of done
 
-- [ ] `WhisperCppTranscriber` implementing the `Transcriber` Protocol: `name = "whisper_cpp"`,
+- [x] `WhisperCppTranscriber` implementing the `Transcriber` Protocol: `name = "whisper_cpp"`,
       `supports_streaming = False`, `ensure_model(progress)`, `load()`, `transcribe(buffer)`,
       `close()`.
-- [ ] **`load()` loads the model once**; the service calls it **at startup** (wire this), and the model
-      stays resident for the service lifetime. `load()`/`close()` are idempotent; a load failure raises
-      a typed error the service treats as fatal with a clear message.
-- [ ] Decode parameters pinned in the ctypes params: `no_timestamps` on, greedy
+- [x] **`load()` loads the model once**; the service calls it **at startup** (wired in
+      `pipeline._TRANSCRIBER_BUILDERS` and exercised by `_startup`), and the model stays resident for
+      the service lifetime. `load()`/`close()` are idempotent; a load failure raises a typed
+      `WhisperCppLoadError` the service treats as fatal with a clear message.
+- [x] Decode parameters pinned in the ctypes params: `no_timestamps` on, greedy
       (`best_of = beam_size = 1`), language and thread count configurable.
-- [ ] GPU/CPU device selection: use Vulkan when the built engine advertises a device, otherwise CPU;
-      the choice is **recorded/observable**, never a silent switch.
-- [ ] Engine timings whisper.cpp does not expose are `None` or supplied by ges2t's own clock, and this
+- [x] GPU/CPU device selection: use Vulkan when the built engine advertises a device, otherwise CPU;
+      the choice is recorded (`Transcriber.device`) and logged, never a silent switch.
+- [x] Engine timings whisper.cpp does not expose are `None` or supplied by ges2t's own clock, and this
       is documented — the same situation ADR 0011 records for the Whistle streaming path.
-- [ ] **Framework overhead measured and reported as a number** with its method: the non-model round
-      trip for one dictation must be inside ADR 0001's 1 s budget, and the resident-model benefit
-      (no per-call load) is stated.
-- [ ] Tests: a **fake library** drives the Protocol contract; **one test drives the real
+- [x] **Framework overhead measured and reported as a number** with its method: ~8.5 ms non-model for a
+      25 s dictation (ADR 0001's 1 s budget), and the resident-model benefit (~41 ms tiny / ~113 ms
+      medium one-time load, never paid per utterance) is stated — see `001-comment.md`.
+- [x] Tests: a **fake library** drives the Protocol contract; **one test drives the real
       `libwhisper.so`** against a small cached model (skipped, not silently passed, when the library or
-      model is absent — ADR 0014). Falsify the wiring (e.g. drop the `-nt` parameter path, or the model
-      path) and watch a test fail, then revert.
-- [ ] `uv run pytest` and `uv run mypy src/ges2t tests` green; report counts.
-- [ ] `001-comment.md` records the exact ctypes calls, the device rule, the pinned decode, and the
+      model is absent — ADR 0014). Falsified the wiring (dropped the `-nt` parameter path and the model
+      path) and watched the tests fail, then reverted.
+- [x] `uv run pytest` and `uv run mypy src/ges2t tests` green; report counts.
+- [x] `001-comment.md` records the exact ctypes calls, the device rule, the pinned decode, and the
       overhead numbers.
 
 ## Notes
