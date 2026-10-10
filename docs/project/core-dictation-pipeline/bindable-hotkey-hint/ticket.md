@@ -26,17 +26,36 @@ place for it: a user runs `ges2t doctor`, is told exactly what to bind, binds it
 This is the same class the project has already been bitten by — **shipped output that reads as
 verification or as instruction and is neither.**
 
+## The fix the user asked for
+
+The user bound this by hand and confirmed it works:
+
+```
+/home/matee/Workspace/Personal/ges2t/.venv/bin/ges2t toggle
+```
+
+**So the fix is not better prose about paths — it is for the tool to print its own resolved path.**
+`doctor` is running as that very console script, so it can work out where it is and say so, turning a
+generic example into an instruction that works on the machine in front of the user. Ticket 19's README
+then has something concrete to point at instead of explaining the problem in prose.
+
 ## Definition of done
 
+- [ ] **Preferred form — resolve the real path.** The binding advice prints the path of the console script
+      the process is *actually running as*, not a generic `ges2t toggle`. In a venv the console script sits
+      beside the interpreter, so `Path(sys.executable).with_name("ges2t")` resolves it. **Verify the file
+      exists before recommending it**; fall back to the bare command when the path cannot be determined or
+      does not exist — a plausible-looking wrong path is worse than the honest generic one. Target shape:
+      `/home/matee/Workspace/Personal/ges2t/.venv/bin/ges2t toggle`, a real resolved path, not an example.
 - [ ] Every user-facing string that names a command to bind names a command that **actually works from a
-      desktop launcher** — the absolute path to the console script, or an equally reliable form.
+      desktop launcher**.
 - [ ] The strings and the README **agree**. Ticket 19's README is the reference for the correct form;
       do not invent a third variant.
-- [ ] The advice accounts for the two distinct cases it must cover: a venv install (absolute path to
-      `.venv/bin/ges2t`) and a system install (bare `ges2t` on `PATH`). Pick whichever the message can
-      honestly determine, and if it cannot determine it, say both without pretending one is universal.
-- [ ] **Tests pin the strings**, so they cannot drift back to a non-bindable form. Falsify: change one
-      back and show the test fails.
+- [ ] The advice stays correct for a **system** install (`/usr/bin/ges2t` on `PATH`), where the resolved
+      path is still right — do not assume a venv.
+- [ ] **Tests pin the behaviour**, including the **fallback** (unresolvable or non-existent → bare
+      command). Falsify both: break the resolution and show the relevant test fails; remove the fallback
+      and show that test fails.
 - [ ] Confirm no other shipped output makes the same claim (`grep` for `ges2t toggle`, `ges2t ptt`,
       `yolobind`, etc. across `src/`, and check `doctor`'s own rendered output).
 - [ ] `uv run pytest`, `uv run mypy src/ges2t tests` green.
