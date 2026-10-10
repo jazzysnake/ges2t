@@ -76,7 +76,7 @@ documentation that takes a fresh machine to a working dictation.
 | 33 | [committed-delta-interface](live-dictation-ux/committed-delta-interface/ticket.md) — carry committed text separately from the pending tail | S | done | 32 | feat/committed-delta-interface (merged 78f87fc) |
 | 34 | [incremental-typing](live-dictation-ux/incremental-typing/ticket.md) — type committed words as they are committed (**amends ADR 0011**, sign-off given) | M | done | 32, 33 | feat/incremental-typing (merged 5eeca4d) |
 | 35 | [streaming-vs-batch-quality](live-dictation-ux/streaming-vs-batch-quality/ticket.md) — measure streaming vs batch **accuracy against ground truth** (gates nothing, blocks nothing) | M | to do | — | — |
-| 39 | [accuracy-levers](live-dictation-ux/accuracy-levers/ticket.md) — measure which input-side lever (LF high-pass, gain/clipping, streaming-vs-batch) actually moves accuracy, **before** building a filter | M | in progress | — | feat/accuracy-levers |
+| 39 | [accuracy-levers](live-dictation-ux/accuracy-levers/ticket.md) — measure which input-side lever (LF high-pass, gain/clipping, streaming-vs-batch) actually moves accuracy, **before** building a filter | M | in review | — | feat/accuracy-levers |
 
 ---
 
