@@ -844,14 +844,13 @@ def test_setup_prints_the_rebuild_reason_notice(
         setup_command, "default_dependencies", _returns(fakes.dependencies)
     )
     fakes.whisper_engine.notice_message = (
-        "rebuilding: the Vulkan development packages are now available "
-        "(was CPU-only)"
+        "rebuilding: the Vulkan dev packages are now available (was CPU-only)"
     )
 
     assert main(["setup", "whisper.cpp", "tiny-q8_0"]) == EXIT_SUCCESS
 
     out = capsys.readouterr().out
-    assert "rebuilding: the Vulkan development packages" in out
+    assert "rebuilding: the Vulkan dev packages" in out
 
 
 # -- models ---------------------------------------------------------------

@@ -691,8 +691,7 @@ def test_ensure_engine_upgrades_a_cpu_build_when_vulkan_becomes_available(
     assert second.variant is BuildVariant.VULKAN
     # ...and says why, once, in one line.
     assert messages == [
-        "rebuilding: the Vulkan development packages are now available "
-        "(was CPU-only)"
+        "rebuilding: the Vulkan dev packages are now available (was CPU-only)"
     ]
 
 
@@ -836,21 +835,73 @@ def test_ensure_engine_vulkan_preference_over_an_existing_cpu_build_errors(
     assert installed.variant is BuildVariant.CPU
 
 
+def test_ensure_engine_vulkan_preference_without_vulkan_notices_nothing_first(
+    tmp_path: Path,
+) -> None:
+    # R1: the explicit ``vulkan`` gate is **redundant for the error** (the generic
+    # prerequisite check raises the same typed error) but **load-bearing for the
+    # ordering**: without it, ``_rebuild_reason`` would fire first and print a
+    # false "the Vulkan dev packages are now available" line *before* the error.
+    # This test locks that ordering.
+    builder = RecordingBuilder()
+    ensure_engine(directory=tmp_path / "engine", system=_cpu_probe(), builder=builder)
+    messages, notice = _notices()
+    with pytest.raises(PrerequisiteError) as caught:
+        ensure_engine(
+            directory=tmp_path / "engine",
+            system=_cpu_probe(),
+            builder=builder,
+            preference=GpuPreference.VULKAN,
+            notice=notice,
+        )
+    assert "spirv-headers" in str(caught.value)
+    assert messages == []
+    assert builder.builds == 1
+
+
+def test_ensure_engine_forced_vulkan_preference_without_vulkan_still_errors(
+    tmp_path: Path,
+) -> None:
+    # R6: ``--rebuild`` with ``gpu = "vulkan"`` on a machine that cannot build
+    # Vulkan is still the typed error, never a silent CPU build -- and, like R1,
+    # it prints no "forced" notice before the error.
+    builder = RecordingBuilder()
+    ensure_engine(directory=tmp_path / "engine", system=_cpu_probe(), builder=builder)
+    messages, notice = _notices()
+    with pytest.raises(PrerequisiteError) as caught:
+        ensure_engine(
+            directory=tmp_path / "engine",
+            system=_cpu_probe(),
+            builder=builder,
+            preference=GpuPreference.VULKAN,
+            force=True,
+            notice=notice,
+        )
+    assert "spirv-headers" in str(caught.value)
+    assert "sudo pacman -S" in str(caught.value)
+    assert builder.builds == 1
+    assert messages == []
+
+
 def test_ensure_engine_force_rebuilds_an_already_best_build(tmp_path: Path) -> None:
     # The ``--rebuild`` escape hatch: the old manual workaround was to delete the
-    # install directory by hand.
+    # install directory by hand. A forced rebuild is also *labelled* as forced
+    # (ticket 51, R4), so it is not silently identical to an automatic one.
     builder = RecordingBuilder()
     ensure_engine(directory=tmp_path / "engine", system=_cpu_probe(), builder=builder)
     ensure_engine(directory=tmp_path / "engine", system=_cpu_probe(), builder=builder)
     assert builder.builds == 1
+    messages, notice = _notices()
     ensure_engine(
         directory=tmp_path / "engine",
         system=_cpu_probe(),
         builder=builder,
         force=True,
+        notice=notice,
     )
     assert builder.builds == 2
     assert builder.requests[1].variant is BuildVariant.CPU
+    assert messages == ["rebuilding: forced by --rebuild"]
 
 
 # --- The real builder, driven by a fake runner --------------------------------
@@ -1069,15 +1120,24 @@ def test_a_failed_rebuild_leaves_the_previous_build_intact(tmp_path: Path) -> No
 def test_a_failed_fresh_build_leaves_no_engine_verify_build_accepts(
     tmp_path: Path,
 ) -> None:
+    # A fresh **Vulkan** build whose compiler produced no ``libggml-vulkan`` must
+    # leave *nothing* at the destination, not merely "nothing verify_build
+    # accepts": an absent or empty directory is ``verify_build(...) is None``
+    # too, so that assertion alone would still pass if the failed build had
+    # copied a library set straight into the install path instead of staging it
+    # (ticket 51, R2). The extra assertions are what make it fail there.
     destination = tmp_path / "engine"
     failing = WhisperCppBuilder(
-        runner=FakeCommandRunner(produce_libraries=False),
-        system=_cpu_probe(),
+        runner=FakeCommandRunner(vulkan_library=False),
+        system=_vulkan_probe(),
         build_root=tmp_path / "scratch",
     )
     with pytest.raises(BuildFailedError):
-        failing.build(_request(BuildVariant.CPU, destination))
+        failing.build(_request(BuildVariant.VULKAN, destination))
     assert verify_build(destination) is None
+    assert list(destination.iterdir()) == []
+    # The staged tree is removed too: nothing transient survives the failure.
+    assert list(tmp_path.glob(".engine.staging-*")) == []
 
 
 def test_builder_raises_prerequisite_error_when_cmake_is_absent(

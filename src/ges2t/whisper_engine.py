@@ -1360,17 +1360,28 @@ def _satisfies(installed: BuildVariant, desired: BuildVariant) -> bool:
     return installed is BuildVariant.VULKAN or installed is desired
 
 
-def _rebuild_reason(installed: EngineBuild, desired: BuildVariant) -> str:
-    """One line saying why an existing build is being replaced."""
-    if (
-        desired is BuildVariant.VULKAN
-        and installed.variant is BuildVariant.CPU
-    ):
-        return (
-            "rebuilding: the Vulkan development packages are now available "
-            "(was CPU-only)"
-        )
-    return f"rebuilding: {installed.variant.label} -> {desired.label}"
+def _rebuild_reason() -> str:
+    """One line saying why an existing build is being replaced.
+
+    The variant-aware policy rebuilds in **exactly one** situation: an installed
+    **CPU** build is replaced by a **Vulkan** one once the dev pieces appear.
+    :func:`_satisfies` keeps a Vulkan build and keeps a CPU build that is already
+    the target, and :class:`BuildVariant` has only those two members, so the generic
+    ``"<installed> -> <desired>"`` fallback this function used to carry was
+    unreachable (ticket 51, R3) and has been removed. If a future policy adds a
+    second rebuild reason, it must add its own sentence here rather than inherit
+    this one.
+    """
+    return "rebuilding: the Vulkan dev packages are now available (was CPU-only)"
+
+
+def _forced_rebuild_reason() -> str:
+    """One line saying a rebuild was **forced** by ``--rebuild`` (ticket 51, R4).
+
+    A forced rebuild bypasses the no-op for an already-best build, so without this
+    line it would be indistinguishable from the automatic variant-aware rebuild.
+    """
+    return "rebuilding: forced by --rebuild"
 
 
 def _notify(notice: NoticeCallback | None, message: str) -> None:
@@ -1418,7 +1429,8 @@ def ensure_engine(
     4. **Build.** The only network access is the pinned clone inside the builder
        (ADR 0018). ``force`` bypasses the no-op for an already-best build (the
        ``--rebuild`` escape hatch), while still honouring the preference and the
-       prerequisite gate.
+       prerequisite gate; it emits its own "forced" notice, so a forced rebuild
+       reads as forced rather than identical to a variant-aware one.
     """
     probe = system if system is not None else HostSystemProbe()
     target = directory if directory is not None else engine_dir(version)
@@ -1437,8 +1449,10 @@ def ensure_engine(
     if preference is GpuPreference.VULKAN and not vulkan.available:
         raise PrerequisiteError(check_prerequisites(BuildVariant.VULKAN, probe))
 
-    if installed is not None:
-        _notify(notice, _rebuild_reason(installed, desired))
+    if force:
+        _notify(notice, _forced_rebuild_reason())
+    elif installed is not None:
+        _notify(notice, _rebuild_reason())
 
     report = check_prerequisites(desired, probe)
     if not report.satisfied:

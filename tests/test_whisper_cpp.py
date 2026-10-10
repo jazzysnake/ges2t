@@ -257,8 +257,15 @@ def test_empty_language_is_auto_detect(tmp_path: Path) -> None:
 def test_load_uses_the_model_override(tmp_path: Path) -> None:
     model = _write_model(tmp_path)
     fake = FakeWhisperLibrary()
+    # ``engine_directory`` is pinned so device resolution reads a directory with
+    # no manifest (CPU), exactly like the sibling load tests below: otherwise the
+    # default ``gpu = auto`` would consult the user's *real* engine store and a
+    # installed Vulkan build would flip ``use_gpu`` and fail this model-path test.
     transcriber = WhisperCppTranscriber(
-        WhisperCppConfig(), model_path_override=model, library=fake
+        WhisperCppConfig(),
+        model_path_override=model,
+        library=fake,
+        engine_directory=tmp_path,
     )
     transcriber.load()
     assert fake.loaded == [(model, False)]
