@@ -1,6 +1,6 @@
 # 0021 — whisper.cpp as a second, in-process, batch-only transcriber backend
 
-- **Status:** proposed (needs the user's explicit sign-off)
+- **Status:** accepted (user sign-off 2026-10-10)
 - **Date:** 2026-10-10
 - **Related:** 0005, 0006, 0010, 0011, 0016, 0017, 0018, 0019, 0020
 - **Updates:** 0016 (the CLI surface) and 0017 (model acquisition) — recorded here rather than as
