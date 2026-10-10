@@ -269,3 +269,30 @@ PY
 - **Whether any user actually had `ges2t` shadowed on `PATH`.** The defect was verified from the
   install layout and ADR 0004, not reproduced by the user binding a failing shortcut; the user's
   own working command is the positive evidence for the fix.
+
+## 9. Correction — the symlink test now uses a real filesystem (review follow-up)
+
+[002-review.md](002-review.md) (Verdict: request changes, §1 and Blockers item 1) found that
+`test_does_not_follow_the_virtualenv_python_symlink` did not test the property it names: it injected
+the non-existent fake interpreter `/home/u/proj/.venv/bin/python`, so `Path(...).resolve()` was a
+no-op and the assertion passed for a resolving resolver too. The issue's central subtlety was
+therefore unpinned, and a one-word `.resolve()` refactor passed all 922 tests.
+
+The test was strengthened to build the trap on the **real filesystem** in `tmp_path`, using the
+**real** `_is_file` probe (no injected `exists`): a venv `bin/ges2t`, a real `python` symlink to
+`usr/bin/python3`, and a *different* `usr/bin/ges2t`. A resolver that follows the symlink now names
+the wrong side and the assertion fails; the correct resolver keeps the venv script. A second
+test, `test_returns_none_when_a_real_candidate_does_not_exist`, exercises the existence gate with the
+real probe. `src/` is unchanged; only `tests/test_console_script.py` changed.
+
+Falsification (chosen because it is the ticket's core behaviour): adding `.resolve()` to the
+resolver makes the strengthened test fail with
+
+```console
+FAILED tests/test_console_script.py::test_does_not_follow_the_virtualenv_python_symlink
+E   AssertionError: assert '/tmp/pytest-.../usr/bin/ges2t' == '/tmp/pytest-.../venv/bin/ges2t'
+1 failed, 7 passed
+```
+
+and reverting `.resolve()` (sha256 `5b9bd5b3d68f8d9f5c27deb8bb66952213f9bdf7704ccc3d9a1bdc8894e20779`,
+byte-identical) restores `8 passed`. `001`'s other claims are unchanged by this correction.
