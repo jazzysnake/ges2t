@@ -146,6 +146,16 @@ This report is what the README reproduces as its worked example; the two `WARN` 
 expected warnings the README names (tray-failures unreadable from outside the service, and
 the always-manual hotkey binding). Exit 0 with no `FAIL` is the healthy state.
 
+`--verify` was run too (it hashes the weights against the pin):
+
+```console
+$ uv run ges2t doctor --verify | grep -E 'Model verified|Model present|Summary'
+Model present             OK    whistle.cact is present at /home/matee/.local/share/ges2t/models/whistle/2.0.0/whistle.cact (16919407 bytes)
+Model verified            OK    the model at /home/matee/.local/share/ges2t/models/whistle/2.0.0/whistle.cact matches the pinned sha256
+Summary: 22 checks, 20 ok, 2 warning(s), 0 failure(s).
+EXIT=0
+```
+
 **Noise observed on stderr, from a dependency, not from ges2t:**
 
 ```console
@@ -267,7 +277,7 @@ checks are marked; the rest can warn or succeed. All 22 are covered.
 | 9 | Engine config valid — **FAIL**: `[engine.whistle]` out of range | §10 `window_seconds`/`chunk_seconds` traps | [x] |
 | 10 | Injection config valid — **FAIL**: `[injection.<backend>]` | §10 both injection blocks | [x] |
 | 11 | Config warnings — WARN: unknown keys | §10 (tolerated but surfaced); §11 unknown-keys row | [x] |
-| 12 | Audio device — WARN when absent, **FAIL** if syntactically invalid | §10 `audio.device`; §11 "nothing at all, for a short or quiet press" | [x] |
+| 12 | Audio device — WARN when absent, **FAIL** if syntactically invalid | §10 `audio.device`; §11 "Nothing is typed and the run ends normally (`idle`)" | [x] |
 | 13 | `pw-record` present — **FAIL** | §3 requirements table (`pipewire`) | [x] |
 | 14 | PipeWire session — **FAIL** | §3; §11 doctor table | [x] |
 | 15 | `ydotoold` — **FAIL**: daemon unreachable | §5 the whole section; §11 first row | [x] |
@@ -301,7 +311,7 @@ would hit it.
 | 8. `uv run ges2t run` | **not executed** (the user's service already holds the socket) | the clash message and the unit's behaviour are quoted from the code |
 | 8. systemd unit | `systemd-analyze --user verify` **executed**; install/enable **not executed** | valid unit, exit 0; tray environment **inspected** via `show-environment` |
 | 9. Dictate | **not executed** (forbidden: it would record the microphone and type) | the three behaviours are quoted from code, from ADR 0011's amendment and from ticket 34's user-run live test |
-| 11. `uv run ges2t doctor`, `doctor --verify` | **executed** (doctor and `models --verify`) | 22 checks, 0 failures, exit 0 |
+| 11. `uv run ges2t doctor` / `doctor --verify` | **executed** | 22 checks, 0 failures, exit 0 with and without `--verify` |
 | 11. failure paths | **executed** with a fake `XDG_RUNTIME_DIR` and temporary bad configs | exit 2; unknown-key WARN; type-error FAIL, all as documented |
 
 **Places where the existing instructions were wrong, missing or out of order, now fixed in the
