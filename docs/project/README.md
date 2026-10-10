@@ -57,6 +57,7 @@ speak → `ges2t toggle` types the right text into a text editor and a terminal.
 | 36 | [clipboard-injection-timeout](core-dictation-pipeline/clipboard-injection-timeout/ticket.md) — `wl-copy` forks by default, so the immediate path blocked on its inherited stdout/stderr pipes and reported failure after a successful write (corrective for 25; found by the user's manual run) | S | done | 25 | feat/clipboard-injection-timeout (merged ddeb278) |
 | 37 | [pin-clipboard-real-seam-payload](core-dictation-pipeline/pin-clipboard-real-seam-payload/ticket.md) — pin that a non-empty payload actually reaches the child's stdin in the real immediate runner (mutating it to `b""` left all 877 tests green) | XS | done | 36 | feat/pin-clipboard-real-seam-payload (merged 53d3c79) |
 | 38 | [clipboard-paste-keys-default](core-dictation-pipeline/clipboard-paste-keys-default/ticket.md) — default `paste_keys` `ctrl+v` → `ctrl+shift+v` (the shipped default had been exercised by nobody; the caveat that an unbound `ctrl+shift+v` pastes nothing is documented with the default) | XS | done | 25 | feat/clipboard-paste-keys-default (merged 47431eb) |
+| 40 | [bindable-hotkey-hint](core-dictation-pipeline/bindable-hotkey-hint/ticket.md) — the binding advice `doctor`/`cli` print (`ges2t toggle`) is not on a shortcut's `PATH`, so it is not literally bindable | XS | to do | 12, 19 | — |
 
 ## Epic 2 — [Live dictation UX](live-dictation-ux/epic.md) · P1
 
@@ -110,6 +111,7 @@ independent and may run in parallel (they touch disjoint files).
 | 20 | 37 (pin the real-seam payload delivery) |
 | 21 | 38 (the `paste_keys` default) · 34 (incremental typing; disjoint files apart from a `pipeline.py` docstring) |
 | 22 | 19 (docs) · 39 (accuracy levers; disjoint files) |
+| 23 | 40 (corrective: the hotkey advice the tool prints) |
 
 Serialization is also required wherever two tickets touch the same file: `10 → 11/12`
 (`cli.py`, `doctor.py`), `11 → 16` (`pipeline.py`), `17 → 18` (`pipeline.py`).

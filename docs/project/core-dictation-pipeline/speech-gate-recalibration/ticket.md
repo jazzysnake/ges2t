@@ -1,7 +1,7 @@
 # Recalibrate the speech gate on real device idle audio
 
 - **Priority:** P0
-- **Status:** to do
+- **Status:** blocked
 - **Complexity:** M
 - **Epic:** ../epic.md
 
