@@ -1,7 +1,7 @@
 # Rebuild the engine when a better variant becomes available
 
 - **Priority:** P1
-- **Status:** to do
+- **Status:** in progress
 - **Complexity:** S
 - **Epic:** ../epic.md
 
