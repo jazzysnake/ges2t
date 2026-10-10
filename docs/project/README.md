@@ -85,7 +85,7 @@ documentation that takes a fresh machine to a working dictation.
 
 A second, **selectable** `Transcriber` on whisper.cpp, integrated **in-process** (`ctypes`, model
 resident from service start) and **batch-only**, supporting the full ggml model range and defaulting to
-`medium-q5_0` on GPU devices and `small-q5_0` on CPU-only ones. The **default backend stays
+`medium-q5_0` on GPU devices and `small-q8_0` on CPU-only ones. The **default backend stays
 `needle`/Whistle**, so shipped live/incremental typing is unchanged; choosing whisper trades it for
 accuracy — **~4.5× fewer errors than Whistle** with `-nt` (~1.8× on the CLI default; see the
 [`-nt` addendum](research/whisper-cpp-provider/004-addendum-nt-decode.md)) at ~1.7–3 s per 25 s

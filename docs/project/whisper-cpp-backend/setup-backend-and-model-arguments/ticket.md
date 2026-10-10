@@ -18,7 +18,7 @@ The user wants setup to become **backend-aware and model-parameterised**:
   accepted; **the needle model is selectable**, defaulting to `whistle`.
 
 When the model is omitted for whisper, the default is the ADR 0021 rule: **`medium-q5_0` if a Vulkan
-device is available, `small-q5_0` otherwise**.
+device is available, `small-q8_0` otherwise** (upstream publishes no `small-q5_0`).
 
 ## Definition of done
 
@@ -33,7 +33,7 @@ device is available, `small-q5_0` otherwise**.
       unknown model name, or a model/quant upstream does not publish is rejected **before** any build
       or download starts.
 - [ ] The **GPU/CPU default-model rule** implemented and used when the model is omitted; it is
-      falsifiable (simulate no Vulkan → `small-q5_0`).
+      falsifiable (simulate no Vulkan → `small-q8_0`).
 - [ ] **Idempotent**: a second run verifies and does nothing; re-running with a different model
       fetches the new one without disturbing the old.
 - [ ] **No `sudo`, no package installs, no fetching of build tooling** — prerequisites are checked and

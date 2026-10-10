@@ -42,12 +42,12 @@ chunks 0.266), so the good end of that dial is simply "batch".
 See [streaming REPORT](../project/research/whisper-cpp-streaming/REPORT.md).
 **Consequence accepted here:** choosing whisper means **no text until the utterance ends.**
 
-### Why **`medium q5_0` on GPU, `small q5_0` on CPU-only**
+### Why **`medium q5_0` on GPU, `small q8_0` on CPU-only**
 The size sweep found `medium q5_0` the **most accurate model in every condition tested** (car 0.062,
 quiet-short 0.296, quiet-long 0.111) and, on Vulkan, the best accuracy-per-second — 1.72 s for the
 25 s clip, Pareto-dominating every CPU configuration except `tiny`. **CPU, however, is ~6× real time**
 (medium ~24 s for a 30 s clip), so on a CPU-only machine the sensible default is the cheaper
-`small q5_0` (WER 0.141, still better than Whistle's 0.281). Quantisation is accuracy-invariant between
+`small q8_0` (WER 0.141, still better than Whistle's 0.281; upstream publishes **no** `q5_0` for `small`, and `q8_0` scored identically). Quantisation is accuracy-invariant between
 `q5_0`/`q8_0` and **`f16` is never better** (only slower and larger), so `q5_0` is chosen for size.
 See [provider REPORT §3, §4, §8, §9](../project/research/whisper-cpp-provider/REPORT.md).
 
@@ -72,9 +72,10 @@ the model is loaded **once at service start**.
    model **loaded once at service start and kept resident**. No per-utterance subprocess, no reload.
 3. **Batch-only**: `supports_streaming = False`. Selecting whisper trades away live/incremental typing
    (ADR 0011) for accuracy.
-4. **Model selection**: `medium-q5_0` by default when a Vulkan device is available, `small-q5_0`
+4. **Model selection**: `medium-q5_0` by default when a Vulkan device is available, `small-q8_0`
    otherwise; overridable in config. Names are `<size>-<quant>`; only upstream-published quants are
-   supported (`q8_0` for every size, `q5_0` for `medium`/`large-v3-turbo`). **Never `f16`.**
+   supported (`q8_0` for every size, `q5_0` for `medium`/`large-v3-turbo`) — `small-q5_0` is **not**
+   published, which is why the CPU-only default is `small-q8_0`. **Never `f16`.**
 5. **Decode pinned**: `-nt` (no timestamps) and greedy — the measured configuration.
 6. **Acquisition and setup are backend- and model-parameterised** (the only networked path,
    ADR 0018). `ges2t setup [backend] [model]`: with **no arguments** it sets up `needle` and its
@@ -97,7 +98,7 @@ the model is loaded **once at service start**.
 - The default experience is **unchanged**; whisper is opt-in.
 - Choosing whisper means **no text until the utterance ends**, and the first dictation after service
   start is preceded by a one-time model load.
-- ~0.8–1 GB resident for `medium-q5_0` while the service runs (less for `small-q5_0`); on the Vulkan
+- ~0.8–1 GB resident for `medium-q5_0` while the service runs (less for `small-q8_0`); on the Vulkan
   path the weights live in GPU-visible memory.
 - A crash inside `libwhisper.so` takes down the service process — the same exposure ADR 0006 already
   accepts for Needle.

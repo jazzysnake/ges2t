@@ -12,7 +12,8 @@
 Add **whisper.cpp** as a second, **selectable** `Transcriber` backend, integrated **in-process**
 (`ctypes` over `libwhisper.so`, model loaded **once at service start** and kept resident),
 supporting the full whisper.cpp model range (`tiny` … `large-v3-turbo`, `q5_0`/`q8_0`) with
-**`medium-q5_0` as the default on GPU devices and `small-q5_0` on CPU-only machines**.
+**`medium-q5_0` as the default on GPU devices and `small-q8_0` on CPU-only machines** (upstream
+publishes no `small-q5_0`; `q8_0` scored identically).
 
 It is **batch-only**. The **default backend stays `needle`/Whistle**, so the shipped live and
 incremental typing are unchanged; choosing whisper trades that away for accuracy — **~4.5× fewer
@@ -41,7 +42,7 @@ batch-only limitation documented. The default backend is unchanged.
 - [ ] The model loads **once, at service start**, through `ctypes` over `libwhisper.so`; there is **no
       per-utterance spawn or reload**. The non-model round trip is **measured and reported as a number**
       under ADR 0001's 1 s budget.
-- [ ] Default model: **`medium-q5_0` where a Vulkan device is available, `small-q5_0` otherwise**;
+- [ ] Default model: **`medium-q5_0` where a Vulkan device is available, `small-q8_0` otherwise**;
       overridable in config.
 - [ ] `supports_streaming = False`, and startup **rejects** `whisper_cpp` + `streaming.enabled = true`.
 - [ ] Startup **rejects** a whisper backend whose model is not acquired, and one whose library is not

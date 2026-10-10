@@ -24,7 +24,7 @@ must fail loudly rather than degrade.
 - [ ] A `[transcriber.whisper_cpp]` block (named consistently with the existing config vocabulary):
       **model** (default per the GPU/CPU rule below), **gpu** (default: auto), **threads** (default:
       the machine's). Every value validated with a typed, actionable error.
-- [ ] **Default model rule** (ADR 0021): `medium-q5_0` when a Vulkan device is available, `small-q5_0`
+- [ ] **Default model rule** (ADR 0021): `medium-q5_0` when a Vulkan device is available, `small-q8_0`
       otherwise; overridable. It is falsifiable in a test.
 - [ ] **Startup validation** — with `transcriber.backend = "whisper_cpp"`, the service **refuses to
       start** (clear error naming the offending setting(s)) when:
