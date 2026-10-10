@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
@@ -53,6 +54,7 @@ from ges2t.whisper_engine import (
     PrerequisiteKind,
     PrerequisiteReport,
     ProgressCallback,
+    SubprocessRunner,
     VulkanStatus,
     WhisperCppBuilder,
     check_prerequisites,
@@ -107,8 +109,10 @@ class FakeSystemProbe:
         return Path("/fake/lib") / f"lib{name}.so.1" if name in self.libraries else None
 
 
-#: Every executable a CPU build needs.
-_TOOLCHAIN_EXECUTABLES: tuple[str, ...] = ("c++", "cc", "make", "cmake")
+#: Every executable a CPU build needs. ``git`` is here because the *builder* shells
+#: out to it (the reported prerequisite set deliberately does not include it; see
+#: ``WhisperCppBuilder._clone``).
+_TOOLCHAIN_EXECUTABLES: tuple[str, ...] = ("c++", "cc", "make", "cmake", "git")
 
 
 def _cpu_probe() -> FakeSystemProbe:
@@ -785,6 +789,64 @@ def test_builder_raises_prerequisite_error_when_cmake_is_absent(
     with pytest.raises(PrerequisiteError) as caught:
         builder.build(_request(BuildVariant.CPU, tmp_path / "engine"))
     assert "cmake" in str(caught.value)
+
+
+def test_builder_raises_a_typed_error_when_git_is_absent(tmp_path: Path) -> None:
+    probe = FakeSystemProbe(executables=("c++", "cc", "make", "cmake"))
+    builder = WhisperCppBuilder(
+        runner=FakeCommandRunner(),
+        system=probe,
+        build_root=tmp_path / "scratch",
+    )
+    with pytest.raises(BuildFailedError) as caught:
+        builder.build(_request(BuildVariant.CPU, tmp_path / "engine"))
+    assert "git" in str(caught.value)
+    assert "sudo pacman -S git" in str(caught.value)
+
+
+# --- SubprocessRunner failure modes (real subprocess, trivial and bounded) ---
+
+
+def test_subprocess_runner_wraps_a_nonzero_exit_with_stderr() -> None:
+    runner = SubprocessRunner()
+    command = [
+        sys.executable,
+        "-c",
+        "import sys; sys.stderr.write('boom'); sys.exit(3)",
+    ]
+    with pytest.raises(BuildFailedError) as caught:
+        runner.run(command, cwd=None, timeout_seconds=30.0)
+    assert "exit 3" in str(caught.value)
+    assert "boom" in str(caught.value)
+
+
+def test_subprocess_runner_wraps_a_timeout() -> None:
+    runner = SubprocessRunner()
+    command = [sys.executable, "-c", "import time; time.sleep(5)"]
+    with pytest.raises(BuildFailedError) as caught:
+        runner.run(command, cwd=None, timeout_seconds=1.0)
+    assert "timed out" in str(caught.value)
+
+
+def test_subprocess_runner_wraps_a_missing_executable() -> None:
+    runner = SubprocessRunner()
+    with pytest.raises(BuildFailedError) as caught:
+        runner.run(
+            ["this-binary-does-not-exist-ges2t"],
+            cwd=None,
+            timeout_seconds=30.0,
+        )
+    assert "command not found" in str(caught.value)
+
+
+def test_subprocess_runner_returns_stdout() -> None:
+    runner = SubprocessRunner()
+    output = runner.run(
+        [sys.executable, "-c", "print('hello')"],
+        cwd=None,
+        timeout_seconds=30.0,
+    )
+    assert output.strip() == "hello"
 
 
 def test_builder_writes_a_manifest_read_back_by_read_build(tmp_path: Path) -> None:

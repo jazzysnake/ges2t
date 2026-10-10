@@ -599,7 +599,9 @@ class SubprocessRunner:
     ``check=True`` makes a non-zero exit an exception, and ``timeout`` guarantees
     no command can outlive its budget (a wedged clone cannot hang
     ``ges2t setup``). Output is captured, so a build log never lands on the
-    user's terminal unannounced.
+    user's terminal unannounced, and every failure mode becomes a
+    :class:`BuildFailedError` naming the command and (where there is one) the
+    tail of its stderr — never a bare ``CalledProcessError`` traceback.
     """
 
     def run(
@@ -610,15 +612,35 @@ class SubprocessRunner:
         timeout_seconds: float = WHISPER_CPP_BUILD_TIMEOUT_SECONDS,
     ) -> str:
         """Run ``argv`` (no shell), returning stdout; raise on failure or timeout."""
-        completed = subprocess.run(
-            list(argv),
-            cwd=cwd,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-        )
+        command = " ".join(argv)
+        try:
+            completed = subprocess.run(
+                list(argv),
+                cwd=cwd,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+            )
+        except subprocess.CalledProcessError as exc:
+            detail = _tail(exc.stderr or "")
+            message = f"command failed (exit {exc.returncode}): {command}"
+            if detail:
+                message = f"{message}\n{detail}"
+            raise BuildFailedError(message) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise BuildFailedError(
+                f"command timed out after {timeout_seconds:.0f}s: {command}"
+            ) from exc
+        except FileNotFoundError as exc:
+            raise BuildFailedError(f"command not found: {argv[0]}") from exc
         return completed.stdout
+
+
+def _tail(text: str, *, lines: int = 10) -> str:
+    """Return the last ``lines`` non-empty lines of ``text``, indented."""
+    interesting = [line for line in text.splitlines() if line.strip()]
+    return "\n".join(f"    {line}" for line in interesting[-lines:])
 
 
 # --- Prerequisites -------------------------------------------------------------
@@ -959,7 +981,19 @@ class WhisperCppBuilder:
         return build
 
     def _clone(self, request: BuildRequest, source: Path) -> None:
-        """Shallow-clone the pinned tag and verify the commit against the pin."""
+        """Shallow-clone the pinned tag and verify the commit against the pin.
+
+        ``git`` is guarded here rather than added to the prerequisite report: the
+        ticket fixes that report's package list to the toolchain, ``cmake`` and
+        the Vulkan dev packages, and ``base-devel`` does not ship ``git``. A
+        missing ``git`` is therefore still an actionable typed error, just a
+        separate one.
+        """
+        if self._system.executable("git") is None:
+            raise BuildFailedError(
+                "git is required to clone whisper.cpp; install it with:\n"
+                "    sudo pacman -S git"
+            )
         self._runner.run(
             [
                 "git",
