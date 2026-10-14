@@ -1,7 +1,7 @@
 # Parakeet v3 — engine landscape, Vulkan feasibility, integration cost
 
 - **Priority:** P0
-- **Status:** in review
+- **Status:** done
 - **Complexity:** M
 - **Epic:** ../epic.md
 - **Type:** discovery (no `src/` change, no `tests/` change, no `sudo`, no microphone)
