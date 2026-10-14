@@ -155,7 +155,7 @@ before merge. The **default engine and both existing backends stay unchanged**.
 
 | # | Ticket | Size | Status | Depends on | Branch |
 |---|---|---|---|---|---|
-| 55 | [nemotron-3-5-asr-streaming-measurement](nemotron-streaming-backend/nemotron-3-5-asr-streaming-measurement/ticket.md) — run the prebuilt Vulkan engine on this PC and measure chunk latency/RTF/RSS, Vulkan-vs-CPU (byte-compared), accuracy vs the existing clips, and **committed-delta stability** | L | in review | 53 (done) | feat/nemotron-3-5-asr-streaming-measurement |
+| 55 | [nemotron-3-5-asr-streaming-measurement](nemotron-streaming-backend/nemotron-3-5-asr-streaming-measurement/ticket.md) — run the prebuilt Vulkan engine on this PC and measure chunk latency/RTF/RSS, Vulkan-vs-CPU (byte-compared), accuracy vs the existing clips, and **committed-delta stability** | L | done | 53 (done) | feat/nemotron-3-5-asr-streaming-measurement (merged 4cf5fc2) |
 
 ---
 

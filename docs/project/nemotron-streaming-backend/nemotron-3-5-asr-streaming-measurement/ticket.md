@@ -1,7 +1,7 @@
 # Nemotron 3.5 ASR Streaming — measure it on this machine
 
 - **Priority:** P0
-- **Status:** in review
+- **Status:** done
 - **Complexity:** L
 - **Epic:** ../epic.md
 - **Type:** discovery/measurement (no `src/` change, no `tests/` change, no `sudo`, no microphone)
