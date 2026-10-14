@@ -1,0 +1,19 @@
+$ nemo-speech doctor
+NeMo-Speech.cpp 0.2.0
+Features: asr backend_vulkan diarization http integrated_vad model_pull punctuation realtime_websocket speech_translation text_normalization translation tts
+Devices:
+  [0] integrated-gpu AMD Radeon 780M Graphics (RADV PHOENIX) (17.5 GiB)
+  [1] cpu            AMD Ryzen 7 7840HS with Radeon 780M Graphics (27.1 GiB)
+Model downloads: /usr/bin/curl
+
+$ nemo-speech --version
+nemo-speech 0.2.0
+
+$ vulkaninfo --summary (device/driver)
+	apiVersion         = 1.4.354
+	deviceName         = AMD Radeon 780M Graphics (RADV PHOENIX)
+	driverName         = radv
+	driverInfo         = Mesa 26.2.3-arch1.1
+
+$ readelf -d bin/nemo-speech | rpath
+ 0x000000000000000f (RPATH)              Library rpath: [$ORIGIN/../lib]

@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""Curate the committed evidence for the Nemotron streaming report.
+
+Copies the small, re-checkable artefacts out of the scratch dir into the
+report's ``data/`` folder and renders the report tables. The bulk (the raw
+per-partial JSON with word lists, the sliced WAVs, the engine, the model)
+stays in scratch, which the report names.
+
+Usage: PYTHONPATH=src python3 render_report_data.py
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+from pathlib import Path
+from typing import Any
+
+HERE = Path(__file__).resolve().parent
+SC = Path.home() / ".cache/ges2t-discovery" / "nemotron-3-5-asr-streaming-measurement"
+DATA = HERE / "data"
+
+# Full per-partial traces committed (compact: transcript + watermark only).
+CURATED_PARTIALS = [
+    "stream-jfk-vk",
+    "stream-jfk-cpu",
+    "stream-ges2t-commit-cadence-capture-20261009-195914-vk",
+    "paced-jfk-vulkan",
+    "silence-10s-vulkan",
+    "silence-10s-cpu",
+]
+
+
+def load(path: Path) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in path.read_text().splitlines() if line]
+
+
+def compact_partial(line: str) -> str:
+    d = json.loads(line)
+    keep = {
+        "index": d["index"],
+        "kind": d["kind"],
+        "chunk_index": d["chunk_index"],
+        "wall_s": d["wall_s"],
+        "audio_processed_s": d["audio_processed_s"],
+        "transcript": d["transcript"],
+    }
+    return json.dumps(keep, ensure_ascii=False)
+
+
+def main() -> int:
+    DATA.mkdir(parents=True, exist_ok=True)
+    (DATA / "partials").mkdir(exist_ok=True)
+
+    shutil.copy(SC / "evidence" / "doctor.txt", DATA / "engine_doctor.txt")
+    shutil.copy(SC / "cli_runs.jsonl", DATA / "cli_runs.jsonl")
+    shutil.copy(SC / "stream_summary.jsonl", DATA / "stream_summary.jsonl")
+    shutil.copy(SC / "analysis.jsonl", DATA / "analysis.jsonl")
+    shutil.copy(SC / "paced_summary.jsonl", DATA / "paced_summary.jsonl")
+    shutil.copy(SC / "sweep" / "chunk_sweep.jsonl", DATA / "chunk_sweep.jsonl")
+
+    for label in CURATED_PARTIALS:
+        src = SC / "partials" / f"{label}.jsonl"
+        if not src.exists():
+            continue
+        out = DATA / "partials" / f"{label}.jsonl"
+        with open(out, "w", encoding="utf-8") as handle:
+            for line in src.read_text().splitlines():
+                if line:
+                    handle.write(compact_partial(line) + "\n")
+    # Drop any stale curated traces from a previous curation list.
+    for stale in (DATA / "partials").glob("*.jsonl"):
+        if stale.stem not in CURATED_PARTIALS:
+            stale.unlink()
+
+    # Model revision evidence.
+    main_meta = json.loads((SC / "hf-model-main.json").read_text())
+    gguf = next(
+        s for s in main_meta["siblings"] if s["rfilename"].endswith(".gguf")
+    )
+    (DATA / "model_revision.md").write_text(
+        "# Resolved model revision\n\n"
+        "Resolved 2026-10-14 from the HF API (`?blobs=true`) and the engine's own\n"
+        "`share/nemo-speech/model-index.json`. The two revisions are **different commits**.\n\n"
+        "| source | revision | size (B) | sha256 |\n"
+        "|---|---|---:|---|\n"
+        f"| HF `main` | `{main_meta['sha']}` | {gguf['size']} | `{gguf['lfs']['sha256']}` |\n"
+        "| **engine index (chosen)** | `1c8deaecc64b91f034d73e08dd8b64625eb3395d` | "
+        "741548352 | `a5c435f294eea8f88ce68dd27b8c3bfea7f777cb2fbba04fcd30eaa555f429ae` |\n\n"
+        "The downloaded GGUF is the engine-index revision; its sha256 verified with\n"
+        "`sha256sum -c` (OK). The HF `main` pointer is `ea30d66d…` at 742,090,464 B,\n"
+        "sha256 `3fc991d3…` — 542,112 B larger, a different commit the engine does not\n"
+        "pin. `huggingface_hub`'s `/api/models?revision=<sha>` fell back to `main`, so the\n"
+        "pinned revision was confirmed with the `resolve/<sha>` LFS headers instead\n"
+        "(`x-repo-commit`, `x-linked-size`, `x-linked-etag`).\n",
+        encoding="utf-8",
+    )
+
+    _render_tables()
+    print("wrote", DATA)
+    return 0
+
+
+def _render_tables() -> None:
+    cli = load(DATA / "cli_runs.jsonl")
+    stream = load(DATA / "stream_summary.jsonl")
+    analysis = {r["label"]: r for r in load(DATA / "analysis.jsonl")}
+    paced = load(DATA / "paced_summary.jsonl")
+
+    lines: list[str] = []
+    lines.append("# Rendered measurement tables\n")
+    lines.append("All numbers come from `cli_runs.jsonl`, `stream_summary.jsonl`,")
+    lines.append("`analysis.jsonl`, and `paced_summary.jsonl` beside this file.\n")
+
+    lines.append("## CLI batch — wall, RTF, peak RSS, accuracy\n")
+    lines.append("| label | audio s | wall s | RTF | RSS MB | wer(word_diff) | wer(std) | backend |")
+    lines.append("|---|---:|---:|---:|---:|---:|---:|---|")
+    for r in cli:
+        wer = "-" if r["wer_worddiff"] is None else f"{r['wer_worddiff']:.3f}"
+        std = "-" if r["wer_std"] is None else f"{r['wer_std']:.3f}"
+        be = r["backend_line"].split("backend=")[-1]
+        lines.append(
+            f"| {r['label']} | {r['audio_seconds']:.2f} | {r['wall_seconds']:.2f} | "
+            f"{r['rtf']:.2f} | {r['peak_rss_mb']:.1f} | {wer} | {std} | {be} |"
+        )
+
+    lines.append("\n## C-ABI streaming — throughput, memory, latency\n")
+    lines.append("| label | audio s | stream s | RTF | RSS MB | VRAM MB | interims | first text (s audio) | steady p50 ms | steady p90 ms |")
+    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    for r in stream:
+        vram = "-" if r["vram_mb"] in (None, 0.0) else f"{r['vram_mb']:.0f}"
+        lines.append(
+            f"| {r['label']} | {r['audio_s']:.2f} | {r['stream_wall_s']:.2f} | {r['rtf']:.2f} | "
+            f"{r['peak_rss_mb']:.1f} | {vram} | {r['n_interims']} | "
+            f"{r['first_interim_audio_s']} | {r['steady_ms_p50']} | {r['steady_ms_p90']} |"
+        )
+
+    lines.append("\n## Committed-delta stability\n")
+    lines.append("| label | interims | append-only (char) frac | rewritten pairs | monotone commits | adjacent dups | algorithmic lag med s | WER (stream) |")
+    lines.append("|---|---:|---:|---:|---|---:|---:|---:|")
+    for r in analysis.values():
+        lines.append(
+            f"| {r['label']} | {r['n_interims']} | {r['append_only_char_frac']} | "
+            f"{r['rewritten_char_pairs']} | {r['monotone_committed_words']} | "
+            f"{r['adjacent_duplicate_words']} | {r['algorithmic_lag_median_s']} | "
+            f"{r.get('wer_stream_worddiff', '-')} |"
+        )
+
+    lines.append("\n## Real-time paced runs\n")
+    lines.append("| label | audio s | stream s | first text wall s | first text audio s | steady p50 ms | steady p90 ms |")
+    lines.append("|---|---:|---:|---:|---:|---:|---:|")
+    for r in paced:
+        lines.append(
+            f"| {r['label']} | {r['audio_s']:.2f} | {r['stream_wall_s']:.2f} | "
+            f"{r['first_interim_wall_s']} | {r['first_interim_audio_s']} | "
+            f"{r['steady_ms_p50']} | {r['steady_ms_p90']} |"
+        )
+
+    lines.append("\n## Chunk-size sweep (Vulkan, `rnnt_right_context` sets the step)\n")
+    lines.append("| label | step ms | stream s | RTF | interims | steady p50 ms | steady p90 ms | first text (s audio) |")
+    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|")
+    for r in load(DATA / "chunk_sweep.jsonl"):
+        lines.append(
+            f"| {r['label']} | {r['chunk_ms']} | {r['stream_wall_s']:.2f} | {r['rtf']:.2f} | "
+            f"{r['n_interims']} | {r['steady_ms_p50']} | {r['steady_ms_p90']} | "
+            f"{r['first_interim_audio_s']} |"
+        )
+
+    (DATA / "timings.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
