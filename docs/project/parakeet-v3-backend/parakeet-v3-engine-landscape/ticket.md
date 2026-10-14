@@ -1,7 +1,7 @@
 # Parakeet v3 — engine landscape, Vulkan feasibility, integration cost
 
 - **Priority:** P0
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** M
 - **Epic:** ../epic.md
 - **Type:** discovery (no `src/` change, no `tests/` change, no `sudo`, no microphone)
@@ -82,16 +82,16 @@ local command + its real output; every "measured" line must name the command tha
 
 Also required:
 
-- [ ] **`001-comment.md`** in this ticket folder states the **gate decision**: whether the literature
+- [x] **`001-comment.md`** in this ticket folder states the **gate decision**: whether the literature
       warrants ticket 54 ("proceed") or not ("stop; close 54 obsolete"), with the two or three facts
       that decide it, and flags anything the orchestrator must escalate to the user (e.g. a required
       `sudo pacman -S …` line, a `numpy` dependency, a licence problem, or a >2 GB resident model).
-- [ ] No file under `src/ges2t/` or `tests/` is modified.
-- [ ] No engine, model, weight, or audio file is committed; scratch work lives outside the repo and
+- [x] No file under `src/ges2t/` or `tests/` is modified.
+- [x] No engine, model, weight, or audio file is committed; scratch work lives outside the repo and
       its path is named in the report.
-- [ ] The docs link check from `docs/project/orchestrator-state.md` §10 reports **0 broken
+- [x] The docs link check from `docs/project/orchestrator-state.md` §10 reports **0 broken
       references**; `git status` in the worktree is clean.
-- [ ] Everything is committed on `feat/parakeet-v3-engine-landscape`; `ticket.md` status and the
+- [x] Everything is committed on `feat/parakeet-v3-engine-landscape`; `ticket.md` status and the
       `docs/project/README.md` row are updated.
 
 ## Notes

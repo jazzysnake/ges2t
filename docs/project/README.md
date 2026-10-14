@@ -134,7 +134,7 @@ with no integration code written.
 
 | # | Ticket | Size | Status | Depends on | Branch |
 |---|---|---|---|---|---|
-| 53 | [parakeet-v3-engine-landscape](parakeet-v3-backend/parakeet-v3-engine-landscape/ticket.md) — engine inventory, per-engine dependencies, **Vulkan-on-this-PC verdict**, incremental/streaming capability, integration cost, and a stage-2 plan | M | to do | — | — |
+| 53 | [parakeet-v3-engine-landscape](parakeet-v3-backend/parakeet-v3-engine-landscape/ticket.md) — engine inventory, per-engine dependencies, **Vulkan-on-this-PC verdict**, incremental/streaming capability, integration cost, and a stage-2 plan | M | in review | — | feat/parakeet-v3-engine-landscape |
 | 54 | [parakeet-v3-vulkan-measurement](parakeet-v3-backend/parakeet-v3-vulkan-measurement/ticket.md) — build the recommended engine in scratch and measure latency/RTF/RSS/accuracy (and Vulkan vs CPU) on this machine | L | to do | 53 (gated) | — |
 
 ---
