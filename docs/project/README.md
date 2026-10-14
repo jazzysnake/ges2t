@@ -121,6 +121,24 @@ conditionals. A guard test fails when a new bare identifier literal appears in `
 
 ---
 
+## Epic 5 — [Parakeet v3 backend (discovery-gated)](parakeet-v3-backend/epic.md) · P1
+
+Add NVIDIA **Parakeet TDT 0.6B v3** as a selectable, fully offline backend — **only if** discovery
+finds an engine that runs it on this machine (AMD Radeon 780M / RADV Vulkan, no CUDA, `numpy`
+absent), fits the offline/no-runtime-network constraints, and beats the existing backends on the
+thing the user actually misses: **seeing the text incrementally** (whisper.cpp is batch-only), or on
+multilingual coverage (Hungarian). The **default engine and both existing backends stay unchanged**.
+This epic is **gated**: 53 surveys the engines from the literature, 54 measures the winner on this PC,
+and integration tickets are created only afterwards. If nothing qualifies, the epic closes **obsolete**
+with no integration code written.
+
+| # | Ticket | Size | Status | Depends on | Branch |
+|---|---|---|---|---|---|
+| 53 | [parakeet-v3-engine-landscape](parakeet-v3-backend/parakeet-v3-engine-landscape/ticket.md) — engine inventory, per-engine dependencies, **Vulkan-on-this-PC verdict**, incremental/streaming capability, integration cost, and a stage-2 plan | M | to do | — | — |
+| 54 | [parakeet-v3-vulkan-measurement](parakeet-v3-backend/parakeet-v3-vulkan-measurement/ticket.md) — build the recommended engine in scratch and measure latency/RTF/RSS/accuracy (and Vulkan vs CPU) on this machine | L | to do | 53 (gated) | — |
+
+---
+
 ## Dispatch order
 
 Dependencies are respected by working the board in this order; tickets in the same row are
@@ -161,6 +179,7 @@ independent and may run in parallel (they touch disjoint files).
 | 30 | 50 (engine-aware streaming default) |
 | 31 | 51 (ticket 49 review follow-ups) · 48 (identifier constants) |
 | 32 | 52 (command-verb identifiers; ticket 48's residual) |
+| 33 | 53 (parakeet discovery: engine landscape + Vulkan feasibility) → 54 (gated: on-machine measurement; only if 53 recommends a candidate) |
 
 Serialization is also required wherever two tickets touch the same file: `10 → 11/12`
 (`cli.py`, `doctor.py`), `11 → 16` (`pipeline.py`), `17 → 18` (`pipeline.py`).
