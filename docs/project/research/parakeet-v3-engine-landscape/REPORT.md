@@ -357,7 +357,7 @@ Epic 3; the shapes line up almost one-for-one.
 | ges2t touchpoint | what it needs |
 |---|---|
 | `src/ges2t/transcribers/nemo_speech.py` (new) | a `Transcriber` adapter. Cleanest is **`ctypes` over `libnemo_speech_asr_c`** (the C ABI), model resident from service start — the exact shape of `whisper_cpp.py`. Fallback shape: subprocess over `nemo-speech transcribe`. |
-| `src/ges2t/identifiers.py` | one new engine constant (`ENGINE_NEEMO_SPEECH = "nemo_speech"`), per Epic 4's rule. |
+| `src/ges2t/identifiers.py` | one new engine constant (`ENGINE_NEMO_SPEECH = "nemo_speech"`), per Epic 4's rule. |
 | `src/ges2t/model_store.py` | a pinned entry: `parakeet-tdt-0.6b-v3.q8_0.gguf`, size `713,975,456`, sha256 `e3880d0a…`, plus the **engine archive** pin (Vulkan tarball, sha256 `c8d0ed5b…`). |
 | `ges2t setup` | download the **prebuilt Vulkan tarball** and the GGUF, verify, extract; **requires and never installs** prerequisites (curl, a Vulkan driver). If the user opts to build from source, `setup` checks CMake ≥ 3.26, Ninja, a C++17 compiler, SentencePiece dev files, and the Vulkan dev packages — and fails with the exact `pacman` lines (see §7, escalation). |
 | `doctor` | engine binary/library present; `nemo-speech doctor`-equivalent backend list; Vulkan device detected; model present + size. |
@@ -407,18 +407,27 @@ commit, seam duplication, cut-off and silence hallucination.
 
 ```
 $ nproc → 16
-$ free -g → Mem: 27 total, 17 available
+$ free -g → Mem: 27 total, ~16–17 GiB available (live; re-read 17 here, 16 in review)
 $ /usr/bin/python3 --version → Python 3.14.7
 $ vulkaninfo --summary → Vulkan Instance 1.4.357; device AMD Radeon 780M (RADV PHOENIX), radv, Mesa 26.2.3-arch1.1
+$ pacman -Q cmake shaderc vulkan-headers spirv-headers
+$   cmake 4.4.4-1   shaderc 2026.3-1   vulkan-headers 1:1.4.363.0-1   spirv-headers 1:1.4.363.0-1
+$ command -v glslc → /usr/bin/glslc
+$ command -v ninja → (not found)
+$ pacman -Q ninja sentencepiece
+$   error: package 'ninja' was not found
+$   error: package 'sentencepiece' was not found
 ```
 
-The environment table (`docs/project/orchestrator-state.md` §3) already records `vulkan-headers`,
-`spirv-headers`, `shaderc`, `cmake` as installed, so a **source** Vulkan build would not need a new
-package **except** `sentencepiece` (dev) if the prebuilt archive is not used. **The prebuilt archive
-avoids that entirely and needs no `sudo`** — so ticket 54 needs **no** new package as long as it uses
-the release binary. *(If a from-source build is chosen, the exact line to escalate is
-`sudo pacman -S sentencepiece cmake ninja` — cmake/ninja are already present, so in practice
-`sentencepiece` alone.)*
+The environment table (`docs/project/orchestrator-state.md` §3) records `vulkan-headers`,
+`spirv-headers`, `shaderc`, `cmake` as installed, and the checks above confirm it. A **from-source**
+Vulkan build additionally needs **`ninja`** and **`sentencepiece` (dev)** — *both verified absent on
+this machine* (`command -v ninja` fails; `pacman -Q ninja sentencepiece` reports neither installed;
+there is no `samu`). So the exact from-source escalation line is
+**`sudo pacman -S ninja sentencepiece`** (`cmake`, `glslc`/`shaderc`, and the Vulkan/SPIR-V headers are
+already present and are *not* in that line). **The recommended prebuilt-archive path needs none of
+this — no build tooling and no `sudo`** — so ticket 54 needs **no** new package as long as it uses the
+release binary.
 
 ---
 

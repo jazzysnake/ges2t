@@ -38,8 +38,11 @@ Report: [`../../research/parakeet-v3-engine-landscape/REPORT.md`](../../research
   - **(C) both** — v3 for accuracy, the streaming model for live typing; two model pins, same engine.
 - **Licence note:** v3 weights are **CC-BY-4.0** (attribution required in the README); the streaming
   sibling is **OpenMDW-1.1**. The engine is Apache-2.0 (+ ggml MIT).
-- **No `sudo` is required** for the recommended path (prebuilt Vulkan binary). Only a *from-source*
-  build would need `sudo pacman -S sentencepiece` (cmake/ninja/glslc/spirv-headers already present).
+- **No `sudo`/package is required** for the recommended path (prebuilt Vulkan binary). Only a
+  *from-source* fallback needs **`sudo pacman -S ninja sentencepiece`** — both **`ninja` and
+  `sentencepiece` are absent** here (verified: `command -v ninja` fails, `pacman -Q ninja sentencepiece`
+  → "package … was not found", no `samu`); `cmake` (4.4.4), `glslc` (shaderc 2026.3), and the
+  Vulkan/SPIR-V headers **are** present and are not in that line.
 - **Residual unknown (ticket 54 must settle):** the prebuilt Vulkan binary is expected to offload the
   **offline** v3 graph, but `src/asr/recognizer.cpp` hints offline-Vulkan parity was still being
   hardened. Confirm with `nemo-speech doctor` + a CPU-vs-Vulkan timing + `check_backend_coverage`, and
