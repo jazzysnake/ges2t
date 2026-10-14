@@ -20,37 +20,34 @@ HERE = Path(__file__).resolve().parent
 SC = Path.home() / ".cache/ges2t-discovery" / "nemotron-3-5-asr-streaming-measurement"
 DATA = HERE / "data"
 
-# Full per-partial traces committed (compact: transcript + watermark only).
-CURATED_PARTIALS = [
-    "stream-jfk-vk",
-    "stream-jfk-cpu",
-    "stream-ges2t-commit-cadence-capture-20261009-195914-vk",
-    "paced-jfk-vulkan",
-    "silence-10s-vulkan",
-    "silence-10s-cpu",
-]
+# Per-partial traces are committed for every streaming, paced, silence, and sweep run so
+# that ``analyze_streaming.py`` reproduces ``analysis.jsonl`` from the repo alone. The
+# redundant ``words`` array is dropped (reconstructible from the transcript, and the
+# analyzer does not use it); ``word_times`` is kept for the algorithmic-lag metric.
+def collect_traces() -> list[tuple[Path, str]]:
+    traces: list[tuple[Path, str]] = []
+    for path in sorted((SC / "partials").glob("*.jsonl")):
+        traces.append((path, f"partials/{path.name}"))
+    for path in sorted((SC / "sweep").glob("*.jsonl")):
+        if path.name != "chunk_sweep.jsonl":
+            traces.append((path, f"sweep/{path.name}"))
+    return traces
+
+
+def full_partial(line: str) -> str:
+    d = json.loads(line)
+    d.pop("words", None)
+    return json.dumps(d, ensure_ascii=False)
 
 
 def load(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text().splitlines() if line]
 
 
-def compact_partial(line: str) -> str:
-    d = json.loads(line)
-    keep = {
-        "index": d["index"],
-        "kind": d["kind"],
-        "chunk_index": d["chunk_index"],
-        "wall_s": d["wall_s"],
-        "audio_processed_s": d["audio_processed_s"],
-        "transcript": d["transcript"],
-    }
-    return json.dumps(keep, ensure_ascii=False)
-
-
 def main() -> int:
     DATA.mkdir(parents=True, exist_ok=True)
     (DATA / "partials").mkdir(exist_ok=True)
+    (DATA / "sweep").mkdir(exist_ok=True)
 
     shutil.copy(SC / "evidence" / "doctor.txt", DATA / "engine_doctor.txt")
     shutil.copy(SC / "cli_runs.jsonl", DATA / "cli_runs.jsonl")
@@ -59,18 +56,20 @@ def main() -> int:
     shutil.copy(SC / "paced_summary.jsonl", DATA / "paced_summary.jsonl")
     shutil.copy(SC / "sweep" / "chunk_sweep.jsonl", DATA / "chunk_sweep.jsonl")
 
-    for label in CURATED_PARTIALS:
-        src = SC / "partials" / f"{label}.jsonl"
-        if not src.exists():
-            continue
-        out = DATA / "partials" / f"{label}.jsonl"
+    traces = collect_traces()
+    kept: set[Path] = set()
+    for src, rel in traces:
+        out = DATA / rel
+        kept.add(out)
         with open(out, "w", encoding="utf-8") as handle:
             for line in src.read_text().splitlines():
                 if line:
-                    handle.write(compact_partial(line) + "\n")
-    # Drop any stale curated traces from a previous curation list.
-    for stale in (DATA / "partials").glob("*.jsonl"):
-        if stale.stem not in CURATED_PARTIALS:
+                    handle.write(full_partial(line) + "\n")
+    # Drop any stale traces from a previous curation pass.
+    for stale in list((DATA / "partials").glob("*.jsonl")) + list(
+        (DATA / "sweep").glob("*.jsonl")
+    ):
+        if stale not in kept:
             stale.unlink()
 
     # Model revision evidence.

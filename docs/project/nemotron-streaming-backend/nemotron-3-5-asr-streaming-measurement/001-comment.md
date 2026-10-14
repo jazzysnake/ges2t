@@ -31,7 +31,8 @@ Report: [`../../research/nemotron-3-5-asr-streaming-measurement/REPORT.md`](../.
   committed `you you` / `thank you thank you`).
 - **Accuracy (word_diff, ticket 32 normalisation, same clips/references as the whisper reports):**
   **jfk 0.000**, **quiet-short 0.259**, **quiet-long 0.167**, **car (user's capture) 0.312**. Whisper
-  `medium q5_0` scored **0.062** on the same car clip. Streaming WER == batch WER on Vulkan.
+  `medium q5_0` scored **0.062** on the same car clip **with its `-nt` decode (0.156 without it)** —
+  so the fair gap on whisper's CLI default is ~2×. Streaming WER == batch WER on Vulkan.
 - **Chunk sizes.** Since `--asr.streaming.chunk_size` is CTC-only, the RNNT step is set by
   `rnnt_right_context = 0/1/3/6/13` → **80/160/320/560/1120 ms**. Vulkan RTF rises 3.0→10.5 (jfk) /
   3.5→15.6 (clip30) with chunk; steady p50 21→42 ms; first text 0.88→2.24 s. All five append-only.

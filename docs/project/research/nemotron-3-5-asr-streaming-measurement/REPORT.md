@@ -17,8 +17,11 @@
   lists, sliced WAVs).
 - **Raw evidence:** committed under [`data/`](data/): `cli_runs.jsonl`, `stream_summary.jsonl`,
   `analysis.jsonl`, `paced_summary.jsonl`, `chunk_sweep.jsonl`, `timings.md`, `engine_doctor.txt`,
-  `model_revision.md`, and compact per-partial traces in `data/partials/`. No engine binary, model
-  weight, or audio file is committed.
+  `model_revision.md`, and **the full per-partial traces** — all 25 traces in `data/partials/`
+  (streaming, paced, silence) and all 5 sweep traces in `data/sweep/`, each with `word_times` so
+  `analyze_streaming.py` reproduces `analysis.jsonl` from the repo alone (the `words` array is
+  omitted as redundant with the transcript). No engine binary, model weight, or audio file is
+  committed.
 
 > **Method.** Every number below traces to a command actually run for this report on this machine.
 > The engine is the official prebuilt archive (no build, no `sudo`); the model is the revision the
@@ -34,8 +37,10 @@
 
 **Yes on Vulkan, and the core claim holds: on this machine the cache-aware streaming model produces
 strictly append-only incremental text, with no seam duplication, no cut-off hallucination, and no
-silence hallucination — but it costs ~4× the RSS of CPU to save only a little latency, and the
-Hungarian accuracy that motivated the epic is not measurable here.**
+silence hallucination. Vulkan is the cheaper path on *both* counts — host RSS ~0.2× CPU's (the q8_0
+weights live in VRAM) and roughly **half the per-chunk latency** — at the price of ~950 MB of VRAM;
+the real cost of the streaming model is **accuracy**, and the Hungarian accuracy that motivated the
+epic is not measurable here.**
 
 1. **The engine runs here, on Vulkan, prebuilt, no build, no `sudo`.** The 16,618,142 B archive's
    sha256 matched; `nemo-speech doctor` reports `backend_vulkan` and device `[0] integrated-gpu AMD
@@ -47,8 +52,9 @@ Hungarian accuracy that motivated the epic is not measurable here.**
    Vulkan vs ~1,064 MB on CPU** for the identical C-ABI run — the 707 MiB q8_0 weights are resident
    in VRAM, not host RAM. There is **no silent CPU fallback**.
 3. **Latency / cost.** Real-time-paced (`--pace`), Vulkan decodes a 160 ms chunk in **~41–45 ms
-   (p90)** and emits its first text after **~0.85–1.16 s of speech**; CPU needs **~72–88 ms** per
-   chunk. Both keep up (RTF < 1); Vulkan has ~3.5× headroom per chunk, CPU ~1.8×. The algorithmic
+   (p90)** and emits its first text after **~0.85–1.16 s of wall clock** (the engine's audio
+   watermark at that point is 0.96–1.28 s); CPU needs **~72–88 ms** per chunk. Both keep up
+   (RTF < 1); Vulkan has ~3.5× headroom per chunk, CPU ~1.8×. The algorithmic
    lag between the encoder watermark and the committed text is **160–240 ms** (one chunk).
 4. **Committed-delta stability — the core claim — passes on all 20 runs (10 clips × Vulkan/CPU),
    and on all five chunk sizes.** The interim transcript is a **strict string-prefix extension** of
@@ -60,7 +66,8 @@ Hungarian accuracy that motivated the epic is not measurable here.**
 5. **Accuracy is the weak side, and it is the model's, not the engine's.** On the reference clips,
    word-diff WER (ticket 32 normalisation) is **jfk 0.000**, **quiet-short 0.259**, **quiet-long
    0.167**, **car (user's capture) 0.312**. Whisper `medium q5_0` scored **0.062** on the same car
-   clip — this model is much weaker on that noisy real-device recording, as the survey warned.
+   clip **under its `-nt` decode (0.156 without it)**, so the fair gap on the CLI default is ~2× —
+   this model is weaker on that noisy real-device recording, as the survey warned.
 6. **Vulkan and CPU are NOT byte-identical — deterministic per device, divergent across devices.**
    On all 10 CLI clips the two backends' transcripts differ (word-diff divergence 0.000–0.185; e.g.
    jfk ends `…country` on Vulkan vs `…country.` on CPU). Both are reproducible (2–3 repeats per
@@ -395,17 +402,20 @@ separator, a `.` kept only between digits) against the same references the whisp
 standard edit-distance WER is in `data/cli_runs.jsonl` (`wer_std`). Streaming WER is the WER of the
 C-ABI final transcript; batch WER is the CLI's.
 
-| clip | ref words | streaming WER (vk) | batch WER (vk) | batch WER (cpu) | whisper `medium q5_0` batch (vk) |
+| clip | ref words | streaming WER (vk) | batch WER (vk) | batch WER (cpu) | whisper `medium q5_0` batch (vk, `-nt`) |
 |---|---:|---:|---:|---:|---:|
 | jfk | 22 | **0.000** | 0.000 | 0.000 | 0.000 |
 | quiet-short | 27 | **0.259** | 0.259 | 0.296 | — |
 | quiet-long | 36 | **0.167** | 0.167 | 0.194 | 0.153 |
-| car (capture) | 64 | **0.312** | 0.312 | 0.234 | **0.062** |
+| car (capture) | 64 | **0.312** | 0.312 | 0.234 | **0.062** (0.156 without `-nt`) |
 
 - On Vulkan, **streaming and batch WER are identical** (the final equals the batch transcript).
-- The model is **word-perfect on the clean jfk clip** and materially worse than whisper `medium` on
-  the noisy real-device car clip (0.312 vs 0.062) and on quiet-long (0.167 vs 0.153). This is the
-  model, not the engine — the same engine runs Parakeet v3 at much higher accuracy, but batch-only.
+- The model is **word-perfect on the clean jfk clip** and worse than whisper `medium` on the noisy
+  real-device car clip (0.312 vs 0.062 with `-nt`, **0.156 with whisper's CLI default**) and on
+  quiet-long (0.167 vs 0.153). This is the
+  model, not the engine — the survey's published Parakeet-v3 Hungarian FLEURS is much higher (`15.72`
+  vs this model's ≈ 29–33), but ticket 54 was obsolete and never measured v3 here, so that number is
+  **published FLEURS only**, and Parakeet v3 is batch-only in every engine.
 - The car failure is real mishearing: "northern valley and crews" → "Northern Ralley and cruise",
   "river crested at 3.2 meters" → "reverse crested it three point two meters", "ferry service" →
   "ferry service". A user who wants accuracy keeps `whisper_cpp`; this backend's value is the
@@ -589,7 +599,19 @@ PYTHONPATH=src python3 docs/project/research/nemotron-3-5-asr-streaming-measurem
 PYTHONPATH=src python3 docs/project/research/nemotron-3-5-asr-streaming-measurement/render_report_data.py
 ```
 
+The committed per-partial traces let a reviewer re-derive the append-only result **from the repo
+alone** (no scratch dir):
+
+```bash
+R=docs/project/research/nemotron-3-5-asr-streaming-measurement
+PYTHONPATH=src python3 $R/analyze_streaming.py --partials $R/data/partials --out /tmp/re_analysis.jsonl
+diff <(sort $R/data/analysis.jsonl) <(sort /tmp/re_analysis.jsonl)   # identical (25 rows)
+PYTHONPATH=src python3 $R/analyze_streaming.py --partials $R/data/sweep --out /tmp/re_sweep.jsonl
+# every sweep trace: append_only_char_frac = 1.0, rewritten_char_pairs = 0
+```
+
 The scratch dir (`~/.cache/ges2t-discovery/nemotron-3-5-asr-streaming-measurement/`) holds the engine
 tarball + extracted tree, the GGUF, the full per-partial JSON with word lists, and the sliced WAVs. It
-is left tidy; nothing under it is committed. No model, binary, or audio file is in the repo. `numpy`
-appears nowhere in the measured path or the repo.
+is left tidy; nothing under it is committed. No model, binary, or audio file is in the repo. No
+`numpy` dependency or import exists anywhere in the project or the measured path (`grep -r numpy`
+finds only the project's own "numpy is deliberately absent" prose and its guard test).
