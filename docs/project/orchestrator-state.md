@@ -62,7 +62,7 @@ incrementally) and **whisper.cpp** (opt-in, batch-only, notably more accurate). 
 | Git remote | **`origin` = `git@github.com:jazzysnake/ges2t.git`** (ssh). The repo is **public** (set 2026-10-10); `main` tracks `origin/main`. **The merger agent never pushes** (no network, by design) — the orchestrator pushes after a verified merge (§10). No `LICENSE` yet. |
 | Baselines on `main` | **`uv run pytest` → 1230 passed**; **`uv run mypy src/ges2t tests` → 0 errors (65 files)**; `doctor` exit 0 |
 
-## 4. Board state — 5 epics, 22 ADRs (0000–0021)
+## 4. Board state — 6 epics, 22 ADRs (0000–0021)
 
 **`main` is the only branch and the only worktree** (check `git log -1` for the current tip — do not trust a
 SHA written here). All of Epics 1–3, Epic 4's ticket 48, and **Epic 5's ticket 53 are `done`**.
@@ -74,42 +74,46 @@ SHA written here). All of Epics 1–3, Epic 4's ticket 48, and **Epic 5's ticket
 | **52** | `code-quality/command-verb-identifiers` | **to do, XS** — the socket command-verb family as constants (ticket 48's honestly-scoped-out residual; `"toggle"` is a second spelling of `HOTKEY_MODE_TOGGLE`). Rule 1 again. |
 | **35** | `live-dictation-ux/streaming-vs-batch-quality` | **to do, P2, gates nothing** — the three-length streaming-vs-batch sweep (§8) |
 | **30** | `core-dictation-pipeline/tray-failure-diagnostics` | **to do** — needs a **read-only socket verb → an ADR 0016 amendment**, not yet raised for sign-off |
-| **54** | `parakeet-v3-backend/parakeet-v3-vulkan-measurement` | **to do, GATED — do not start.** Measure the Parakeet engine on this machine; blocked on the user's A/B/C model choice (see §4a). |
+| **54** | `parakeet-v3-backend/parakeet-v3-vulkan-measurement` | **obsolete** — user chose the streaming sibling; superseded by 55. Never started, no artifacts. |
+| **55** | `nemotron-streaming-backend/nemotron-3-5-asr-streaming-measurement` | **to do, P0** — measure `nemotron-3.5-asr-streaming-0.6b` on this PC (Vulkan vs CPU, committed-delta stability). See §4a. |
 
 **Closed as obsolete:** **31** `speech-gate-recalibration` — measured and rejected in the user's
 environment; the parked branch was deleted and its `001-comment.md`/`002-review.md` are kept in the ticket
 folder. See §7.
 
-## 4a. Epic 5 — Parakeet v3 backend (discovery-gated) — **blocked on a user decision**
+## 4a. Epics 5 & 6 — ASR backend discovery → Nemotron 3.5 streaming (user decision made 2026-10-14)
 
-**Ticket 53 is done and merged** (`792b508`, pushed to `origin/main` as `c7e2547`). Deliverable:
-`docs/project/research/parakeet-v3-engine-landscape/REPORT.md` — reviewed pass on the second pass
-(`003-review.md`; the first review caught a factual slip: **`ninja` is not installed**, so only a
-from-source build would need `sudo pacman -S ninja sentencepiece`; the recommended prebuilt path needs
-neither a build nor `sudo`).
+**Epic 5 (Parakeet v3) is `obsolete`; ticket 53 is `done`; ticket 54 is `obsolete`.** The user chose the
+**streaming sibling**, so **Epic 6 — [Nemotron 3.5 streaming backend](README.md)** now carries the work.
+The engine is unchanged from ticket 53's finding; only the model changed.
 
-**Ticket 53's answer.** Engine = **`NVIDIA/NeMo-Speech.cpp`** (Apache-2.0, C++/`llama.cpp`/ggml) —
-runs v3 from the **official in-repo `parakeet-tdt-0.6b-v3.q8_0.gguf`** (713,975,456 B, sha256
-`e3880d0a…`, CC-BY-4.0, Hungarian FLEURS 15.72) and publishes a **prebuilt
-`nemo-speech-0.2.0-linux-x86_64-vulkan.tar.gz`** (16,618,142 B, sha256 `c8d0ed5b…`). **Vulkan = yes,
-through ggml**; ONNX Runtime has no Vulkan EP, so sherpa-onnx/ORT are CPU-only, and NeMo/Transformers
-force `torch`+`numpy` (both disqualified). Integration = **M**, same shape as ADR 0021 (§6 of the
-report). **Parakeet v3 is batch-only in every engine** — it does *not* fix the user's incremental-text
-motivation.
+**Ticket 53's finding (still the operative evidence).** Engine = **`NVIDIA/NeMo-Speech.cpp`**
+(Apache-2.0, C++/`llama.cpp`/ggml). **Vulkan = yes, through ggml**; ONNX Runtime has **no Vulkan EP**
+(sherpa-onnx/ORT are CPU-only), and NeMo/Transformers force `torch`+`numpy` (both disqualified). It
+publishes a prebuilt **`nemo-speech-0.2.0-linux-x86_64-vulkan.tar.gz`** (16,618,142 B, sha256
+`c8d0ed5b…`) — **no build tooling and no `sudo` needed**. Report:
+`docs/project/research/parakeet-v3-engine-landscape/REPORT.md`. Reviewed pass on the second pass
+(`003-review.md`; the first caught **`ninja` is absent** — a from-source build would need
+`sudo pacman -S ninja sentencepiece`).
 
-**THE OPEN ESCALATION — the user must choose before ticket 54 is scoped:**
+**The decision.** Parakeet v3 is **batch-only in every engine** (does not fix the incremental-text
+motivation). The user picked **`nvidia/nemotron-3.5-asr-streaming-0.6b`** — cache-aware streaming
+(**append-only commits**), OpenMDW-1.1, 40 locales incl. `hu-HU`, but Hungarian is broad-coverage
+(FLEURS ≈ 29–33 vs v3's 15.72). **Trade-off accepted by the user.**
 
-| | model | incremental | Hungarian FLEURS | licence |
-|---|---|---|---|---|
-| **A** | `nvidia/parakeet-tdt-0.6b-v3` | no (batch-only) | **15.72** | CC-BY-4.0 |
-| **B** | `nvidia/nemotron-3.5-asr-streaming-0.6b` | **yes** (cache-aware) | ≈29–33 | OpenMDW-1.1 |
-| **C** | both (recommended) | — | — | — |
+**Ticket 55 is the measurement** (`feat/nemotron-3-5-asr-streaming-measurement`): download the prebuilt
+Vulkan archive + the q8_0 GGUF (re-pin the revision — the report found HF-main `742,090,464 B` vs the
+engine index pin `741,548,352 B`/sha256 `a5c435f2…`), verify sha256, then measure per-chunk latency,
+RTF, peak RSS, **Vulkan vs CPU byte-compared**, accuracy vs the existing English clips in
+`~/.cache/ges2t-discovery/whisper-cpp-provider/audio/`, and **committed-delta stability** (append-only?
+seam duplication? cut-off/silence hallucination?) modelled on the whisper-streaming report. **No
+Hungarian ground-truth clip exists** — Hungarian stays published-FLEURS-only unless the user supplies a
+sample (needs mic permission → escalate).
 
-Orchestrator's recommendation: **(C) measure both in ticket 54** (same engine, ~700 MB each, no sudo),
-then create the integration tickets and draft **ADR 0022** from real numbers. Ticket 54's existing
-`ticket.md` is written for the v3-only case; if the user picks (B) or (C), widen its DoD to include the
-streaming model's committed-delta stability run (the report's §7 plan already covers both). **Do not
-create integration tickets or an ADR before the user answers.**
+**Watch item:** Epic 6 will need **ADR 0022** *and* an **ADR 0011 amendment** (a cache-aware streaming
+engine retires the 5 s sliding window; the append-only committed contract is preserved). Both must be
+presented **in full** for user sign-off before the merge that carries them. Integration tickets are
+created only after ticket 55 reports.
 
 ## 5. The whisper.cpp backend (Epic 3, merged 41–47, 49–51; ADR 0021 **accepted**)
 

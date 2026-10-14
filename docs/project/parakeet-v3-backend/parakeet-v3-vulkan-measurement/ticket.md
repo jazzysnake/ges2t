@@ -1,13 +1,25 @@
 # Parakeet v3 — measure the recommended engine on this machine
 
 - **Priority:** P1
-- **Status:** to do (gated — do not start until ticket 53 reports a candidate)
+- **Status:** obsolete
 - **Complexity:** L
-- **Epic:** ../epic.md
-- **Type:** discovery/measurement (no `src/` change, no `tests/` change, no `sudo`, no microphone)
-- **Branch / worktree:** `feat/parakeet-v3-vulkan-measurement` in `.worktrees/parakeet-v3-vulkan-measurement`
+- **Epic:** ../../parakeet-v3-backend/epic.md (Epic 5 — itself obsolete)
+- **Type:** discovery/measurement (never started)
 
-## Current state / context
+## Why this is obsolete
+
+The user chose the **streaming sibling** `nvidia/nemotron-3.5-asr-streaming-0.6b` over Parakeet v3,
+because Parakeet v3 is **batch-only in every engine** and therefore does not fix the incremental-text
+motivation that started Epic 5. Measuring v3's latency/accuracy is no longer on the critical path, so
+this ticket is **obsolete and was never started** — it produced no artifacts. Its DoD, its pinned
+hashes and its scratch conventions were carried into its replacement,
+[`nemotron-3-5-asr-streaming-measurement`](../../nemotron-streaming-backend/nemotron-3-5-asr-streaming-measurement/ticket.md)
+(ticket 55) under **Epic 6**. The survey that decided this is ticket 53's
+[report](../../research/parakeet-v3-engine-landscape/REPORT.md), which stays on `main` as evidence.
+
+---
+
+## Original scope (kept for history; do not work on it)
 
 Ticket 53 (`../parakeet-v3-engine-landscape/ticket.md`) surveys every engine that can run
 `nvidia/parakeet-tdt-0.6b-v3` and recommends one, with a written **stage-2 measurement plan**

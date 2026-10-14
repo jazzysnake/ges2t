@@ -121,7 +121,11 @@ conditionals. A guard test fails when a new bare identifier literal appears in `
 
 ---
 
-## Epic 5 — [Parakeet v3 backend (discovery-gated)](parakeet-v3-backend/epic.md) · P1
+## Epic 5 — [Parakeet v3 backend (discovery-gated)](parakeet-v3-backend/epic.md) · P1 · **obsolete**
+
+**Obsolete (2026-10-14).** Superseded by **Epic 6**. Ticket 53's survey found Parakeet v3 is
+**batch-only in every engine**, so it cannot fix the incremental-text motivation; the user chose the
+cache-aware streaming sibling instead. Ticket 53 stays `done` as evidence; ticket 54 is `obsolete`.
 
 Add NVIDIA **Parakeet TDT 0.6B v3** as a selectable, fully offline backend — **only if** discovery
 finds an engine that runs it on this machine (AMD Radeon 780M / RADV Vulkan, no CUDA, `numpy`
@@ -135,7 +139,23 @@ with no integration code written.
 | # | Ticket | Size | Status | Depends on | Branch |
 |---|---|---|---|---|---|
 | 53 | [parakeet-v3-engine-landscape](parakeet-v3-backend/parakeet-v3-engine-landscape/ticket.md) — engine inventory, per-engine dependencies, **Vulkan-on-this-PC verdict**, incremental/streaming capability, integration cost, and a stage-2 plan | M | done | — | feat/parakeet-v3-engine-landscape (merged 792b508) |
-| 54 | [parakeet-v3-vulkan-measurement](parakeet-v3-backend/parakeet-v3-vulkan-measurement/ticket.md) — build the recommended engine in scratch and measure latency/RTF/RSS/accuracy (and Vulkan vs CPU) on this machine | L | to do | 53 (gated) | — |
+| 54 | [parakeet-v3-vulkan-measurement](parakeet-v3-backend/parakeet-v3-vulkan-measurement/ticket.md) — build the recommended engine in scratch and measure latency/RTF/RSS/accuracy (and Vulkan vs CPU) on this machine | L | obsolete | 53 (gated) | — (never started; superseded by 55) |
+
+---
+
+## Epic 6 — [Nemotron 3.5 streaming backend (incremental text)](nemotron-streaming-backend/epic.md) · P1
+
+Add **`nvidia/nemotron-3.5-asr-streaming-0.6b`** (OpenMDW-1.1) as a selectable, fully offline backend
+that **streams** — text is committed and typed **while the user is still speaking**, the thing
+`whisper_cpp` cannot do. It runs on the engine Epic 5 selected, **`NVIDIA/NeMo-Speech.cpp`**
+(Apache-2.0, C++/ggml, **Vulkan** on the Radeon 780M, **no `torch`/`numpy`**, prebuilt binary, no
+`sudo`). It is **cache-aware streaming**, so commits are **append-only** and ADR 0011's 5 s sliding
+window does not apply — that needs an **ADR 0011 amendment** plus ADR 0022, both signed off by the user
+before merge. The **default engine and both existing backends stay unchanged**.
+
+| # | Ticket | Size | Status | Depends on | Branch |
+|---|---|---|---|---|---|
+| 55 | [nemotron-3-5-asr-streaming-measurement](nemotron-streaming-backend/nemotron-3-5-asr-streaming-measurement/ticket.md) — run the prebuilt Vulkan engine on this PC and measure chunk latency/RTF/RSS, Vulkan-vs-CPU (byte-compared), accuracy vs the existing clips, and **committed-delta stability** | L | to do | 53 (done) | — |
 
 ---
 
@@ -179,7 +199,7 @@ independent and may run in parallel (they touch disjoint files).
 | 30 | 50 (engine-aware streaming default) |
 | 31 | 51 (ticket 49 review follow-ups) · 48 (identifier constants) |
 | 32 | 52 (command-verb identifiers; ticket 48's residual) |
-| 33 | 53 (parakeet discovery: engine landscape + Vulkan feasibility) → 54 (gated: on-machine measurement; only if 53 recommends a candidate) |
+| 33 | 53 (parakeet discovery: engine landscape + Vulkan feasibility) → 55 (Nemotron 3.5 streaming measurement; 54 is obsolete) |
 
 Serialization is also required wherever two tickets touch the same file: `10 → 11/12`
 (`cli.py`, `doctor.py`), `11 → 16` (`pipeline.py`), `17 → 18` (`pipeline.py`).

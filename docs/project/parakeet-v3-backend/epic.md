@@ -1,10 +1,27 @@
 # Epic: Parakeet v3 backend (discovery-gated)
 
 - **Priority:** P1
-- **Status:** to do
+- **Status:** obsolete
 - **Epic owner:** orchestrator
-- **Research:** *(produced by tickets 53 and 54 — no report exists yet)*
-- **Decision:** *(proposed after 53/54; next free ADR number is 0022)*
+- **Research:** [../research/parakeet-v3-engine-landscape/REPORT.md](../research/parakeet-v3-engine-landscape/REPORT.md)
+  (delivered by ticket 53)
+- **Decision:** not pursued — the user chose the streaming sibling
+  `nvidia/nemotron-3.5-asr-streaming-0.6b`; that work lives in
+  [../nemotron-streaming-backend/epic.md](../nemotron-streaming-backend/epic.md) (Epic 6). ADR 0022 is
+  drafted there.
+
+## Why this is obsolete
+
+Ticket 53's survey established that **Parakeet TDT v3 is an offline transducer and is batch-only in
+every engine** — it cannot produce committed text before the utterance ends, so it does not fix the
+incremental-text motivation this epic was opened for. The user therefore chose the **cache-aware
+streaming sibling** (`nvidia/nemotron-3.5-asr-streaming-0.6b`) on the same engine and closed this
+direction on 2026-10-14. **Ticket 53 (done) is retained as the evidence**; ticket 54 (the v3
+measurement) is **obsolete and was never started**; no Parakeet integration code was or will be
+written. The engine finding (NeMo-Speech.cpp, Vulkan via ggml, no `numpy`/`torch`, prebuilt binary)
+carries forward into Epic 6 unchanged.
+
+> The rest of this file is the original, now-obsolete scope. Do not work on it.
 
 ## Goal
 
