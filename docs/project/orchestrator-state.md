@@ -75,7 +75,7 @@ SHA written here). All of Epics 1–3, Epic 4's ticket 48, and **Epic 5's ticket
 | **35** | `live-dictation-ux/streaming-vs-batch-quality` | **to do, P2, gates nothing** — the three-length streaming-vs-batch sweep (§8) |
 | **30** | `core-dictation-pipeline/tray-failure-diagnostics` | **to do** — needs a **read-only socket verb → an ADR 0016 amendment**, not yet raised for sign-off |
 | **54** | `parakeet-v3-backend/parakeet-v3-vulkan-measurement` | **obsolete** — user chose the streaming sibling; superseded by 55. Never started, no artifacts. |
-| **55** | `nemotron-streaming-backend/nemotron-3-5-asr-streaming-measurement` | **to do, P0** — measure `nemotron-3.5-asr-streaming-0.6b` on this PC (Vulkan vs CPU, committed-delta stability). See §4a. |
+| **55** | `nemotron-streaming-backend/nemotron-3-5-asr-streaming-measurement` | **done** — merged `4cf5fc2` (pushed `dab409b`). Report: `docs/project/research/nemotron-3-5-asr-streaming-measurement/REPORT.md`. Reviewed pass (`003-review.md`; first review caught an **inverted §1 RSS sentence** — Vulkan is *lighter* (~197 MB) than CPU (~1,064 MB), not heavier). |
 
 **Closed as obsolete:** **31** `speech-gate-recalibration` — measured and rejected in the user's
 environment; the parked branch was deleted and its `001-comment.md`/`002-review.md` are kept in the ticket
@@ -101,19 +101,24 @@ motivation). The user picked **`nvidia/nemotron-3.5-asr-streaming-0.6b`** — ca
 (**append-only commits**), OpenMDW-1.1, 40 locales incl. `hu-HU`, but Hungarian is broad-coverage
 (FLEURS ≈ 29–33 vs v3's 15.72). **Trade-off accepted by the user.**
 
-**Ticket 55 is the measurement** (`feat/nemotron-3-5-asr-streaming-measurement`): download the prebuilt
-Vulkan archive + the q8_0 GGUF (re-pin the revision — the report found HF-main `742,090,464 B` vs the
-engine index pin `741,548,352 B`/sha256 `a5c435f2…`), verify sha256, then measure per-chunk latency,
-RTF, peak RSS, **Vulkan vs CPU byte-compared**, accuracy vs the existing English clips in
-`~/.cache/ges2t-discovery/whisper-cpp-provider/audio/`, and **committed-delta stability** (append-only?
-seam duplication? cut-off/silence hallucination?) modelled on the whisper-streaming report. **No
-Hungarian ground-truth clip exists** — Hungarian stays published-FLEURS-only unless the user supplies a
-sample (needs mic permission → escalate).
+**Ticket 55 is DONE and merged** (`4cf5fc2`, pushed `dab409b`). Headline results: **Vulkan engages**
+(`backend=Vulkan0`, VRAM Δ ~952 MB, host RSS ~197 MB vs CPU ~1,064 MB, ~41–45 ms/chunk vs CPU
+~72–88 ms); **committed text is append-only** — 1.0 across 20 runs + 5 chunk sizes, 0 rewrites, 0
+adjacent dups, no seam/cut-off/silence hallucination (whisper hallucinated on silence); pins verified
+(engine `c8d0ed5b…`/16,618,142 B, model `a5c435f2…`/741,548,352 B/rev `1c8deae…`). **Honest cost:**
+English WER worse than whisper on the noisy car clip (0.312 vs 0.062 with `-nt`, 0.156 without);
+**Hungarian unmeasured** (no ground-truth clip; published FLEURS ≈28.7–33.4 only).
 
-**Watch item:** Epic 6 will need **ADR 0022** *and* an **ADR 0011 amendment** (a cache-aware streaming
-engine retires the 5 s sliding window; the append-only committed contract is preserved). Both must be
-presented **in full** for user sign-off before the merge that carries them. Integration tickets are
-created only after ticket 55 reports.
+**PENDING USER SIGN-OFF (blocking the integration tickets):** the two drafted ADRs are presented in
+full to the user and await explicit approval. **ADR 0022** (Nemotron streaming as a third opt-in
+backend, `nemo_speech`, in-process `ctypes`, pins above, OpenMDW-1.1, default unchanged) and the
+**ADR 0011 amendment** (a cache-aware streaming engine retires the 5 s window + two-pass agreement;
+the append-only committed contract, watermark and single trailing space are preserved; scoped to such
+engines only). The drafts live verbatim in the report §“Draft ADR 0022 / ADR 0011 amendment” and
+`.../001-comment.md`; **nothing is in `docs/adr/` yet** (still 22 files). **Do not write them to
+`docs/adr/` and do not spawn integration implementers until the user says yes.** The proposed ticket
+breakdown (56 acquisition · 57 adapter · 58 config/validation · 59 streaming integration · 60 doctor ·
+61 docs) is also awaiting approval.
 
 ## 5. The whisper.cpp backend (Epic 3, merged 41–47, 49–51; ADR 0021 **accepted**)
 
