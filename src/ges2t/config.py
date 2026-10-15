@@ -40,6 +40,7 @@ from ges2t.identifiers import (
     HOTKEY_MODE_PTT,
     HOTKEY_MODE_TOGGLE,
     INJECTION_DEFAULT_BACKEND,
+    NEMO_SPEECH_ENGINE,
     WHISPER_CPP_CLI_TOKEN,
     WHISPER_CPP_ENGINE,
     WHISTLE_ENGINE,
@@ -52,6 +53,7 @@ __all__ = [
     "ENGINE_ALIASES",
     "INJECTION_DEFAULT_BACKEND",
     "KNOWN_ENGINES",
+    "NEMO_SPEECH_ENGINE",
     "WHISPER_CPP_ENGINE",
     "WHISTLE_ENGINE",
     "KNOWN_HOTKEY_MODES",
@@ -77,7 +79,17 @@ __all__ = [
 #: both read it, so they cannot drift apart. Adding an engine means adding its
 #: name here and a matching ``[engine.<name>]`` adapter; the schema does not change.
 #: The **first** entry is the default (:data:`DEFAULT_ENGINE`).
-KNOWN_ENGINES: tuple[str, ...] = (WHISTLE_ENGINE, WHISPER_CPP_ENGINE)
+#:
+#: ``nemo_speech`` (ADR 0022) is appended so the name is *accepted at config
+#: load*; the composition root only learns to *build* it in ticket 60. It is
+#: deliberately **not** in :data:`BATCH_ONLY_ENGINES`: it is a streaming engine,
+#: so an omitted ``streaming.enabled`` must resolve to ``True`` and an explicit
+#: ``true`` must not be refused (ticket 50's engine-aware default).
+KNOWN_ENGINES: tuple[str, ...] = (
+    WHISTLE_ENGINE,
+    WHISPER_CPP_ENGINE,
+    NEMO_SPEECH_ENGINE,
+)
 
 #: Non-canonical spellings the config layer forgives, folded to the canonical
 #: engine value by :func:`normalize_engine`. The ``whisper.cpp`` entry is the
@@ -88,15 +100,23 @@ ENGINE_ALIASES: Mapping[str, str] = {WHISPER_CPP_CLI_TOKEN: WHISPER_CPP_ENGINE}
 #: The default engine selector, kept in sync with :data:`KNOWN_ENGINES`.
 DEFAULT_ENGINE: str = KNOWN_ENGINES[0]
 
-#: Engines whose shipped implementation is **batch-only**: each declares
+#: Engines whose engine is **batch-only by nature**: each declares
 #: ``Transcriber.supports_streaming = False`` (ADR 0010; ADR 0021 §3 for
 #: whisper.cpp), so streaming on that engine is not possible at all. An omitted
 #: ``streaming.enabled`` resolves to ``False`` for these engines and to ``True``
 #: otherwise; an **explicit** value always wins (ticket 50). This is a pure
 #: engine-name declaration, not a hardware probe: the device-aware model default
 #: stays at the composition root (ADR 0009). A guard test builds every engine in
-#: :data:`KNOWN_ENGINES` and asserts this set agrees with
-#: ``Transcriber.supports_streaming``, so the two cannot drift.
+#: :data:`KNOWN_ENGINES` and pins this set against the batch-only engines'
+#: declared ``Transcriber.supports_streaming``.
+#:
+#: ``nemo_speech`` is **deliberately absent**: it is a *streaming* engine (ADR
+#: 0022), so the config default must be ``True``, even though its adapter does not
+#: yet implement the streaming driver — ticket 58 ships the batch path with
+#: ``supports_streaming = False`` and ticket 59 flips it. The guard test names
+#: that one transitional exception explicitly rather than treating the two sets
+#: as equal, so a *future* batch-only engine added to :data:`KNOWN_ENGINES`
+#: without a matching entry here is still caught.
 BATCH_ONLY_ENGINES: frozenset[str] = frozenset({WHISPER_CPP_ENGINE})
 
 #: The only ``hotkey.mode`` values the generic layer accepts (ADR 0009).

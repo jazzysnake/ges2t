@@ -73,7 +73,7 @@ def _vulkan_probe() -> FakeSystemProbe:
 
 
 def test_known_engines_adds_whisper_cpp_and_keeps_whistle_default() -> None:
-    assert config_module.KNOWN_ENGINES == ("whistle", "whisper_cpp")
+    assert config_module.KNOWN_ENGINES == ("whistle", "whisper_cpp", "nemo_speech")
     assert config_module.DEFAULT_ENGINE == "whistle"
 
 
@@ -349,17 +349,33 @@ def test_batch_only_engines_agree_with_the_transcriber_capability() -> None:
     # while the real source of truth for "can this engine stream" is the adapter's
     # declared supports_streaming. The two must not drift: one guard test over
     # every known engine, constructed directly so no machine is probed.
+    #
+    # nemo_speech is the one deliberate exception (ticket 58): it is a *streaming*
+    # engine (ADR 0022) whose adapter does not stream yet -- ticket 59 flips
+    # supports_streaming to True -- so BATCH_ONLY_ENGINES must stay without it
+    # (an omitted streaming.enabled defaults to True). Excluding exactly this
+    # engine keeps the guard live for every other engine.
+    from ges2t.identifiers import NEMO_SPEECH_ENGINE
+    from ges2t.transcribers.nemo_speech import NemoSpeechTranscriber
+    from ges2t.transcribers.nemo_speech_config import NemoSpeechConfig
     from ges2t.transcribers.whistle import WhistleTranscriber
     from ges2t.transcribers.whistle_config import WhistleConfig
 
     declared = {
         "whistle": WhistleTranscriber(WhistleConfig()).supports_streaming,
         "whisper_cpp": WhisperCppTranscriber(WhisperCppConfig()).supports_streaming,
+        "nemo_speech": NemoSpeechTranscriber(
+            NemoSpeechConfig()
+        ).supports_streaming,
     }
     assert set(declared) == set(config_module.KNOWN_ENGINES)
     assert config_module.BATCH_ONLY_ENGINES == {
-        engine for engine, streams in declared.items() if not streams
+        engine
+        for engine, streams in declared.items()
+        if not streams and engine != NEMO_SPEECH_ENGINE
     }
+    assert NEMO_SPEECH_ENGINE not in config_module.BATCH_ONLY_ENGINES
+    assert declared[NEMO_SPEECH_ENGINE] is False
 
 
 def test_omitted_streaming_with_a_batch_only_engine_starts(
