@@ -20,6 +20,7 @@ import os
 import stat
 import tarfile
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -387,8 +388,8 @@ def test_force_re_extracts_even_when_complete(sandbox: Path) -> None:
     assert engine.directory == directory
     assert not stray.exists()  # the tree was replaced wholesale
     assert engine.executable.is_file()
-    # The archive was already verified in the cache, so a forced re-extract is
-    # fully offline.
+    # ``ensure_artifact`` trusts a cache hit by pinned byte size alone, so the
+    # forced re-extract reuses the archive downloaded above, fully offline.
     assert fetcher.calls == []
     assert _temporary_leftovers(sandbox) == []
 
@@ -673,18 +674,60 @@ _FORBIDDEN_MODULES: frozenset[str] = frozenset(
     {"subprocess", "urllib", "http", "socket", "requests", "httpx"}
 )
 
+#: Call/attribute names that spawn a process **without** importing
+#: :mod:`subprocess`: ``os.system``, the ``os.exec*`` family, ``os.popen`` and the
+#: ``os.spawn*`` family. The module already imports ``os`` for ``os.rename`` and
+#: ``os.replace``, so forbidding the import is not an option — the *call* has to
+#: be named. This closes the hole where ``os.system("ninja -C build")`` carries
+#: the build tool inside one string constant that the exact-name scan below would
+#: not match.
+_FORBIDDEN_PROCESS_CALLS: frozenset[str] = frozenset(
+    {
+        "system",
+        "popen",
+        "execv",
+        "execve",
+        "execvp",
+        "execvpe",
+        "execl",
+        "execlp",
+        "execle",
+        "spawnl",
+        "spawnle",
+        "spawnlp",
+        "spawnv",
+        "spawnve",
+        "spawnvp",
+        "spawnvpe",
+    }
+)
 
-def test_the_engine_module_runs_no_external_command_and_installs_nothing() -> None:
-    """A static guard: no process, no network, no build tool named anywhere.
 
-    Scans the **AST**, not the prose: the module's docstring legitimately says the
-    word "sudo", but no string *constant* may be a program name and no import may
-    open a process or a socket.
+@dataclass(frozen=True)
+class _CommandScan:
+    """What a static scan of one module found that could run or name a command."""
+
+    imported_modules: frozenset[str]
+    forbidden_programs: frozenset[str]
+    process_calls: frozenset[str]
+
+
+def _scan_for_commands(source: str) -> _CommandScan:
+    """Scan ``source`` for process-spawning imports, calls and build-tool names.
+
+    A pure function of the source text, so a test can feed it a **mutated**
+    module and prove the guard is not vacuous.
+
+    ``process_calls`` is drawn from attribute names (so ``os.system`` is seen
+    wherever it is referenced) and from the callee of a call (so a bare
+    ``system(...)`` after ``from os import system`` is seen too). A bare name
+    that is only a parameter — the module's ``inspect_device(system=…)`` — is
+    deliberately not a finding.
     """
-    source = Path(nemo_engine.__file__).read_text(encoding="utf-8")
     tree = ast.parse(source)
     imported: set[str] = set()
     constants: set[str] = set()
+    referenced: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             imported.update(alias.name.split(".")[0] for alias in node.names)
@@ -693,6 +736,81 @@ def test_the_engine_module_runs_no_external_command_and_installs_nothing() -> No
                 imported.add(node.module.split(".")[0])
         elif isinstance(node, ast.Constant) and isinstance(node.value, str):
             constants.add(node.value)
+        elif isinstance(node, ast.Attribute):
+            referenced.add(node.attr)
+        elif isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name):
+                referenced.add(func.id)
+    return _CommandScan(
+        imported_modules=frozenset(imported),
+        forbidden_programs=frozenset(constants & _FORBIDDEN_PROGRAMS),
+        process_calls=frozenset(referenced & _FORBIDDEN_PROCESS_CALLS),
+    )
 
-    assert imported & _FORBIDDEN_MODULES == set(), imported & _FORBIDDEN_MODULES
-    assert constants & _FORBIDDEN_PROGRAMS == set(), constants & _FORBIDDEN_PROGRAMS
+
+def _engine_source() -> str:
+    """Return the real ``nemo_engine`` source text."""
+    return Path(nemo_engine.__file__).read_text(encoding="utf-8")
+
+
+def test_the_engine_module_runs_no_external_command_and_installs_nothing() -> None:
+    """A static guard: no process, no network, no build tool named anywhere.
+
+    Scans the **AST**, not the prose: the module's docstring legitimately says the
+    word "sudo", but no string *constant* may be a program name, no import may
+    open a process or a socket, and no call may be ``os.system``/``os.exec*``/
+    ``os.popen``/``os.spawn*``.
+
+    Scope, stated honestly: this is a **static** scan of names, not a runtime
+    guard. It catches a process-spawning *import* (``subprocess``) and a
+    process-spawning *call* by name, including the ``os.system("ninja -C build")``
+    shape whose command line hides inside one string. The residual hole is an
+    **indirect** invocation a name scan cannot follow — ``getattr(os, "system")``,
+    a process reached through a helper or an alias, or a dynamic import whose
+    module name is not a literal. The realistic failures (``import subprocess``,
+    a named ``os.system``/``os.exec*``) are caught.
+    """
+    scan = _scan_for_commands(_engine_source())
+
+    assert scan.imported_modules & _FORBIDDEN_MODULES == set(), (
+        scan.imported_modules & _FORBIDDEN_MODULES
+    )
+    assert scan.forbidden_programs == frozenset(), scan.forbidden_programs
+    assert scan.process_calls == frozenset(), scan.process_calls
+
+
+@pytest.mark.parametrize(
+    "spawn",
+    [
+        "os.system('ninja -C build')",
+        "os.execv('/bin/sh', ['sh'])",
+        "os.popen('cmake .')",
+        "os.spawnvp(os.P_WAIT, 'make', ['make'])",
+    ],
+)
+def test_the_static_guard_fails_on_a_process_spawning_call(spawn: str) -> None:
+    """Falsify the guard: a named ``os.system``/``os.exec*``/… call is reported."""
+    scan = _scan_for_commands(_engine_source() + f"\nimport os\n{spawn}\n")
+
+    assert scan.process_calls != frozenset(), scan.process_calls
+
+
+def test_the_static_guard_fails_on_a_subprocess_import() -> None:
+    """Falsify the guard: ``import subprocess`` is reported."""
+    scan = _scan_for_commands(_engine_source() + "\nimport subprocess\n")
+
+    assert scan.imported_modules & _FORBIDDEN_MODULES == {"subprocess"}
+
+
+def test_the_static_guard_does_not_flag_a_parameter_named_system() -> None:
+    """A bare name used as a parameter or keyword argument is not a process call.
+
+    The real module has ``inspect_device(system: SystemProbe | None = None)``;
+    only attributed access (``os.system``) or a bare *callee* is a finding.
+    """
+    scan = _scan_for_commands(
+        "def inspect_device(system=None):\n    return probe(system=system)\n"
+    )
+
+    assert scan.process_calls == frozenset(), scan.process_calls

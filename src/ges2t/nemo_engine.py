@@ -520,12 +520,16 @@ def _remove_tree(path: Path) -> None:
 def _extract(archive: Path, staging: Path) -> Path:
     """Extract ``archive`` into ``staging`` and return the engine root inside it.
 
-    ``filter="data"`` is mandatory here rather than cosmetic: it refuses absolute
-    member names, ``..`` components, links that escape the destination and
-    special files, so a tampered *container* (the hash of the archive was checked
-    before this runs, but defence in depth is free) cannot write outside
-    ``staging``. It preserves the executable bit and the SONAME symlinks the
-    engine's own loader needs.
+    ``filter="data"`` is mandatory here rather than cosmetic. It **refuses** the
+    members that could land outside ``staging``: ``..`` components, link targets
+    that are absolute or escape the destination, and special files. An absolute
+    member *name* is not refused but **sanitised** — its leading ``/`` is
+    stripped and the member is contained inside ``staging``, at the staging top
+    level, hence outside :data:`ARCHIVE_ROOT_NAME` and discarded with the tree.
+    Either way a tampered *container* (the hash of the archive was checked before
+    this runs, but defence in depth is free) cannot write outside ``staging``.
+    The filter preserves the executable bit and the SONAME symlinks the engine's
+    own loader needs.
     """
     try:
         with tarfile.open(archive, "r:gz") as bundle:
@@ -639,8 +643,11 @@ def ensure_engine(
     :func:`verify_engine` checks the manifest's file **list**, not the bytes of
     the extracted files (hashing 48 MB on every setup would be the wrong trade),
     so a tree whose files are all present but whose contents were damaged passes
-    verification; ``force`` repairs that **offline**, from the archive already
-    verified in the cache. No CLI flag owns it yet — ``--rebuild`` is the
+    verification; ``force`` repairs that **offline**, from the cached archive. A
+    cache hit is trusted by **byte size only** (:func:`ges2t.model_store.ensure_artifact`,
+    the same trade ADR 0017's model store makes), so a ``force`` run re-hashes
+    nothing: the sha256 is re-verified **on download**, not on every reuse of the
+    cache. No CLI flag owns it yet — ``--rebuild`` is the
     whisper.cpp build's, and wiring one into this backend is a decision for the
     tickets that select the engine — so every caller today is a library caller
     (the tests included). Nothing here builds, installs a package, or runs
