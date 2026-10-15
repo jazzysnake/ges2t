@@ -158,7 +158,7 @@ engine's **pure streaming** — no 5 s sliding window, no two-pass agreement. **
 | # | Ticket | Size | Status | Depends on | Branch |
 |---|---|---|---|---|---|
 | 55 | [nemotron-3-5-asr-streaming-measurement](nemotron-streaming-backend/nemotron-3-5-asr-streaming-measurement/ticket.md) — run the prebuilt Vulkan engine on this PC and measure chunk latency/RTF/RSS, Vulkan-vs-CPU (byte-compared), accuracy vs the existing clips, and **committed-delta stability** | L | done | 53 (done) | feat/nemotron-3-5-asr-streaming-measurement (merged 4cf5fc2) |
-| 56 | [nemo-pure-streaming-integration](nemotron-streaming-backend/nemo-pure-streaming-integration/ticket.md) — **read the code** and design how the append-only interim stream is carried into the committed-delta path with **no sliding window and no second pass**; C-ABI delivery/threading, commit policy, and the integration ticket breakdown | M | to do | 55 (done) | — |
+| 56 | [nemo-pure-streaming-integration](nemotron-streaming-backend/nemo-pure-streaming-integration/ticket.md) — **read the code** and design how the append-only interim stream is carried into the committed-delta path with **no sliding window and no second pass**; C-ABI delivery/threading, commit policy, and the integration ticket breakdown | M | in review | 55 (done) | feat/nemo-pure-streaming-integration |
 
 ---
 

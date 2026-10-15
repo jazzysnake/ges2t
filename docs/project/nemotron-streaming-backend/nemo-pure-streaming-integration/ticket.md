@@ -1,7 +1,7 @@
 # Nemotron pure-streaming integration — how to wire the append-only interim stream without a sliding window
 
 - **Priority:** P0
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** M
 - **Epic:** ../epic.md
 - **Type:** discovery / code investigation (no `src/` change, no `tests/` change, no `sudo`, no microphone)
