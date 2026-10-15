@@ -32,6 +32,15 @@ from ges2t.model_store import (
     MODEL_SIZE,
     MODEL_URL,
     NEEDLE_MODELS,
+    NEMO_MODEL,
+    NEMO_MODEL_FILE_NAME,
+    NEMO_MODEL_NAME,
+    NEMO_MODEL_PIN,
+    NEMO_MODEL_REPOSITORY,
+    NEMO_MODEL_REVISION,
+    NEMO_MODEL_SHA256,
+    NEMO_MODEL_SIZE,
+    NEMO_MODEL_URL,
     PLATFORM_KEY,
     WHISPER_CPP_CATALOGUE,
     WHISPER_CPP_MODELS,
@@ -42,6 +51,7 @@ from ges2t.model_store import (
     ArtifactVerificationError,
     ModelStoreError,
     NeedleModelNameError,
+    NemoModel,
     UnsupportedPlatformError,
     WhisperModel,
     WhisperModelName,
@@ -50,10 +60,12 @@ from ges2t.model_store import (
     engine_path,
     ensure_engine,
     ensure_model,
+    ensure_nemo_model,
     ensure_whisper_model,
     env_overrides,
     model_path,
     needle_model,
+    nemo_model_path,
     parse_whisper_model_name,
     verify,
     whisper_model,
@@ -407,7 +419,7 @@ def test_download_reports_content_length_fractions(
         "https://example.invalid/x", destination, progress=fractions.append
     )
 
-    # 10/10 == 1.0 is deliberately left to ``_ensure``; the downloader only
+    # 10/10 == 1.0 is deliberately left to ``ensure_artifact``; the downloader only
     # emits the strictly-intermediate fractions.
     assert fractions == [0.4, 0.8]
     assert destination.read_bytes() == payload
@@ -883,6 +895,160 @@ def test_fetching_a_second_whisper_model_leaves_the_first_untouched(
     # The first model's bytes are untouched and it was not re-fetched.
     assert first.read_bytes() == WHISPER_TEST_BYTES
     assert len(second.calls) == 1
+
+
+# --- NeMo-Speech.cpp streaming model (ADR 0022) -------------------------------
+
+
+def test_nemo_model_pin_matches_ticket_55() -> None:
+    # Literal strings on purpose (rule 8): these are the values ticket 55 verified
+    # against the live host, not a re-assertion of the module's own constants.
+    assert NEMO_MODEL_REPOSITORY == "nvidia/nemotron-3.5-asr-streaming-0.6b"
+    assert NEMO_MODEL_REVISION == "1c8deaecc64b91f034d73e08dd8b64625eb3395d"
+    assert NEMO_MODEL_FILE_NAME == "nemotron-3.5-asr-streaming-0.6b.q8_0.gguf"
+    assert NEMO_MODEL_SHA256 == (
+        "a5c435f294eea8f88ce68dd27b8c3bfea7f777cb2fbba04fcd30eaa555f429ae"
+    )
+    assert NEMO_MODEL_SIZE == 741_548_352
+    assert NEMO_MODEL_URL == (
+        "https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b/resolve/"
+        "1c8deaecc64b91f034d73e08dd8b64625eb3395d/"
+        "nemotron-3.5-asr-streaming-0.6b.q8_0.gguf"
+    )
+
+
+def test_nemo_model_pin_url_is_revision_qualified_not_main() -> None:
+    # ADR 0017/ADR 0022 §8: the revision is part of the pin. ``main`` is a
+    # *different* artifact of the same name (742,090,464 B, revision ea30d66d…),
+    # so a ``resolve/main`` URL must never be pinned here.
+    assert NEMO_MODEL_REVISION in NEMO_MODEL_URL
+    assert "/resolve/main" not in NEMO_MODEL_URL
+    assert NEMO_MODEL.pin is NEMO_MODEL_PIN
+    assert NEMO_MODEL.pin.url == NEMO_MODEL_URL
+    assert NEMO_MODEL.pin.size == NEMO_MODEL_SIZE
+    assert NEMO_MODEL.pin.sha256 == NEMO_MODEL_SHA256
+    assert NEMO_MODEL.pin.member is None
+
+
+def test_nemo_model_path_uses_the_data_dir_layout(data_home: Path) -> None:
+    assert nemo_model_path() == (
+        data_home
+        / "ges2t"
+        / "models"
+        / "nemo-speech"
+        / NEMO_MODEL_NAME
+        / NEMO_MODEL_FILE_NAME
+    )
+
+
+NEMO_TEST_BYTES: bytes = b"gguf-nemotron-payload" * 3
+
+
+@pytest.fixture()
+def fake_nemo_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace the real (741 MB) nemo model with one tiny synthetic entry."""
+    monkeypatch.setattr(
+        model_store,
+        "NEMO_MODEL",
+        NemoModel(
+            name="nemotron-test",
+            revision="0" * 40,
+            pin=_make_pin("nemotron-test.q8_0.gguf", NEMO_TEST_BYTES),
+        ),
+    )
+
+
+def test_ensure_nemo_model_downloads_verifies_and_installs(
+    data_home: Path, fake_nemo_model: None
+) -> None:
+    fetcher = RecordingFetcher(NEMO_TEST_BYTES)
+
+    result = ensure_nemo_model(fetcher=fetcher)
+
+    assert result == nemo_model_path()
+    assert result.read_bytes() == NEMO_TEST_BYTES
+    assert len(fetcher.calls) == 1
+    assert fetcher.calls[0][0] == model_store.NEMO_MODEL.pin.url
+    assert verify(result, model_store.NEMO_MODEL.pin) is True
+
+
+def test_ensure_nemo_model_is_idempotent(
+    data_home: Path, fake_nemo_model: None
+) -> None:
+    ensure_nemo_model(fetcher=RecordingFetcher(NEMO_TEST_BYTES))
+    second = RecordingFetcher(b"")
+
+    result = ensure_nemo_model(fetcher=second)
+
+    assert result == nemo_model_path()
+    assert second.calls == []
+
+
+def test_ensure_nemo_model_wrong_hash_is_a_typed_error(
+    data_home: Path, fake_nemo_model: None
+) -> None:
+    corrupt = _flip_one_byte(NEMO_TEST_BYTES)
+    assert len(corrupt) == model_store.NEMO_MODEL.pin.size  # size alone would pass
+
+    with pytest.raises(ArtifactVerificationError) as excinfo:
+        ensure_nemo_model(fetcher=RecordingFetcher(corrupt))
+
+    message = str(excinfo.value)
+    assert model_store.NEMO_MODEL.pin.sha256 in message
+    assert hashlib.sha256(corrupt).hexdigest() in message
+    assert not nemo_model_path().exists()
+    assert _part_files(data_home) == []
+
+
+def test_ensure_nemo_model_wrong_size_is_a_typed_error(
+    data_home: Path, fake_nemo_model: None
+) -> None:
+    with pytest.raises(ArtifactVerificationError):
+        ensure_nemo_model(fetcher=RecordingFetcher(NEMO_TEST_BYTES[:-1]))
+
+    assert not nemo_model_path().exists()
+    assert _part_files(data_home) == []
+
+
+def test_ensure_nemo_model_checks_the_size_alone(
+    data_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A pin whose sha256 is the payload's but whose *size* is wrong: only the
+    # size check can reject this, so the pair really is checked, not just the hash.
+    payload = NEMO_TEST_BYTES
+    monkeypatch.setattr(
+        model_store,
+        "NEMO_MODEL",
+        NemoModel(
+            name="nemotron-test",
+            revision="0" * 40,
+            pin=ArtifactPin(
+                name="nemotron-test.q8_0.gguf",
+                url="https://example.invalid/nemotron-test.q8_0.gguf",
+                sha256=hashlib.sha256(payload).hexdigest(),
+                size=len(payload) + 1,
+            ),
+        ),
+    )
+
+    with pytest.raises(ArtifactVerificationError):
+        ensure_nemo_model(fetcher=RecordingFetcher(payload))
+
+    assert not nemo_model_path().exists()
+    assert _part_files(data_home) == []
+
+
+def test_ensure_nemo_model_network_failure_leaves_nothing(
+    data_home: Path, fake_nemo_model: None
+) -> None:
+    fetcher = InterruptedFetcher(NEMO_TEST_BYTES[:5])
+
+    with pytest.raises(ConnectionError):
+        ensure_nemo_model(fetcher=fetcher)
+
+    assert fetcher.calls == 1
+    assert not nemo_model_path().exists()
+    assert _part_files(data_home) == []
 
 
 # --- ADR 0018: acquisition is the only networked path ------------------------

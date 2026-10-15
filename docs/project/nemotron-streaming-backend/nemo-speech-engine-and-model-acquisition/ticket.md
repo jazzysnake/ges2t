@@ -1,7 +1,7 @@
 # Nemotron engine and model acquisition
 
 - **Priority:** P1
-- **Status:** to do
+- **Status:** in review
 - **Complexity:** M
 - **Epic:** ../epic.md
 
@@ -32,24 +32,29 @@ Read [the design report §7.1](../../research/nemo-pure-streaming-integration/RE
 
 ## Definition of done
 
-- [ ] `src/ges2t/identifiers.py` defines **`NEMO_SPEECH_ENGINE = "nemo_speech"`** — one definition,
-      used by comparison, never a bare literal (Epic 4 rule; the guard test must stay green).
-- [ ] `src/ges2t/nemo_engine.py` (new) mirrors `whisper_engine.py`: the archive pin (URL, sha256,
+- [x] `src/ges2t/identifiers.py` defines **`NEMO_SPEECH_ENGINE = "nemo_speech"`** — one definition,
+      used by comparison, never a bare literal (Epic 4 rule; the guard test must stay green). The
+      setup token *is* this value: no second constant, no alias.
+- [x] `src/ges2t/nemo_engine.py` (new) mirrors `whisper_engine.py`: the archive pin (URL, sha256,
       size), extraction into the ges2t data dir, `engine_dir()`, `verify_engine()`, and device
       detection. **It never builds anything and never installs a package.**
-- [ ] `src/ges2t/model_store.py` gains the GGUF pin (sha256 + size + revision) and
+- [x] `src/ges2t/model_store.py` gains the GGUF pin (sha256 + size + revision) and
       `nemo_model_path()` / `ensure_nemo_model()`, reusing the existing `_ensure`/`verify` helpers.
-- [ ] `ges2t setup nemo_speech` (via `setup_command.py` + `cli.py`) acquires the engine archive and
+- [x] `ges2t setup nemo_speech` (via `setup_command.py` + `cli.py`) acquires the engine archive and
       the GGUF, verifies both hashes, and prints the config line the user must add. A hash or size
       mismatch is a hard failure that leaves nothing half-written.
-- [ ] `setup` **requires and never installs** its prerequisites and never runs `sudo`; the prebuilt
+- [x] `setup` **requires and never installs** its prerequisites and never runs `sudo`; the prebuilt
       archive path needs **no** build tooling (`ninja`/`sentencepiece` are absent on this machine and
-      must not be needed).
-- [ ] **No runtime network** (ADR 0018): acquisition happens only here; `ensure_*` is the only
-      networked call.
-- [ ] Hermetic tests for the pins/verification (a wrong-hash archive and a wrong-size model both fail);
-      `uv run pytest` green and `uv run mypy src/ges2t tests` 0 errors (ADR 0019).
-- [ ] Docs link check 0 broken references; `docs/project/README.md` row for this ticket updated.
+      are never named — asserted by a static AST guard test).
+- [x] **No runtime network** (ADR 0018): acquisition happens only here; `ensure_*` is the only
+      networked call. `nemo_engine.py` imports no HTTP client (the "network stays in `model_store`"
+      guard test stays green).
+- [x] Hermetic tests for the pins/verification (a wrong-hash archive and a wrong-size model both
+      fail); `uv run pytest` green and `uv run mypy src/ges2t tests` 0 errors (ADR 0019).
+- [x] Docs link check 0 broken references; `docs/project/README.md` row for this ticket updated.
+
+Evidence, the falsification table for every new guard, and the one user-owned gate that was **not**
+run (the real ~758 MB download — the network is not mine to use) are in [`001-comment.md`](001-comment.md).
 
 ## Notes
 
@@ -61,6 +66,10 @@ Read [the design report §7.1](../../research/nemo-pure-streaming-integration/RE
   anywhere else.
 - Scratch/experiment files from earlier discovery are **not** part of this ticket; the repo gains no
   binary, weight, or audio.
+- **Not run here:** the real end-to-end download (`ges2t setup nemo_speech`) — the network is
+  user-owned and was not confirmed. The pins are asserted as data against ticket 55's report and the
+  acquisition/extraction logic is covered hermetically (fake fetcher + a real gzip tar); the exact
+  commands for the gate are in `001-comment.md`.
 
 ## Related tickets
 

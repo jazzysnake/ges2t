@@ -16,14 +16,27 @@ from pathlib import Path
 
 import pytest
 
+from ges2t import model_store, nemo_engine, whisper_engine
 from ges2t.config import Config
+from ges2t.identifiers import NEMO_SPEECH_ENGINE
 from ges2t.model_store import (
+    NEMO_MODEL,
     ModelStoreError,
     NeedleModelNameError,
     ProgressCallback,
     WhisperModelNameError,
 )
+from ges2t.nemo_engine import (
+    ENTRY_LIBRARY_RELATIVE_PATH,
+    EXECUTABLE_RELATIVE_PATH,
+    NEMO_SPEECH_ARCHIVE_NAME,
+    NEMO_SPEECH_SHA256,
+    NEMO_SPEECH_SIZE,
+    NemoEngine,
+    NemoEngineError,
+)
 from ges2t.setup_command import (
+    ACCEPTED_BACKEND_TOKENS,
     DEFAULT_WHISPER_MODEL_CPU,
     DEFAULT_WHISPER_MODEL_GPU,
     PartialSetupError,
@@ -33,6 +46,7 @@ from ges2t.setup_command import (
     SetupPlan,
     UnknownBackendError,
     config_guidance,
+    default_dependencies,
     default_whisper_model,
     plan_setup,
     run_setup,
@@ -196,6 +210,40 @@ class FakeWhisperModelInstaller:
         return self.path
 
 
+class FakeNemoEngineInstaller:
+    """Records every nemo engine extraction and can be made to fail."""
+
+    def __init__(self, engine: NemoEngine, log: list[str]) -> None:
+        self.engine = engine
+        self.log = log
+        self.calls = 0
+        self.error: Exception | None = None
+
+    def __call__(self, *, progress: ProgressCallback | None = None) -> NemoEngine:
+        self.log.append("nemo-engine")
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return self.engine
+
+
+class FakeNemoModelInstaller:
+    """Records every nemo GGUF acquisition and can be made to fail."""
+
+    def __init__(self, path: Path, log: list[str]) -> None:
+        self.path = path
+        self.log = log
+        self.calls = 0
+        self.error: Exception | None = None
+
+    def __call__(self, *, progress: ProgressCallback | None = None) -> Path:
+        self.log.append("nemo-model")
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return self.path
+
+
 @dataclass
 class Fakes:
     """A wired set of recording installers for one :func:`run_setup` call."""
@@ -206,6 +254,8 @@ class Fakes:
     needle_engine: FakeNeedleEngineInstaller
     whisper_engine: FakeWhisperEngineInstaller
     whisper_model: FakeWhisperModelInstaller
+    nemo_engine: FakeNemoEngineInstaller
+    nemo_model: FakeNemoModelInstaller
 
 
 def make_fakes(tmp_path: Path) -> Fakes:
@@ -215,18 +265,47 @@ def make_fakes(tmp_path: Path) -> Fakes:
     needle_engine = FakeNeedleEngineInstaller(tmp_path / "libneedle.so", log)
     whisper_engine = FakeWhisperEngineInstaller(make_engine_build(tmp_path), log)
     whisper_model = FakeWhisperModelInstaller(tmp_path / "ggml.bin", log)
+    nemo_engine = FakeNemoEngineInstaller(make_nemo_engine(tmp_path), log)
+    nemo_model = FakeNemoModelInstaller(tmp_path / "nemotron.gguf", log)
     return Fakes(
         dependencies=SetupDependencies(
             needle_model=needle_model,
             needle_engine=needle_engine,
             whisper_engine=whisper_engine,
             whisper_model=whisper_model,
+            nemo_engine=nemo_engine,
+            nemo_model=nemo_model,
         ),
         log=log,
         needle_model=needle_model,
         needle_engine=needle_engine,
         whisper_engine=whisper_engine,
         whisper_model=whisper_model,
+        nemo_engine=nemo_engine,
+        nemo_model=nemo_model,
+    )
+
+
+def make_nemo_engine(tmp_path: Path) -> NemoEngine:
+    """Return a minimal, self-consistent :class:`NemoEngine` for the fakes."""
+    directory = tmp_path / "engine" / "nemo-speech" / "0.2.0"
+    entry_library = directory / ENTRY_LIBRARY_RELATIVE_PATH
+    executable = directory / EXECUTABLE_RELATIVE_PATH
+    entry_library.parent.mkdir(parents=True, exist_ok=True)
+    executable.parent.mkdir(parents=True, exist_ok=True)
+    entry_library.write_bytes(b"\x7fELF nemo asr c")
+    executable.write_bytes(b"\x7fELF nemo cli")
+    return NemoEngine(
+        version="0.2.0",
+        tag="v0.2.0",
+        archive=NEMO_SPEECH_ARCHIVE_NAME,
+        sha256=NEMO_SPEECH_SHA256,
+        size=NEMO_SPEECH_SIZE,
+        directory=directory,
+        entry_library=entry_library,
+        executable=executable,
+        files=(entry_library, executable),
+        extracted_at="2026-10-14T00:00:00+00:00",
     )
 
 
@@ -314,7 +393,7 @@ def test_unknown_backend_is_typed_and_names_the_valid_set() -> None:
         plan_setup("whisper", None)
     error = excinfo.value
     assert error.name == "whisper"
-    assert error.valid == ("needle", "whisper.cpp", "whisper_cpp")
+    assert error.valid == ("needle", "whisper.cpp", "nemo_speech", "whisper_cpp")
     message = str(error)
     for token in error.valid:
         assert token in message
@@ -439,6 +518,97 @@ def test_needle_engine_failure_propagates_after_the_model_is_fetched(
     assert fakes.log == ["needle-model", "needle-engine"]
 
 
+# --- the nemo_speech backend (ticket 57, ADR 0022) -----------------------------
+
+
+def test_nemo_backend_token_is_the_engine_value() -> None:
+    # Rules 1/2: one spelling. The setup token, the engine value and (ticket 58's)
+    # TOML block name are the same string, so there is no alias to normalise and
+    # no second constant to keep in step.
+    assert NEMO_SPEECH_ENGINE == "nemo_speech"
+    assert SetupBackend.NEMO_SPEECH.value == NEMO_SPEECH_ENGINE
+    assert SetupBackend.NEMO_SPEECH.engine == NEMO_SPEECH_ENGINE
+    assert NEMO_SPEECH_ENGINE in ACCEPTED_BACKEND_TOKENS
+
+
+def test_nemo_speech_plan_resolves_the_one_pinned_model() -> None:
+    assert plan_setup(NEMO_SPEECH_ENGINE, None) == SetupPlan(
+        backend=SetupBackend.NEMO_SPEECH, model=NEMO_MODEL.name
+    )
+
+
+def test_nemo_speech_refuses_a_model_argument_it_cannot_honour() -> None:
+    # There is one pinned GGUF; accepting a name and ignoring it is how a user
+    # comes to believe they switched models (rule 5).
+    with pytest.raises(SetupError) as excinfo:
+        plan_setup(NEMO_SPEECH_ENGINE, "some-other-model")
+
+    message = str(excinfo.value)
+    assert NEMO_MODEL.name in message
+    assert "takes no model argument" in message
+    assert "some-other-model" in message
+
+
+def test_nemo_run_extracts_the_engine_then_acquires_the_model(tmp_path: Path) -> None:
+    fakes = make_fakes(tmp_path)
+
+    outcome = run_setup(
+        SetupPlan(SetupBackend.NEMO_SPEECH, NEMO_MODEL.name),
+        dependencies=fakes.dependencies,
+    )
+
+    assert fakes.log == ["nemo-engine", "nemo-model"]
+    assert outcome.nemo_engine == fakes.nemo_engine.engine
+    assert outcome.nemo_model_path == fakes.nemo_model.path
+    assert outcome.needle_model_path is None
+    assert outcome.needle_engine_path is None
+    assert outcome.whisper_engine is None
+    assert outcome.whisper_model_path is None
+
+
+def test_nemo_engine_failure_propagates_and_never_acquires_a_model(
+    tmp_path: Path,
+) -> None:
+    fakes = make_fakes(tmp_path)
+    fakes.nemo_engine.error = NemoEngineError("archive download refused")
+
+    with pytest.raises(NemoEngineError):
+        run_setup(
+            SetupPlan(SetupBackend.NEMO_SPEECH, NEMO_MODEL.name),
+            dependencies=fakes.dependencies,
+        )
+
+    assert fakes.log == ["nemo-engine"]
+    assert fakes.nemo_model.calls == 0
+
+
+def test_nemo_model_failure_after_the_extraction_is_typed_and_names_state(
+    tmp_path: Path,
+) -> None:
+    fakes = make_fakes(tmp_path)
+    fakes.nemo_model.error = ModelStoreError("download refused")
+
+    with pytest.raises(PartialSetupError) as excinfo:
+        run_setup(
+            SetupPlan(SetupBackend.NEMO_SPEECH, NEMO_MODEL.name),
+            dependencies=fakes.dependencies,
+        )
+
+    error = excinfo.value
+    assert error.missing == f"model {NEMO_MODEL.name}"
+    assert "v0.2.0" in error.installed
+    assert isinstance(error.cause, ModelStoreError)
+    assert fakes.log == ["nemo-engine", "nemo-model"]
+
+
+def test_default_dependencies_use_the_real_acquisions() -> None:
+    deps = default_dependencies()
+    assert deps.nemo_engine is nemo_engine.ensure_engine
+    assert deps.nemo_model is model_store.ensure_nemo_model
+    assert deps.needle_model is model_store.ensure_model
+    assert deps.whisper_engine is whisper_engine.ensure_engine
+
+
 # --- the config line setup cannot write itself (ticket 47) ---------------------
 
 
@@ -461,6 +631,15 @@ def test_config_guidance_for_the_default_engine_says_no_line_is_needed() -> None
     assert "whistle" in guidance
     assert "no line is needed" in guidance
     assert "transcriber.engine" not in guidance
+
+
+def test_config_guidance_for_nemo_prints_the_exact_engine_line() -> None:
+    plan = SetupPlan(SetupBackend.NEMO_SPEECH, NEMO_MODEL.name)
+    guidance = config_guidance(plan, path=Path("/home/u/.config/ges2t/config.toml"))
+    assert 'transcriber.engine = "nemo_speech"' in guidance
+    assert "/home/u/.config/ges2t/config.toml" in guidance
+    # The whisper-only batch-only paragraph must not leak into the nemo guidance.
+    assert "batch-only" not in guidance
 
 
 def test_config_guidance_defaults_to_the_xdg_config_path() -> None:

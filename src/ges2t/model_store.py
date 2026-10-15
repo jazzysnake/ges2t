@@ -2,8 +2,10 @@
 
 This module owns the artifacts ges2t runs against — the Whistle weights
 (``whistle.cact``) and the Needle 3 engine (``libneedle.so``, extracted from
-upstream's engine wheel) for the default backend, plus the whisper.cpp ggml model
-**catalogue** (``ggml-<size>-<quant>.bin`` from ``ggerganov/whisper.cpp``) — and
+upstream's engine wheel) for the default backend, the whisper.cpp ggml model
+**catalogue** (``ggml-<size>-<quant>.bin`` from ``ggerganov/whisper.cpp``), and
+the NeMo-Speech.cpp streaming model (``nemotron-3.5-asr-streaming-0.6b.q8_0.gguf``
+from a revision-pinned Hugging Face path, ADR 0022) — and
 is, by design, **the only code in ges2t allowed to perform network I/O**
 (ADR 0018). It is called from ``ges2t setup`` and from ``ges2t models``; never
 from the service's startup path.
@@ -62,6 +64,17 @@ __all__ = [
     "DEFAULT_NEEDLE_MODEL",
     "NEEDLE_CATALOGUE",
     "NEEDLE_MODELS",
+    "NEMO_MODEL",
+    "NEMO_MODEL_FILE_NAME",
+    "NEMO_MODEL_NAME",
+    "NEMO_MODEL_PIN",
+    "NEMO_MODEL_REPOSITORY",
+    "NEMO_MODEL_REVISION",
+    "NEMO_MODEL_SHA256",
+    "NEMO_MODEL_SIZE",
+    "NEMO_MODEL_URL",
+    "NEMO_MODELS_DIRECTORY_NAME",
+    "NemoModel",
     "NeedleModel",
     "NeedleModelNameError",
     "needle_model",
@@ -85,11 +98,14 @@ __all__ = [
     "default_data_dir",
     "engine_path",
     "engine_pin",
+    "ensure_artifact",
     "ensure_engine",
     "ensure_model",
+    "ensure_nemo_model",
     "ensure_whisper_model",
     "env_overrides",
     "model_path",
+    "nemo_model_path",
     "parse_whisper_model_name",
     "verify",
     "whisper_model",
@@ -382,6 +398,88 @@ WHISPER_CPP_CATALOGUE: Mapping[str, WhisperModel] = MappingProxyType(
     {model.name: model for model in WHISPER_CPP_MODELS}
 )
 
+# --- NeMo-Speech.cpp streaming model (ADR 0022) -------------------------------- #
+
+#: Canonical Hugging Face repository of the Nemotron 3.5 streaming ASR model.
+NEMO_MODEL_REPOSITORY: str = "nvidia/nemotron-3.5-asr-streaming-0.6b"
+
+#: The **revision** every pin below describes: the commit the engine's own
+#: ``model-index.json`` pins (ticket 55 §4). This is load-bearing, not decoration:
+#: Hugging Face ``main`` is a *different* artifact of this same file name
+#: (742,090,464 B, revision ``ea30d66d…``), so the revision is part of the pin and
+#: a moving ``main`` URL is never used (ADR 0017).
+NEMO_MODEL_REVISION: str = "1c8deaecc64b91f034d73e08dd8b64625eb3395d"
+
+#: The upstream file name, ``<model>.<quant>.gguf``.
+NEMO_MODEL_FILE_NAME: str = "nemotron-3.5-asr-streaming-0.6b.q8_0.gguf"
+
+#: The selectable model name: the file name **without** the quantisation, so this
+#: and the install directory stay stable if a second quant is ever pinned.
+NEMO_MODEL_NAME: str = "nemotron-3.5-asr-streaming-0.6b"
+
+#: Directory name under ``<data_dir>/models/`` holding the NeMo streaming models.
+NEMO_MODELS_DIRECTORY_NAME: str = "nemo-speech"
+
+#: sha256 of the pinned GGUF, verified against the ``resolve/<revision>`` LFS
+#: ``x-linked-etag`` by ticket 55.
+NEMO_MODEL_SHA256: str = (
+    "a5c435f294eea8f88ce68dd27b8c3bfea7f777cb2fbba04fcd30eaa555f429ae"
+)
+
+#: Byte size of the pinned GGUF. Paired with the hash above: a truncated download
+#: is caught by the size even before it is hashed (ADR 0017).
+NEMO_MODEL_SIZE: int = 741_548_352
+
+#: The ``resolve/<revision>`` URL: the revision-qualified form, never ``main``
+#: (ADR 0017, ADR 0022 §8). ``/resolve/`` redirects to a CDN and the stdlib opener
+#: follows that redirect (ADR 0018).
+NEMO_MODEL_URL: str = (
+    f"https://huggingface.co/{NEMO_MODEL_REPOSITORY}/resolve/"
+    f"{NEMO_MODEL_REVISION}/{NEMO_MODEL_FILE_NAME}"
+)
+
+
+@dataclass(frozen=True)
+class NemoModel:
+    """The pinned NeMo-Speech streaming ASR model: name, revision and file pin.
+
+    There is exactly one upstream artifact ges2t pins today, so — unlike
+    :data:`NEEDLE_MODELS`/:data:`WHISPER_CPP_MODELS` — there is no catalogue. The
+    class still exists so the selectable name, the revision and the
+    :class:`ArtifactPin` travel to ``doctor`` and the adapter as one value rather
+    than as a positional tuple (ADR 0019).
+    """
+
+    name: str
+    revision: str
+    pin: ArtifactPin
+
+    def path(self) -> Path:
+        """Return ``<data_dir>/models/nemo-speech/<name>/<file>``."""
+        return (
+            default_data_dir()
+            / "models"
+            / NEMO_MODELS_DIRECTORY_NAME
+            / self.name
+            / self.pin.name
+        )
+
+
+#: The GGUF pin: the exact file, its revision, hash and byte size.
+NEMO_MODEL_PIN: ArtifactPin = ArtifactPin(
+    name=NEMO_MODEL_FILE_NAME,
+    url=NEMO_MODEL_URL,
+    sha256=NEMO_MODEL_SHA256,
+    size=NEMO_MODEL_SIZE,
+)
+
+#: The one pinned NeMo streaming model (ADR 0022).
+NEMO_MODEL: NemoModel = NemoModel(
+    name=NEMO_MODEL_NAME,
+    revision=NEMO_MODEL_REVISION,
+    pin=NEMO_MODEL_PIN,
+)
+
 #: Normalised CPU architecture, e.g. ``x86_64`` from ``platform.machine()``.
 _MACHINE: str = _MACHINE_ALIASES.get(platform.machine().lower(), platform.machine().lower())
 
@@ -535,6 +633,16 @@ def whisper_model_path(name: str) -> Path:
     )
 
 
+def nemo_model_path() -> Path:
+    """Return ``<data_dir>/models/nemo-speech/<name>/<file>``.
+
+    The one pinned NeMo streaming GGUF's installed path (ADR 0022). There is no
+    version parameter: the artifact is identified by its **revision** inside the
+    URL, not by a directory that could drift from it.
+    """
+    return NEMO_MODEL.path()
+
+
 def parse_whisper_model_name(name: str) -> WhisperModelName:
     """Parse and validate a ``<size>-<quant>`` whisper.cpp model name.
 
@@ -639,7 +747,7 @@ def ensure_model(
     """
     entry = needle_model(name)
     _require_supported_platform()
-    return _ensure(
+    return ensure_artifact(
         entry.pin,
         entry.path(),
         fetcher=fetcher,
@@ -659,7 +767,7 @@ def ensure_engine(
     No ``pip install``, and nothing is written to ``~/.cache/cactus-needle``.
     """
     pin = engine_pin()
-    return _ensure(
+    return ensure_artifact(
         pin,
         engine_path(ENGINE_VERSION),
         fetcher=fetcher,
@@ -686,9 +794,32 @@ def ensure_whisper_model(
     Needle engine), so no platform gate applies here.
     """
     entry = whisper_model(name)
-    return _ensure(
+    return ensure_artifact(
         entry.pin(),
         whisper_model_path(name),
+        fetcher=fetcher,
+        progress=progress,
+    )
+
+
+def ensure_nemo_model(
+    *,
+    fetcher: Fetcher | None = None,
+    progress: ProgressCallback | None = None,
+) -> Path:
+    """Ensure the pinned NeMo streaming GGUF exists locally and return its path.
+
+    Same contract as :func:`ensure_model`: an existing file of the pinned byte
+    size is returned untouched (idempotent — no download, no hash), otherwise the
+    revision-qualified URL is downloaded atomically, verified against the pinned
+    sha256 **and** byte size, and installed at
+    :func:`nemo_model_path`. There is one pinned model, so there is no name
+    argument and nothing to validate before the fetch; the GGUF, like the whisper
+    models, is platform-independent, so no platform gate applies.
+    """
+    return ensure_artifact(
+        NEMO_MODEL.pin,
+        NEMO_MODEL.path(),
         fetcher=fetcher,
         progress=progress,
     )
@@ -699,17 +830,25 @@ def _require_supported_platform() -> None:
     engine_pin()
 
 
-def _ensure(
+def ensure_artifact(
     pin: ArtifactPin,
     destination: Path,
     *,
-    fetcher: Fetcher | None,
-    progress: ProgressCallback | None,
+    fetcher: Fetcher | None = None,
+    progress: ProgressCallback | None = None,
 ) -> Path:
     """Download, verify and atomically install ``pin`` at ``destination``.
 
-    ``destination`` always comes from :func:`model_path`/:func:`engine_path`, so
-    every write stays inside :func:`default_data_dir`.
+    This is the single acquisition path behind every ``ensure_*`` function here
+    **and** the seam :mod:`ges2t.nemo_engine` uses for its pinned engine archive,
+    so the engine module reuses this module's download implementation (and its
+    sha256 + byte-size verification) rather than opening a second networked path
+    of its own (ADR 0018; asserted statically by
+    ``tests/test_model_store.py::test_network_clients_are_confined_to_the_model_store``).
+
+    ``destination`` normally comes from :func:`model_path`/:func:`engine_path`/
+    :meth:`NemoModel.path`, so every write stays inside :func:`default_data_dir`;
+    a caller passing an explicit path (the engine archive cache) owns that choice.
     """
     if _present_with_pinned_size(destination, pin.size):
         _report(progress, 1.0)
@@ -781,7 +920,7 @@ def _download(
 
     When the response carries a ``Content-Length``, each chunk reports
     ``downloaded / total`` clamped to ``[0.0, 1.0]``. The terminal ``1.0`` is
-    deliberately left to :func:`_ensure`, which emits it only once the artifact
+    deliberately left to :func:`ensure_artifact`, which emits it only once the artifact
     has been verified and installed, so what the caller sees is one monotonic
     run ending in a single ``1.0``. When ``Content-Length`` is missing we emit
     **no** intermediate fractions: an invented estimate would be worse than

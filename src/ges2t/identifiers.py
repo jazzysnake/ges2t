@@ -33,6 +33,7 @@ __all__ = [
     "HOTKEY_MODE_TOGGLE",
     "INJECTION_DEFAULT_BACKEND",
     "NEEDLE_SETUP_BACKEND",
+    "NEMO_SPEECH_ENGINE",
     "WHISPER_CPP_CLI_TOKEN",
     "WHISPER_CPP_ENGINE",
     "WHISPER_MODEL_MEDIUM_Q5_0",
@@ -59,6 +60,13 @@ WHISPER_CPP_ENGINE: str = "whisper_cpp"
 #: (ticket 47): the setup backend token and the config alias key are the same
 #: string and must never diverge.
 WHISPER_CPP_CLI_TOKEN: str = "whisper.cpp"
+
+#: The engine value of the NeMo-Speech.cpp streaming backend (ADR 0022). Unlike
+#: whisper.cpp there is **no** separate CLI token: the engine value contains no
+#: dot, so ``ges2t setup``, ``transcriber.engine`` and the TOML block name all
+#: spell it identically. Defining a second constant here would be a second
+#: spelling of one identifier (rule 1), so the setup backend reuses this value.
+NEMO_SPEECH_ENGINE: str = "nemo_speech"
 
 # --- Injection backends -------------------------------------------------------
 
