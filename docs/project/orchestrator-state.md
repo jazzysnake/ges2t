@@ -62,10 +62,11 @@ incrementally) and **whisper.cpp** (opt-in, batch-only, notably more accurate). 
 | Git remote | **`origin` = `git@github.com:jazzysnake/ges2t.git`** (ssh). The repo is **public** (set 2026-10-10); `main` tracks `origin/main`. **The merger agent never pushes** (no network, by design) — the orchestrator pushes after a verified merge (§10). No `LICENSE` yet. |
 | Baselines on `main` | **`uv run pytest` → 1230 passed**; **`uv run mypy src/ges2t tests` → 0 errors (65 files)**; `doctor` exit 0 |
 
-## 4. Board state — 6 epics, 22 ADRs (0000–0021)
+## 4. Board state — 6 epics, 23 ADRs (0000–0022)
 
 **`main` is the only branch and the only worktree** (check `git log -1` for the current tip — do not trust a
-SHA written here). All of Epics 1–3, Epic 4's ticket 48, and **Epic 5's ticket 53 are `done`**.
+SHA written here). All of Epics 1–3, Epic 4's ticket 48, and **Epic 5's ticket 53 / Epic 6's ticket 55
+are `done`**.
 
 **Open tickets (the whole remaining board):**
 
@@ -75,7 +76,7 @@ SHA written here). All of Epics 1–3, Epic 4's ticket 48, and **Epic 5's ticket
 | **35** | `live-dictation-ux/streaming-vs-batch-quality` | **to do, P2, gates nothing** — the three-length streaming-vs-batch sweep (§8) |
 | **30** | `core-dictation-pipeline/tray-failure-diagnostics` | **to do** — needs a **read-only socket verb → an ADR 0016 amendment**, not yet raised for sign-off |
 | **54** | `parakeet-v3-backend/parakeet-v3-vulkan-measurement` | **obsolete** — user chose the streaming sibling; superseded by 55. Never started, no artifacts. |
-| **55** | `nemotron-streaming-backend/nemotron-3-5-asr-streaming-measurement` | **done** — merged `4cf5fc2` (pushed `dab409b`). Report: `docs/project/research/nemotron-3-5-asr-streaming-measurement/REPORT.md`. Reviewed pass (`003-review.md`; first review caught an **inverted §1 RSS sentence** — Vulkan is *lighter* (~197 MB) than CPU (~1,064 MB), not heavier). |
+| **56** | `nemotron-streaming-backend/nemo-pure-streaming-integration` | **to do, P0** — code investigation: design the pure-streaming integration (no window). See §4a. |
 
 **Closed as obsolete:** **31** `speech-gate-recalibration` — measured and rejected in the user's
 environment; the parked branch was deleted and its `001-comment.md`/`002-review.md` are kept in the ticket
@@ -109,16 +110,30 @@ adjacent dups, no seam/cut-off/silence hallucination (whisper hallucinated on si
 English WER worse than whisper on the noisy car clip (0.312 vs 0.062 with `-nt`, 0.156 without);
 **Hungarian unmeasured** (no ground-truth clip; published FLEURS ≈28.7–33.4 only).
 
-**PENDING USER SIGN-OFF (blocking the integration tickets):** the two drafted ADRs are presented in
-full to the user and await explicit approval. **ADR 0022** (Nemotron streaming as a third opt-in
-backend, `nemo_speech`, in-process `ctypes`, pins above, OpenMDW-1.1, default unchanged) and the
-**ADR 0011 amendment** (a cache-aware streaming engine retires the 5 s window + two-pass agreement;
-the append-only committed contract, watermark and single trailing space are preserved; scoped to such
-engines only). The drafts live verbatim in the report §“Draft ADR 0022 / ADR 0011 amendment” and
-`.../001-comment.md`; **nothing is in `docs/adr/` yet** (still 22 files). **Do not write them to
-`docs/adr/` and do not spawn integration implementers until the user says yes.** The proposed ticket
-breakdown (56 acquisition · 57 adapter · 58 config/validation · 59 streaming integration · 60 doctor ·
-61 docs) is also awaiting approval.
+**User direction (2026-10-14) — the ADR 0011 amendment was REJECTED.** The user will not amend ADR 0011;
+they want a **new, engine-specific ADR** and integration by **pure streaming** (no sliding window, no
+two-pass agreement). Structural note: the amendment I had proposed *removed* the window for this
+engine; the user prefers that recorded in a new ADR rather than by editing 0011. Honoured.
+
+**ADR 0022 is now WRITTEN** at `docs/adr/0022-nemotron-streaming-pure-streaming-backend.md` — **new,
+engine-specific, status `proposed`**, ~23 ADR files now. It records: opt-in `nemo_speech`; **pure
+streaming** (append-only interim stream is the commit source; no window, no two-pass); **ADR 0011 not
+amended** and left in force for the Whistle path; tickets 32–34 contract preserved; word-boundary
+commits with the partial held pending; in-process `ctypes`; Vulkan/CPU device rule (never silent);
+the pins; OpenMDW-1.1; and that **the mechanism is designed by ticket 56**. It still needs the user's
+sign-off before the merge that carries it (nothing else is written to `docs/adr/`).
+
+**Ticket 56 — `nemotron-streaming-backend/nemo-pure-streaming-integration` (M, discovery, DISPATCHED).**
+A **code investigation** (not a measurement): it maps the current streaming path
+(`streaming.py` window/two-pass, `streaming_session.py`, `incremental_typing.py`, the whistle adapter,
+`pipeline.py`, the service lock), reads the NeMo-Speech.cpp C ABI headers (in the scratch engine dir)
+and ticket 55's `measure_nemo_streaming.py`, and produces
+`docs/project/research/nemo-pure-streaming-integration/REPORT.md` with the **exact seam** that bypasses
+the window, the interim delivery/threading, the commit policy, two design alternatives with a
+recommendation, and the **integration ticket breakdown**. It must escalate if the interim stream cannot
+be carried without a growing buffer or second pass (ADR 0022's falsifier). **No `src/` change.** The
+earlier proposed 56–61 integration breakdown was **not** created — the shape is to be derived from
+ticket 56 per the no-assumptions rule.
 
 ## 5. The whisper.cpp backend (Epic 3, merged 41–47, 49–51; ADR 0021 **accepted**)
 

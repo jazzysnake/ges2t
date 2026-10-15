@@ -149,13 +149,16 @@ Add **`nvidia/nemotron-3.5-asr-streaming-0.6b`** (OpenMDW-1.1) as a selectable, 
 that **streams** — text is committed and typed **while the user is still speaking**, the thing
 `whisper_cpp` cannot do. It runs on the engine Epic 5 selected, **`NVIDIA/NeMo-Speech.cpp`**
 (Apache-2.0, C++/ggml, **Vulkan** on the Radeon 780M, **no `torch`/`numpy`**, prebuilt binary, no
-`sudo`). It is **cache-aware streaming**, so commits are **append-only** and ADR 0011's 5 s sliding
-window does not apply — that needs an **ADR 0011 amendment** plus ADR 0022, both signed off by the user
-before merge. The **default engine and both existing backends stay unchanged**.
+`sudo`). It is **cache-aware streaming**, so commits are **append-only** and it is integrated with the
+engine's **pure streaming** — no 5 s sliding window, no two-pass agreement. **ADR 0011 is NOT amended**
+(the user rejected that): the decision is recorded as a new, engine-specific
+**[ADR 0022](../adr/0022-nemotron-streaming-pure-streaming-backend.md)**, awaiting sign-off. The
+**default engine and both existing backends stay unchanged**.
 
 | # | Ticket | Size | Status | Depends on | Branch |
 |---|---|---|---|---|---|
 | 55 | [nemotron-3-5-asr-streaming-measurement](nemotron-streaming-backend/nemotron-3-5-asr-streaming-measurement/ticket.md) — run the prebuilt Vulkan engine on this PC and measure chunk latency/RTF/RSS, Vulkan-vs-CPU (byte-compared), accuracy vs the existing clips, and **committed-delta stability** | L | done | 53 (done) | feat/nemotron-3-5-asr-streaming-measurement (merged 4cf5fc2) |
+| 56 | [nemo-pure-streaming-integration](nemotron-streaming-backend/nemo-pure-streaming-integration/ticket.md) — **read the code** and design how the append-only interim stream is carried into the committed-delta path with **no sliding window and no second pass**; C-ABI delivery/threading, commit policy, and the integration ticket breakdown | M | to do | 55 (done) | — |
 
 ---
 
@@ -199,7 +202,7 @@ independent and may run in parallel (they touch disjoint files).
 | 30 | 50 (engine-aware streaming default) |
 | 31 | 51 (ticket 49 review follow-ups) · 48 (identifier constants) |
 | 32 | 52 (command-verb identifiers; ticket 48's residual) |
-| 33 | 53 (parakeet discovery: engine landscape + Vulkan feasibility) → 55 (Nemotron 3.5 streaming measurement; 54 is obsolete) |
+| 33 | 53 (parakeet discovery: engine landscape + Vulkan feasibility) → 55 (Nemotron 3.5 streaming measurement; 54 is obsolete) → 56 (pure-streaming code investigation) |
 
 Serialization is also required wherever two tickets touch the same file: `10 → 11/12`
 (`cli.py`, `doctor.py`), `11 → 16` (`pipeline.py`), `17 → 18` (`pipeline.py`).
