@@ -1,7 +1,7 @@
 # Nemotron batch adapter (selectable engine, batch-only for now)
 
 - **Priority:** P1
-- **Status:** in progress
+- **Status:** in review
 - **Complexity:** M
 - **Epic:** ../epic.md
 
@@ -27,31 +27,31 @@ acquired engine dir before binding it): `nemo_speech_asr_create`, `nemo_speech_a
 
 ## Definition of done
 
-- [ ] `src/ges2t/config.py` adds `NEMO_SPEECH_ENGINE` (`identifiers.py`) to **`KNOWN_ENGINES`**
+- [x] `src/ges2t/config.py` adds `NEMO_SPEECH_ENGINE` (`identifiers.py`) to **`KNOWN_ENGINES`**
       (`config.py:80`) so `transcriber.engine = "nemo_speech"` is a valid config (the gate at `:399`).
       It is **not** added to `BATCH_ONLY_ENGINES` (`:100`) — the engine streams, so an **omitted**
       `streaming.enabled` must resolve to `True` (ticket 50's engine-aware default), and an explicit
       `true` must **not** be rejected.
-- [ ] `src/ges2t/transcribers/nemo_speech_config.py` (new) validates `[engine.nemo_speech]`:
+- [x] `src/ges2t/transcribers/nemo_speech_config.py` (new) validates `[engine.nemo_speech]`:
       `device` (`"auto"` | `"vulkan"` | `"cpu"`, default `"auto"`), `chunk_seconds` (default **0.16**),
       and a model override. A `window_seconds` key produces the **existing unknown-key warning** (it
       has no effect for this engine — ADR 0022 requires it say so rather than silently accept it).
-- [ ] `src/ges2t/transcribers/nemo_speech.py` (new) defines a narrow **`NemoSpeechLibrary` Protocol**
+- [x] `src/ges2t/transcribers/nemo_speech.py` (new) defines a narrow **`NemoSpeechLibrary` Protocol**
       plus the `ctypes` implementation, and **`NemoSpeechTranscriber`** implementing the `Transcriber`
       Protocol with: `ensure_model` (→ ticket 57's store), `load` (recognizer resident from service
       start), `transcribe` (offline `recognize_f32`), `close`.
-- [ ] The adapter is the **only** module allowed to touch the native library (ADR 0010). It reports
+- [x] The adapter is the **only** module allowed to touch the native library (ADR 0010). It reports
       `name = NEMO_SPEECH_ENGINE` and, **for this ticket**, `supports_streaming = False` (ticket 59
       flips it).
-- [ ] Selecting `nemo_speech` with an acquired model and a built engine **starts and transcribes** a
+- [x] Selecting `nemo_speech` with an acquired model and a built engine **starts and transcribes** a
       batch utterance; startup validation rejects the engine when the model is not acquired or the
       library is not present (mirroring the whisper.cpp rules).
-- [ ] Device selection is **never silent** (ADR 0020): the adapter reports the device it actually used.
-- [ ] `tests/test_nemo_speech.py` (new) is **hermetic** — it drives a fake `NemoSpeechLibrary` (the
+- [x] Device selection is **never silent** (ADR 0020): the adapter reports the device it actually used.
+- [x] `tests/test_nemo_speech.py` (new) is **hermetic** — it drives a fake `NemoSpeechLibrary` (the
       pattern in `tests/test_whisper_cpp.py`), failing if the fake models a simpler contract than the
       real library.
-- [ ] `uv run pytest` green, `uv run mypy src/ges2t tests` 0 errors; docs link check 0; README row updated.
-- [ ] **No `numpy`, `torch`, or `onnxruntime`** enters the project or any dependency.
+- [x] `uv run pytest` green, `uv run mypy src/ges2t tests` 0 errors; docs link check 0; README row updated.
+- [x] **No `numpy`, `torch`, or `onnxruntime`** enters the project or any dependency.
 
 ## Notes
 
