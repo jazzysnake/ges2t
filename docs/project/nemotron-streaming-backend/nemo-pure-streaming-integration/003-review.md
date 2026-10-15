@@ -127,7 +127,7 @@ docs/adr/0022-nemotron-streaming-pure-streaming-backend.md:3
 docs/project/orchestrator-state.md:123-124
   ... It still needs the user's sign-off before the merge that carries it ...
 docs/project/README.md:155
-  **[ADR 0022](../adr/0022-nemotron-streaming-pure-streaming-backend.md)**, awaiting sign-off.
+  **[ADR 0022]** (`../adr/0022-nemotron-streaming-pure-streaming-backend.md`), awaiting sign-off.
 docs/project/nemotron-streaming-backend/epic.md:83
   - [ ] **ADR 0022 is presented in full for user sign-off** before the merge that carries it.
 REPORT.md:492 (§7.1 docs row)   ... **present ADR 0022 in full for sign-off** ...

@@ -7,7 +7,7 @@
 - **Branch:** `feat/nemo-pure-streaming-integration`
 - **Worktree:** `.worktrees/nemo-pure-streaming-integration`
 - **Decision it serves:** [ADR 0022](../../../adr/0022-nemotron-streaming-pure-streaming-backend.md)
-  (proposed). ADR 0011 is **not** amended and **not** edited.
+  — **accepted (user sign-off 2026-10-14)**. ADR 0011 is **not** amended and **not** edited.
 - **Prior evidence:** ticket 55
   ([`../nemotron-3-5-asr-streaming-measurement/REPORT.md`](../nemotron-3-5-asr-streaming-measurement/REPORT.md))
   §7, and its committed per-interim traces under
@@ -489,7 +489,7 @@ StreamingDictationSession (unchanged) ──► Service (unchanged) ──► Co
 | `pipeline.py` | `_build_nemo_speech` + register in `_TRANSCRIBER_BUILDERS`; **generalise `_streaming_chunk_seconds`** (`:430`); dispatch artifact presence for the engine | the factory is the one place concrete engines are chosen (ADR 0010). `_streaming_chunk_seconds` currently hardcodes `WhistleConfig` (`:440`) — it is the one existing coupling. |
 | `doctor.py` | `check_nemo_engine`, `check_nemo_model`, `check_nemo_device` (Vulkan/CPU), gated by the selected engine; register the config validator (`doctor.py:1400`) | the epic requires `doctor` to report the library, the model, and the Vulkan/GPU state; the whisper checks (`:742`) are the template. |
 | `setup_command.py` / `cli.py` | a `nemo_speech` setup backend; `plan_setup`/`run_setup` acquire the archive + GGUF; CLI help | `setup` is the only network command (ADR 0017/0018) and never installs or runs `sudo`. |
-| `docs/` | README engine list, a config reference, an engine doc; **present ADR 0022 in full for sign-off** | the epic's acceptance criteria. |
+| `docs/` | README engine list, a config reference, an engine doc, and the documented limits (Hungarian published-FLEURS only; CPU/Vulkan) — **documentation only** | the remaining epic acceptance criteria. The ADR-0022 sign-off criterion is **already met** (accepted 2026-10-14), so ticket 62 carries no gate. |
 
 ### 7.2 What deliberately does **not** change
 
@@ -723,5 +723,5 @@ falsifier in ADR 0022 did not fire.
    `model_store` pins, `doctor` checks, and `setup nemo_speech` — and generalise the one hard coupling,
    `_streaming_chunk_seconds` (`pipeline.py:430`).
 4. Do it as tickets 57–62 (§8), with ticket 59 as the only one that can invalidate ADR 0022.
-5. Present **ADR 0022 in full for the user's sign-off** before the merge that carries it. **ADR 0011
-   stays untouched.**
+5. **ADR 0022 is accepted (user sign-off 2026-10-14)** — no further sign-off is required; ticket 62
+   is **documentation only**. **ADR 0011 stays untouched.**
