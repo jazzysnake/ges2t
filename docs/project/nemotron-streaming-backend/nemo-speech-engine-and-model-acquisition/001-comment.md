@@ -144,3 +144,81 @@ $ uv run pytest -q
 
 Baseline before this branch: **1230 passed**, 0 mypy errors. So: **+58 tests, no regressions, 0 mypy
 errors** (the orchestrator's stated `923 passed` baseline does not match `main` at `01c624e`).
+
+## Real CLI evidence (safe, offline, no acquisition)
+
+```
+$ uv run ges2t setup bogus
+ges2t: setup: unknown backend 'bogus'; valid backends: needle, whisper.cpp, nemo_speech, whisper_cpp
+  hint: run 'ges2t setup --help' to list the accepted backends and models
+exit=1
+
+$ uv run ges2t setup nemo_speech some-other-model
+ges2t: setup: the nemo_speech backend has exactly one pinned model (nemotron-3.5-asr-streaming-0.6b) and
+acquires it automatically, so it takes no model argument (got 'some-other-model'); run 'ges2t setup nemo_speech'
+exit=1
+```
+
+Both exit **before** the "Setting up …" banner, i.e. in the planning phase, so a rejected invocation
+starts no download. `uv run ges2t setup --help` prints the updated surface (exit 0). None of these
+writes to the user's data or cache directory (`find ~/.local/share/ges2t ~/.cache/ges2t -mmin -30`
+→ empty).
+
+**No prerequisite is needed for this backend, and none is installed.** `ninja` and `sentencepiece`
+are absent on this machine (`command -v` → ABSENT) and the module never names them — a static AST
+guard (`test_the_engine_module_runs_no_external_command_and_installs_nothing`) fails the suite if
+`subprocess`/`urllib`/`socket` is imported or any of
+`sudo`/`pacman`/`cmake`/`ninja`/`make`/`sentencepiece`/`pip`/`meson` appears as a string constant in
+`nemo_engine.py`. `cmake`/`make`/`gcc` happen to be present here; they are never invoked.
+
+## Docs link check (orchestrator-state §10)
+
+```
+$ python3 - <<'PY'  # the exact script from §10
+...
+PY
+0 broken references
+```
+
+## Scope boundaries (deliberate, per the ticket)
+
+- **`config.py` is untouched.** `NEMO_SPEECH_ENGINE` is *defined* here; adding it to `KNOWN_ENGINES`
+  is ticket 58's, exactly as the ticket breakdown says. Consequence to be aware of: until 58 lands,
+  the `transcriber.engine = "nemo_speech"` line this backend prints is refused at startup — the line
+  is what the DoD requires setup to print, and the two tickets are dispatched in parallel.
+- **`config_guidance` for nemo is the generic line.** No `[streaming]` paragraph is added (the
+  whisper-only batch-only text is asserted not to leak into it); the streaming story is ticket 62's
+  docs, and ADR 0022's pure-streaming decision needs tickets 59/60 before it is true of the code.
+- **`ges2t models` is untouched.** The nemo artifacts are acquired by `setup` and reported by
+  `doctor` (ticket 61); the DoD names neither `models` nor a listing, so no listing was added.
+- **`nemo_engine.ensure_engine` is the analogue of `model_store.ensure_whisper_model`**: it is
+  acquisition, and the service-side caller will be `NemoSpeechTranscriber.ensure_model` (the
+  `Transcriber` seam, ticket 58), matching `whisper_cpp.py:710`/`whistle.py:530`. Nothing else in
+  `src/` calls an `ensure_*` function today.
+
+## The one gate that is not run here (user-owned, needs the network)
+
+The real end-to-end acquisition downloads **~758 MB** (16.6 MB archive + 741.5 MB GGUF) from GitHub
+and Hugging Face. The machine-safety rules forbid using the network unless the ticket's DoD requires
+it **and** the orchestrator confirms the step is user-owned, and it was not confirmed — so it was
+**not** run. The pins it would exercise are the ones ticket 55 already verified by hand; the code
+paths are covered hermetically (fake fetcher + real gzip tar). Exact steps for whoever owns the gate:
+
+```bash
+cd <worktree>
+uv run ges2t setup nemo_speech          # downloads, verifies sha256+size, extracts, prints the config line
+sha256sum ~/.local/share/ges2t/models/nemo-speech/nemotron-3.5-asr-streaming-0.6b/*.gguf
+# expect a5c435f294eea8f88ce68dd27b8c3bfea7f777cb2fbba04fcd30eaa555f429ae
+sha256sum ~/.cache/ges2t/nemo-speech/0.2.0/nemo-speech-0.2.0-linux-x86_64-vulkan.tar.gz
+# expect c8d0ed5b9ac5fb6d5c460015ba38ea217415c44edc1e6d49120646781009aee6
+ls ~/.local/share/ges2t/engine/nemo-speech/0.2.0/{bin/nemo-speech,lib/libnemo_speech_asr_c.so}
+```
+
+This is the ticket's remaining unverified box: the **pins** are verified as data against ticket 55's
+report, and the extraction/verification logic is verified hermetically against a real tar, but the
+real archive's own layout (that its top-level directory is `ARCHIVE_ROOT_NAME` and that it holds
+`bin/nemo-speech` + `lib/libnemo_speech_asr_c.so`) is taken from ticket 55's report — the command
+`tar xzf … -C engine` there produced exactly `engine/nemo-speech-0.2.0-linux-x86_64-vulkan/` — rather
+than from a download performed by this ticket. If the real archive's root differs, `ensure_engine`
+fails loudly with `EngineArchiveError` naming the directories it found, and `ARCHIVE_ROOT_NAME` is the
+one constant to change.
