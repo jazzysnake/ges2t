@@ -152,8 +152,8 @@ that **streams** — text is committed and typed **while the user is still speak
 `sudo`). It is **cache-aware streaming**, so commits are **append-only** and it is integrated with the
 engine's **pure streaming** — no 5 s sliding window, no two-pass agreement. **ADR 0011 is NOT amended**
 (the user rejected that): the decision is recorded as a new, engine-specific
-**[ADR 0022](../adr/0022-nemotron-streaming-pure-streaming-backend.md)**, awaiting sign-off. The
-**default engine and both existing backends stay unchanged**.
+**[ADR 0022](../adr/0022-nemotron-streaming-pure-streaming-backend.md)** — **accepted (user sign-off
+2026-10-14)**. The **default engine and both existing backends stay unchanged**.
 
 | # | Ticket | Size | Status | Depends on | Branch |
 |---|---|---|---|---|---|
