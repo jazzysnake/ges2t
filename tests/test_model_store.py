@@ -1010,6 +1010,34 @@ def test_ensure_nemo_model_wrong_size_is_a_typed_error(
     assert _part_files(data_home) == []
 
 
+def test_ensure_nemo_model_checks_the_size_alone(
+    data_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A pin whose sha256 is the payload's but whose *size* is wrong: only the
+    # size check can reject this, so the pair really is checked, not just the hash.
+    payload = NEMO_TEST_BYTES
+    monkeypatch.setattr(
+        model_store,
+        "NEMO_MODEL",
+        NemoModel(
+            name="nemotron-test",
+            revision="0" * 40,
+            pin=ArtifactPin(
+                name="nemotron-test.q8_0.gguf",
+                url="https://example.invalid/nemotron-test.q8_0.gguf",
+                sha256=hashlib.sha256(payload).hexdigest(),
+                size=len(payload) + 1,
+            ),
+        ),
+    )
+
+    with pytest.raises(ArtifactVerificationError):
+        ensure_nemo_model(fetcher=RecordingFetcher(payload))
+
+    assert not nemo_model_path().exists()
+    assert _part_files(data_home) == []
+
+
 def test_ensure_nemo_model_network_failure_leaves_nothing(
     data_home: Path, fake_nemo_model: None
 ) -> None:
