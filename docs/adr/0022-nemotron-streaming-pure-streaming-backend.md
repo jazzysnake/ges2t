@@ -1,6 +1,6 @@
 # 0022 — Nemotron 3.5 streaming (NeMo-Speech.cpp) as an opt-in, **pure-streaming** transcriber backend
 
-- **Status:** proposed (awaiting user sign-off)
+- **Status:** accepted (user sign-off 2026-10-14)
 - **Date:** 2026-10-14
 - **Related:** 0005, 0006, 0010, 0011, 0015, 0016, 0017, 0018, 0020, 0021
 - **Relationship to 0011:** **engine-specific; ADR 0011 is NOT amended** (see below)
