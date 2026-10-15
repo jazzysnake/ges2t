@@ -308,19 +308,23 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Acquire and verify the artifacts a backend needs (ADR 0017, ADR 0021).\n"
             "With no arguments this sets up the default 'needle' backend and its\n"
-            "default model, 'whistle'. Name a backend to choose another: 'needle'\n"
-            "or 'whisper.cpp' (the canonical engine spelling 'whisper_cpp' is\n"
-            "accepted too). The model argument is accepted for either backend.\n"
-            "For whisper.cpp a model is a <size>-<quant> ggml name such as\n"
-            "medium-q5_0; omitting it picks medium-q5_0 on a Vulkan machine and\n"
-            "small-q8_0 on CPU only. On success this prints the exact\n"
-            "transcriber.engine line to add to your config, which ges2t never\n"
-            "edits for you. This is the only ges2t command that uses the\n"
+            "default model, 'whistle'. Name a backend to choose another: 'needle',\n"
+            "'whisper.cpp' (the canonical engine spelling 'whisper_cpp' is\n"
+            "accepted too) or 'nemo_speech'. The model argument is accepted for\n"
+            "needle and whisper.cpp; for whisper.cpp a model is a <size>-<quant>\n"
+            "ggml name such as medium-q5_0, and omitting it picks medium-q5_0 on a\n"
+            "Vulkan machine and small-q8_0 on CPU only. nemo_speech has exactly one\n"
+            "pinned model and takes no model argument. On success this prints the\n"
+            "exact transcriber.engine line to add to your config, which ges2t\n"
+            "never edits for you. This is the only ges2t command that uses the\n"
             "network; everything afterwards runs offline. Safe to re-run: a\n"
             "valid engine is left alone, unless the GPU build has become\n"
             "possible (install the Vulkan dev packages and re-run) and\n"
             "[engine.whisper_cpp] gpu is not 'cpu', in which case it is\n"
-            "rebuilt as Vulkan; --rebuild forces a rebuild either way."
+            "rebuilt as Vulkan; --rebuild forces a rebuild either way.\n"
+            "whisper.cpp is built from source and needs its toolchain;\n"
+            "nemo_speech downloads a prebuilt archive and needs no build\n"
+            "tooling. Nothing is ever installed and sudo is never run."
         ),
     )
     setup.add_argument(
@@ -328,7 +332,10 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         default=None,
         metavar="BACKEND",
-        help="backend to set up: 'needle' (default) or 'whisper.cpp' (alias 'whisper_cpp')",
+        help=(
+            "backend to set up: 'needle' (default), 'nemo_speech', or "
+            "'whisper.cpp' (alias 'whisper_cpp')"
+        ),
     )
     setup.add_argument(
         "model",
@@ -337,7 +344,8 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="MODEL",
         help=(
             "model to acquire (needle: 'whistle' by default; whisper.cpp: a "
-            "<size>-<quant> name such as medium-q5_0)"
+            "<size>-<quant> name such as medium-q5_0; nemo_speech: not accepted, "
+            "it has one pinned model)"
         ),
     )
     setup.add_argument(
@@ -550,12 +558,14 @@ def _handle_setup(args: argparse.Namespace) -> int:
     exact ``pacman`` line is printed verbatim (never duplicated here).
 
     The configuration is loaded so the whisper.cpp engine build respects
-    ``[engine.whisper_cpp] gpu`` (ticket 49); a missing file is normal and means
-    the default preference. A rebuild that the variant-aware policy runs prints
-    its one-line reason through the ``notice`` sink.
+    ``[engine.whisper_cpp] gpu`` (ticket 49) and the ``nemo_speech`` path (ticket
+    57) resolves through the same planning phase; a missing file is normal and
+    means the default preference. A rebuild that the variant-aware policy runs
+    prints its one-line reason through the ``notice`` sink.
     """
     from ges2t import model_store
     from ges2t.config import resolve_config_path
+    from ges2t.nemo_engine import NemoEngineError
     from ges2t.setup_command import (
         SetupError,
         config_guidance,
@@ -589,7 +599,7 @@ def _handle_setup(args: argparse.Namespace) -> int:
             rebuild=bool(getattr(args, "rebuild", False)),
             notice=lambda message: print(message),
         )
-    except (SetupError, model_store.ModelStoreError, WhisperEngineError, OSError) as exc:
+    except (SetupError, model_store.ModelStoreError, WhisperEngineError, NemoEngineError, OSError) as exc:
         raise CliError(
             f"setup failed: {exc}",
             hint="check the message above, then re-run 'ges2t setup'",
@@ -603,6 +613,10 @@ def _handle_setup(args: argparse.Namespace) -> int:
         print(f"Engine: {outcome.whisper_engine.summary}")
     if outcome.whisper_model_path is not None:
         print(f"Model:  {outcome.whisper_model_path}")
+    if outcome.nemo_engine is not None:
+        print(f"Engine: {outcome.nemo_engine.summary}")
+    if outcome.nemo_model_path is not None:
+        print(f"Model:  {outcome.nemo_model_path}")
     print("Setup complete.")
     # setup cannot edit the user's config (ADR 0004), so it prints the exact line
     # to add; and when a Vulkan GPU lost the build to a missing dev package, it

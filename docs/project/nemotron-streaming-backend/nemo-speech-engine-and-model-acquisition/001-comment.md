@@ -94,3 +94,53 @@ Two properties worth naming honestly:
 - **The extraction seam is real.** The tests build a real gzip tar and let `tarfile` open it; no fake
   models the archive format. The `data` filter's traversal refusal (M1) is therefore a test of the
   real behaviour, not of a stub.
+
+## Step 3 — `ges2t setup nemo_speech` (`setup_command.py` + `cli.py`)
+
+`SetupBackend.NEMO_SPEECH` takes its value from `NEMO_SPEECH_ENGINE` — setup token, engine value and
+(ticket 58's) TOML block name are one string, so there is no second constant and no alias
+(`test_nemo_backend_token_is_the_engine_value`). `SetupDependencies` gained `nemo_engine` and
+`nemo_model` Protocols; the needle and whisper.cpp paths are untouched.
+
+Acquisition order is **engine archive first, then the 741 MB GGUF** — the small, prerequisite-free
+extraction is proven before the big download, and a model failure raises `PartialSetupError` naming the
+installed engine, exactly as the whisper path does.
+
+**`ges2t setup nemo_speech <model>` is refused loudly.** The backend has exactly one pinned GGUF, so a
+model argument selects nothing; accepting and ignoring it is how a user comes to believe they switched
+models (rule 5). The error names the pinned model and the correct command, and it is raised in the
+**planning** phase, so no byte is downloaded on a rejected invocation.
+
+The CLI help keeps the literal `'nemo_speech'` in its prose, as the whisper.cpp precedent already does
+with `'whisper.cpp'`; the identifier-drift guard is therefore the `setup_command` test above, not the
+help-text test. The CLI help text change is a documentation guard only.
+
+### Falsification of the new setup/CLI guards
+
+| # | mutation applied to `src/` | targeted test | result |
+|---|---|---|---|
+| M13 | silently accept and ignore a nemo model argument | `test_nemo_speech_refuses_a_model_argument…` + the CLI twin | **2 failed** ✔ |
+| M14 | swap the order (model before engine) | `test_nemo_run_extracts_the_engine_then_acquires_the_model` | **2 failed** ✔ |
+| M15 | drop the nemo entry from `_BACKEND_ENGINES` | `test_nemo_backend_token_is_the_engine_value` | **failed** ✔ |
+| M16 | swallow a nemo engine failure and continue to the model | `test_nemo_engine_failure_propagates_and_never_acquires_a_model` | **failed** ✔ |
+| M17 | change `NEMO_SPEECH_ENGINE` to `"nemo-speech"` | `test_nemo_backend_token_is_the_engine_value` | **failed** ✔ |
+| M18 | drop `NemoEngineError` from the CLI's catch tuple | `test_setup_nemo_speech_reports_an_engine_failure_cleanly` | **failed** ✔ |
+
+M14's first attempt produced a *syntax error* (the mutation left a dangling `except`), which is
+detected but is not evidence that the order assertion works; M14b applied a valid swap and the two
+order/partial-failure tests failed as intended. M17 also left `test_setup_help_names_the_nemo_backend`
+**passing**, because that help text is a literal — the honest reading, and the reason the identifier
+guard is the setup_command test rather than the help test.
+
+## Verification (run from the worktree)
+
+```
+$ uv run mypy src/ges2t tests
+Success: no issues found in 67 source files
+
+$ uv run pytest -q
+1288 passed in 7.34s
+```
+
+Baseline before this branch: **1230 passed**, 0 mypy errors. So: **+58 tests, no regressions, 0 mypy
+errors** (the orchestrator's stated `923 passed` baseline does not match `main` at `01c624e`).

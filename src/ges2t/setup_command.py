@@ -19,6 +19,12 @@ The surface it implements (ADR 0021 §6, ADR 0021 §10):
   too, and after a successful run the exact ``transcriber.engine`` line is
   printed (:func:`config_guidance`), because setup never edits the user's config
   (ADR 0004).
+* ``ges2t setup nemo_speech`` (ticket 57, ADR 0022) — **extract** the pinned
+  prebuilt NeMo-Speech.cpp archive and **acquire** the one pinned Nemotron 3.5
+  streaming GGUF. There is nothing to build (no ``cmake``, no ``ninja``, no
+  ``sentencepiece``, no ``sudo``) and nothing to select: a model argument is
+  refused loudly rather than ignored, because the backend has exactly one pinned
+  model. The config line is printed the same way as for whisper.cpp.
 
 A GPU that loses its build to missing Vulkan *development* packages is reported
 by the shared :func:`ges2t.whisper_engine.cpu_only_build_hint`: a diagnostic,
@@ -62,6 +68,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from ges2t import model_store
+from ges2t import nemo_engine
 from ges2t.config import (
     DEFAULT_ENGINE,
     WHISPER_CPP_ENGINE,
@@ -69,12 +76,18 @@ from ges2t.config import (
     default_config_path,
     suggest_engine,
 )
-from ges2t.identifiers import NEEDLE_SETUP_BACKEND, WHISPER_CPP_CLI_TOKEN
+from ges2t.identifiers import (
+    NEEDLE_SETUP_BACKEND,
+    NEMO_SPEECH_ENGINE,
+    WHISPER_CPP_CLI_TOKEN,
+)
 from ges2t.model_store import (
     DEFAULT_NEEDLE_MODEL,
+    NEMO_MODEL,
     ModelStoreError,
     ProgressCallback,
 )
+from ges2t.nemo_engine import NemoEngine
 from ges2t.transcribers.whisper_cpp_config import (
     BLOCK_NAME,
     DEFAULT_GPU,
@@ -101,6 +114,8 @@ __all__ = [
     "GpuPreference",
     "NeedleEngineInstaller",
     "NeedleModelInstaller",
+    "NemoEngineInstaller",
+    "NemoModelInstaller",
     "PartialSetupError",
     "ProgressFactory",
     "SetupBackend",
@@ -178,16 +193,19 @@ class PartialSetupError(SetupError):
 
 
 class SetupBackend(StrEnum):
-    """The engines ``ges2t setup`` can prepare (ADR 0021 §6).
+    """The engines ``ges2t setup`` can prepare (ADR 0021 §6, ADR 0022).
 
-    The value is the **CLI token**: ``whisper.cpp``, as ADR 0021 §6 fixes it.
-    :attr:`engine` is the canonical ``transcriber.engine`` value the same backend
-    configures, which is what :func:`config_guidance` prints because a TOML block
-    name cannot carry the dot (ticket 47).
+    The value is the **CLI token**: ``whisper.cpp``, as ADR 0021 §6 fixes it,
+    and ``nemo_speech``, which ADR 0022 spells identically as CLI token, engine
+    value and (ticket 58's) TOML block name. :attr:`engine` is the canonical
+    ``transcriber.engine`` value the same backend configures, which is what
+    :func:`config_guidance` prints because a TOML block name cannot carry the dot
+    (ticket 47).
     """
 
     NEEDLE = NEEDLE_SETUP_BACKEND
     WHISPER_CPP = WHISPER_CPP_CLI_TOKEN
+    NEMO_SPEECH = NEMO_SPEECH_ENGINE
 
     @property
     def engine(self) -> str:
@@ -196,10 +214,13 @@ class SetupBackend(StrEnum):
 
 
 #: The canonical ``transcriber.engine`` value each setup backend configures. The
-#: needle backend runs the ``whistle`` engine, which is also the default.
+#: needle backend runs the ``whistle`` engine, which is also the default; the
+#: NeMo backend's setup token and engine value are one string, so no alias and no
+#: second spelling are needed (rule 1).
 _BACKEND_ENGINES: Mapping[SetupBackend, str] = {
     SetupBackend.NEEDLE: DEFAULT_ENGINE,
     SetupBackend.WHISPER_CPP: WHISPER_CPP_ENGINE,
+    SetupBackend.NEMO_SPEECH: NEMO_SPEECH_ENGINE,
 }
 
 #: Non-enum backend tokens the parser accepts, folded to a :class:`SetupBackend`.
@@ -248,6 +269,8 @@ class SetupOutcome:
     needle_engine_path: Path | None = None
     whisper_engine: EngineBuild | None = None
     whisper_model_path: Path | None = None
+    nemo_engine: NemoEngine | None = None
+    nemo_model_path: Path | None = None
 
 
 # --- Collaborators (ADR 0019: Protocols in parameters) -------------------------
@@ -300,9 +323,36 @@ class WhisperModelInstaller(Protocol):
         ...
 
 
+@runtime_checkable
+class NemoEngineInstaller(Protocol):
+    """Extracts the pinned NeMo-Speech.cpp engine; :func:`ges2t.nemo_engine.ensure_engine`.
+
+    The archive is prebuilt, so this is an **extraction**, not a build: there is
+    no device preference, no rebuild policy and no prerequisite gate to pass —
+    the pin is the whole contract (ticket 57).
+    """
+
+    def __call__(self, *, progress: ProgressCallback | None = None) -> NemoEngine:
+        """Fetch, verify and extract the pinned archive; return the engine."""
+        ...
+
+
+@runtime_checkable
+class NemoModelInstaller(Protocol):
+    """Ensures the pinned NeMo GGUF is present; :func:`ges2t.model_store.ensure_nemo_model`.
+
+    There is exactly one pinned model, so — unlike the needle and whisper.cpp
+    installers — there is no name argument to validate.
+    """
+
+    def __call__(self, *, progress: ProgressCallback | None = None) -> Path:
+        """Acquire the pinned GGUF and return its installed path."""
+        ...
+
+
 @dataclass(frozen=True)
 class SetupDependencies:
-    """The four acquisition operations a setup run composes (ADR 0019).
+    """The acquisition operations a setup run composes (ADR 0019).
 
     A class of Protocol-typed collaborators rather than module-level calls, so a
     test drives every path with fakes and :func:`run_setup` never touches the
@@ -313,6 +363,8 @@ class SetupDependencies:
     needle_engine: NeedleEngineInstaller
     whisper_engine: WhisperEngineInstaller
     whisper_model: WhisperModelInstaller
+    nemo_engine: NemoEngineInstaller
+    nemo_model: NemoModelInstaller
 
 
 def default_dependencies() -> SetupDependencies:
@@ -322,6 +374,8 @@ def default_dependencies() -> SetupDependencies:
         needle_engine=model_store.ensure_engine,
         whisper_engine=ensure_engine,
         whisper_model=model_store.ensure_whisper_model,
+        nemo_engine=nemo_engine.ensure_engine,
+        nemo_model=model_store.ensure_nemo_model,
     )
 
 
@@ -390,6 +444,8 @@ def plan_setup(
             else DEFAULT_NEEDLE_MODEL
         )
         return SetupPlan(backend=selected, model=resolved)
+    if selected is SetupBackend.NEMO_SPEECH:
+        return SetupPlan(backend=selected, model=_resolve_nemo_model(model))
     if model is not None:
         resolved = model_store.parse_whisper_model_name(model).name
     else:
@@ -398,6 +454,25 @@ def plan_setup(
         backend=selected,
         model=resolved,
         preference=_gpu_preference(config),
+    )
+
+
+def _resolve_nemo_model(model: str | None) -> str:
+    """Resolve the NeMo backend's model argument, which it deliberately does not take.
+
+    There is exactly one pinned GGUF (ADR 0022 §8), and ``ges2t setup nemo_speech``
+    acquires it unconditionally, so a model argument has nothing to select. It is
+    **refused loudly** rather than ignored: a silently dropped argument is how a
+    user comes to believe they switched models (rule 5), and the message names the
+    pinned model and the correct command. Validation happens here, in the planning
+    phase, so no download starts on a rejected invocation.
+    """
+    if model is None:
+        return NEMO_MODEL.name
+    raise SetupError(
+        f"the {NEMO_SPEECH_ENGINE} backend has exactly one pinned model "
+        f"({NEMO_MODEL.name}) and acquires it automatically, so it takes no model "
+        f"argument (got {model!r}); run 'ges2t setup {NEMO_SPEECH_ENGINE}'"
     )
 
 
@@ -477,15 +552,21 @@ def run_setup(
     The whisper order is **engine first, then model**: the prerequisite gate (and
     its exact ``pacman`` line) fires before ~0.5 GB is downloaded, and a model
     failure leaves a complete, diagnosable engine rather than a half-finished
-    tree. The needle order is unchanged from the pre-ticket behaviour (model,
-    then engine). The whisper engine build receives the plan's device
-    ``preference`` (so a CPU pin is honoured), ``rebuild`` (the ``--rebuild``
-    escape hatch) and ``notice`` (the one-line "why it rebuilt" sink).
+    tree. The nemo order is the same — the 16 MB pinned archive is extracted
+    before the 741 MB GGUF is fetched. The needle order is unchanged from the
+    pre-ticket behaviour (model, then engine). The whisper engine build receives
+    the plan's device ``preference`` (so a CPU pin is honoured), ``rebuild`` (the
+    ``--rebuild`` escape hatch) and ``notice`` (the one-line "why it rebuilt"
+    sink); the nemo extraction needs none of the three (its pin is the whole
+    contract) and ``rebuild`` is deliberately not wired to a re-download: the
+    archive is hash-pinned and the cache already holds it.
     """
     deps = dependencies if dependencies is not None else default_dependencies()
     factory = progress if progress is not None else _silent_progress
     if plan.backend is SetupBackend.WHISPER_CPP:
         return _run_whisper(plan, deps, factory, rebuild, notice)
+    if plan.backend is SetupBackend.NEMO_SPEECH:
+        return _run_nemo(plan, deps, factory)
     return _run_needle(plan, deps, factory)
 
 
@@ -503,6 +584,35 @@ def _run_needle(
         plan=plan,
         needle_model_path=model_path,
         needle_engine_path=engine_path,
+    )
+
+
+def _run_nemo(
+    plan: SetupPlan,
+    deps: SetupDependencies,
+    factory: ProgressFactory,
+) -> SetupOutcome:
+    """Extract the pinned engine archive, then acquire the pinned GGUF.
+
+    Engine first, then model, for the same reason as whisper.cpp: the small
+    archive's extraction is prerequisite-free, so any failure to extract is
+    reported before 741 MB is downloaded, and a **model** failure is wrapped in
+    :class:`PartialSetupError` because the engine is already installed and
+    complete. Nothing is built, no package is installed and no ``sudo`` is run.
+    """
+    engine = deps.nemo_engine(progress=factory("nemo_speech engine"))
+    try:
+        model_path = deps.nemo_model(progress=factory(f"model {plan.model}"))
+    except (ModelStoreError, OSError) as exc:
+        raise PartialSetupError(
+            installed=f"the nemo_speech engine ({engine.summary})",
+            missing=f"model {plan.model}",
+            cause=exc,
+        ) from exc
+    return SetupOutcome(
+        plan=plan,
+        nemo_engine=engine,
+        nemo_model_path=model_path,
     )
 
 

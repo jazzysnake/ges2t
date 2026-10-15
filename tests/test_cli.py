@@ -18,7 +18,7 @@ from types import ModuleType
 import pytest
 
 from collections.abc import Callable
-from ges2t import __version__, cli, model_store, setup_command, whisper_engine
+from ges2t import __version__, cli, model_store, nemo_engine, setup_command, whisper_engine
 from ges2t.cli import (
     EXIT_ENGINE_FAILURE,
     EXIT_FAILURE,
@@ -704,6 +704,99 @@ def test_setup_whisper_cpp_reports_a_partial_failure(
     assert "is installed" in err
     assert "download refused" in err
     assert "Traceback" not in err
+
+
+def test_setup_nemo_speech_extracts_the_engine_and_fetches_the_gguf(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fakes = make_fakes(tmp_path)
+    monkeypatch.setattr(
+        setup_command, "default_dependencies", _returns(fakes.dependencies)
+    )
+
+    assert main(["setup", "nemo_speech"]) == EXIT_SUCCESS
+
+    assert fakes.log == ["nemo-engine", "nemo-model"]
+    out = capsys.readouterr().out
+    assert "Setup complete." in out
+    assert str(fakes.nemo_engine.engine.directory) in out
+    assert str(fakes.nemo_model.path) in out
+    # setup never edits the config, so it prints the exact line to add.
+    assert 'transcriber.engine = "nemo_speech"' in out
+
+
+def test_setup_nemo_speech_refuses_a_model_argument_before_acquiring(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fakes = make_fakes(tmp_path)
+    monkeypatch.setattr(
+        setup_command, "default_dependencies", _returns(fakes.dependencies)
+    )
+
+    assert main(["setup", "nemo_speech", "some-other-model"]) == EXIT_FAILURE
+
+    assert fakes.log == []
+    err = capsys.readouterr().err
+    assert "takes no model argument" in err
+    assert "Traceback" not in err
+
+
+def test_setup_nemo_speech_reports_a_partial_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fakes = make_fakes(tmp_path)
+    fakes.nemo_model.error = model_store.ModelStoreError("download refused")
+    monkeypatch.setattr(
+        setup_command, "default_dependencies", _returns(fakes.dependencies)
+    )
+
+    assert main(["setup", "nemo_speech"]) == EXIT_FAILURE
+
+    err = capsys.readouterr().err
+    assert "is installed" in err
+    assert "download refused" in err
+    assert "Traceback" not in err
+
+
+def test_setup_nemo_speech_reports_an_engine_failure_cleanly(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fakes = make_fakes(tmp_path)
+    fakes.nemo_engine.error = nemo_engine.NemoEngineError(
+        "the pinned archive could not be extracted"
+    )
+    monkeypatch.setattr(
+        setup_command, "default_dependencies", _returns(fakes.dependencies)
+    )
+
+    assert main(["setup", "nemo_speech"]) == EXIT_FAILURE
+
+    err = capsys.readouterr().err
+    assert "setup failed" in err
+    assert "the pinned archive could not be extracted" in err
+    assert "unexpected failure" not in err
+    assert "Traceback" not in err
+    # The model is never reached after a failed engine extraction.
+    assert fakes.log == ["nemo-engine"]
+
+
+def test_setup_help_names_the_nemo_backend(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        main(["setup", "--help"])
+
+    assert exit_info.value.code == 0
+    out = capsys.readouterr().out
+    assert "nemo_speech" in out
+    assert "no model argument" in out
+    assert "no build" in out
 
 
 def test_setup_whisper_cpp_prints_the_exact_config_engine_line(
