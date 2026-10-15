@@ -5,7 +5,8 @@
 - **Epic owner:** orchestrator
 - **Research:** [../research/parakeet-v3-engine-landscape/REPORT.md](../research/parakeet-v3-engine-landscape/REPORT.md)
   (the engine/Vulkan/incremental survey) · [../research/nemotron-3-5-asr-streaming-measurement/REPORT.md](../research/nemotron-3-5-asr-streaming-measurement/REPORT.md)
-  (ticket 55 — the on-machine measurement) · a code-investigation design report (ticket 56, to be produced)
+  (ticket 55 — the on-machine measurement) · [../research/nemo-pure-streaming-integration/REPORT.md](../research/nemo-pure-streaming-integration/REPORT.md)
+  (ticket 56 — the code-investigation design and the 57–62 breakdown)
 - **Supersedes:** [../parakeet-v3-backend/epic.md](../parakeet-v3-backend/epic.md) (Epic 5 — Parakeet v3,
   closed **obsolete** on the user's decision, 2026-10-14)
 - **Decision:** **[ADR 0022](../../adr/0022-nemotron-streaming-pure-streaming-backend.md)** (new,

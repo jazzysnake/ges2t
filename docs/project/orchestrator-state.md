@@ -76,7 +76,13 @@ are `done`**.
 | **35** | `live-dictation-ux/streaming-vs-batch-quality` | **to do, P2, gates nothing** — the three-length streaming-vs-batch sweep (§8) |
 | **30** | `core-dictation-pipeline/tray-failure-diagnostics` | **to do** — needs a **read-only socket verb → an ADR 0016 amendment**, not yet raised for sign-off |
 | **54** | `parakeet-v3-backend/parakeet-v3-vulkan-measurement` | **obsolete** — user chose the streaming sibling; superseded by 55. Never started, no artifacts. |
-| **56** | `nemotron-streaming-backend/nemo-pure-streaming-integration` | **to do, P0** — code investigation: design the pure-streaming integration (no window). See §4a. |
+| **56** | `nemotron-streaming-backend/nemo-pure-streaming-integration` | **done** — merged `252b117`. Design report: `docs/project/research/nemo-pure-streaming-integration/REPORT.md`. Reviewed pass (`004-review.md`; three rounds: B1 `config.py` orphan → N1 cites → R1 ADR-status reconciliation). |
+| **57** | `nemotron-streaming-backend/nemo-speech-engine-and-model-acquisition` | **to do, M** — engine archive + GGUF pins/acquisition/`setup`. Start here. |
+| **58** | `nemotron-streaming-backend/nemo-speech-batch-adapter` | **to do, M** — selectable engine + `[engine.nemo_speech]` config + batch `ctypes` adapter. |
+| **59** | `nemotron-streaming-backend/nemo-speech-pure-streaming` | **to do, M** — `drive_append_only` + `AppendOnlyDecoder`, no window. |
+| **60** | `nemotron-streaming-backend/nemo-speech-pipeline-wiring` | **to do, M** — composition root + generalise `_streaming_chunk_seconds`. 59+60 ship together. |
+| **61** | `nemotron-streaming-backend/nemo-speech-doctor` | **to do, S** — engine/model/device doctor checks. |
+| **62** | `nemotron-streaming-backend/nemo-speech-docs` | **to do, S** — docs + documented limits. |
 
 **Closed as obsolete:** **31** `speech-gate-recalibration` — measured and rejected in the user's
 environment; the parked branch was deleted and its `001-comment.md`/`002-review.md` are kept in the ticket
@@ -134,6 +140,19 @@ recommendation, and the **integration ticket breakdown**. It must escalate if th
 be carried without a growing buffer or second pass (ADR 0022's falsifier). **No `src/` change.** The
 earlier proposed 56–61 integration breakdown was **not** created — the shape is to be derived from
 ticket 56 per the no-assumptions rule.
+
+**Ticket 56 is DONE and merged** (`252b117`). On a pass it delivered the design and the breakdown; the
+user then asked to **split the old combined ticket 60**, so the board now carries **57–62** (see the
+board table in §4): **57** acquisition → **58** batch adapter (adds `NEMO_SPEECH_ENGINE` to
+`KNOWN_ENGINES`) → **59** pure streaming (`drive_append_only` + `AppendOnlyDecoder`; the ADR 0022
+falsifier lives here) → **60** pipeline wiring (register builder + generalise `_streaming_chunk_seconds`;
+**59+60 ship together**) → **61** doctor (deps 57, 58) · **62** docs (deps 60, 61). **Dispatch 57 and 58
+in parallel** (disjoint files: 57 = `identifiers.py`/`nemo_engine.py`/`model_store.py`/`setup_command.py`/
+`cli.py`; 58 = `config.py`/`transcribers/nemo_speech*.py`). The recommended mechanism: an **additive**
+`streaming.drive_append_only` + `AppendOnlyDecoder` Protocol, the adapter polling the C ABI
+(`stream_push_f32`/`stream_next`/`stream_finish`) on the session worker thread, committing the interim
+prefix up to the last **string** word boundary with the partial token pending; `drive`,
+`streaming_session.py`, `service.py`, `socket_proto.py`, `incremental_typing.py` are untouched.
 
 ## 5. The whisper.cpp backend (Epic 3, merged 41–47, 49–51; ADR 0021 **accepted**)
 
