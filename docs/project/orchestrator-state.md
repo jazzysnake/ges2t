@@ -77,8 +77,8 @@ are `done`**.
 | **30** | `core-dictation-pipeline/tray-failure-diagnostics` | **to do** — needs a **read-only socket verb → an ADR 0016 amendment**, not yet raised for sign-off |
 | **54** | `parakeet-v3-backend/parakeet-v3-vulkan-measurement` | **obsolete** — user chose the streaming sibling; superseded by 55. Never started, no artifacts. |
 | **56** | `nemotron-streaming-backend/nemo-pure-streaming-integration` | **done** — merged `252b117`. Design report: `docs/project/research/nemo-pure-streaming-integration/REPORT.md`. Reviewed pass (`004-review.md`; three rounds: B1 `config.py` orphan → N1 cites → R1 ADR-status reconciliation). |
-| **57** | `nemotron-streaming-backend/nemo-speech-engine-and-model-acquisition` | **to do, M** — engine archive + GGUF pins/acquisition/`setup`. Start here. |
-| **58** | `nemotron-streaming-backend/nemo-speech-batch-adapter` | **to do, M** — selectable engine + `[engine.nemo_speech]` config + batch `ctypes` adapter. |
+| **57** | `nemotron-streaming-backend/nemo-speech-engine-and-model-acquisition` | **done** — merged `3b1e158` (pushed `d6d05d5`). Review pass `004-review.md`; main now **1294 passed** / mypy 0. |
+| **58** | `nemotron-streaming-backend/nemo-speech-batch-adapter` | **in progress** — selectable engine + `[engine.nemo_speech]` config + batch `ctypes` adapter. |
 | **59** | `nemotron-streaming-backend/nemo-speech-pure-streaming` | **to do, M** — `drive_append_only` + `AppendOnlyDecoder`, no window. |
 | **60** | `nemotron-streaming-backend/nemo-speech-pipeline-wiring` | **to do, M** — composition root + generalise `_streaming_chunk_seconds`. 59+60 ship together. |
 | **61** | `nemotron-streaming-backend/nemo-speech-doctor` | **to do, S** — engine/model/device doctor checks. |
