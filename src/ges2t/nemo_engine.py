@@ -633,12 +633,20 @@ def ensure_engine(
     3. **Extract.** Into a staging directory beside the install directory.
     4. **Verify, then swap.** The manifest is written and the staged tree is
        re-read through :func:`verify_engine` (so a truncated extraction is caught)
-       *before* the atomic replace. ``force`` re-extracts over a complete install
-       (the ``--rebuild`` escape hatch).
+       *before* the atomic replace.
 
-    Nothing here builds, installs a package, or runs ``sudo``, and the device the
-    engine will use is :func:`inspect_device`'s answer, not an input: the install
-    is identical on a Vulkan machine and a CPU-only one.
+    ``force`` re-extracts over a complete install. It exists because
+    :func:`verify_engine` checks the manifest's file **list**, not the bytes of
+    the extracted files (hashing 48 MB on every setup would be the wrong trade),
+    so a tree whose files are all present but whose contents were damaged passes
+    verification; ``force`` repairs that **offline**, from the archive already
+    verified in the cache. No CLI flag owns it yet — ``--rebuild`` is the
+    whisper.cpp build's, and wiring one into this backend is a decision for the
+    tickets that select the engine — so every caller today is a library caller
+    (the tests included). Nothing here builds, installs a package, or runs
+    ``sudo``, and the device the engine will use is :func:`inspect_device`'s
+    answer, not an input: the install is identical on a Vulkan machine and a
+    CPU-only one.
     """
     destination = directory if directory is not None else engine_dir(version)
 

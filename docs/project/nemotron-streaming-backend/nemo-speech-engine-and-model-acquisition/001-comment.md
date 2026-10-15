@@ -222,3 +222,26 @@ real archive's own layout (that its top-level directory is `ARCHIVE_ROOT_NAME` a
 than from a download performed by this ticket. If the real archive's root differs, `ensure_engine`
 fails loudly with `EngineArchiveError` naming the directories it found, and `ARCHIVE_ROOT_NAME` is the
 one constant to change.
+
+## Review-risk notes (things a reviewer will look at)
+
+- **`ensure_engine(force=…)` has no CLI caller yet.** Kept deliberately, and documented in the
+  docstring: `verify_engine` checks the manifest's file *list*, not the extracted bytes (hashing
+  48 MB on every setup is the wrong trade), so a tree whose files are all present but damaged passes
+  verification; `force` repairs that fully offline from the cached, hash-verified archive. It is
+  covered by two tests (`test_force_re_extracts_even_when_complete`,
+  `test_force_reinstalls_over_a_complete_install`) and reachable through the public API. `--rebuild`
+  is **not** wired to it — that flag is the whisper.cpp build's.
+- **`_staging_directory`/`_replace_directory`/`_remove_tree` are duplicated from `whisper_engine`**
+  (ticket 49's hardened swap). The docstring says why they are not imported (that module's are private
+  to its build path, and lifting them into a shared module is a separate refactor). Both copies are
+  exercised by the atomicity tests here.
+- **`verify_engine` takes a `pin` parameter** (default `NEMO_SPEECH_PIN`). It is the test seam *and*
+  the reason a re-pin takes effect: the manifest records the archive's sha256+size, so installing a
+  different archive invalidates the old tree instead of being trusted.
+- **The model pin is per-revision, not per-`main`.** Hugging Face `main` is a *different* artifact of
+  the same file name (742,090,464 B, revision `ea30d66d…`); `test_nemo_model_pin_url_is_revision_qualified_not_main`
+  asserts the pinned URL carries the revision and is not `resolve/main`.
+- **Nothing in `src/` was left modified by probing.** Every mutation was reverted and checked
+  (`git diff` empty for `src/` at the end of the falsification runs; the final `uv run pytest -q` /
+  `uv run mypy src/ges2t tests` were run on the committed tree).
