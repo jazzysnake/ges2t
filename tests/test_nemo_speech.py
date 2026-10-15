@@ -501,6 +501,23 @@ def test_transcribe_forwards_the_sample_rate(tmp_path: Path) -> None:
     assert fake.recognized[0][2] == SAMPLE_RATE
 
 
+def test_transcribe_forwards_the_actual_audio_payload(tmp_path: Path) -> None:
+    # The seam's central data contract: the *actual* float32 samples reach the
+    # library -- correct values, correct length, non-empty -- not merely that
+    # ``recognize`` was called. A mutation that forwards an empty or substituted
+    # buffer must fail here, not sail through green (ADR 0014).
+    transcriber, fake = _loaded(tmp_path)
+    samples = [0.0, 0.25, -0.5, 1.0, -1.0, 0.125]
+    result = transcriber.transcribe(_buffer(samples))
+
+    assert len(fake.recognized) == 1
+    _, forwarded, _ = fake.recognized[0]
+    assert forwarded == tuple(samples)
+    assert len(forwarded) == len(samples)
+    assert forwarded  # the payload is not dropped
+    assert result.text == "hello world"
+
+
 def test_transcribe_before_load_is_a_typed_error(tmp_path: Path) -> None:
     transcriber = NemoSpeechTranscriber(
         NemoSpeechConfig(),
@@ -613,9 +630,22 @@ _REAL_MODEL = Path(
 _REAL_AUDIO = Path(
     os.environ.get(
         "GES2T_NEMO_AUDIO",
-        str(_SCRATCH / "silence-10s.wav"),
+        str(
+            Path.home()
+            / ".cache"
+            / "ges2t-discovery"
+            / "whisper-cpp-provider"
+            / "audio"
+            / "clip5.wav"
+        ),
     )
 )
+
+#: A word the real engine produces for ``clip5.wav`` (measured, CPU, the pinned
+#: v0.2.0 engine + GGUF). This is the same reference clip and word whisper.cpp's
+#: ``test_real_libwhisper_transcribes_cached_audio`` asserts, so the real-seam
+#: tests mirror each other.
+_REAL_SPEECH_WORD: str = "dinner"
 
 
 def test_real_library_reports_its_version() -> None:
@@ -667,10 +697,14 @@ def test_real_library_recognizes_cached_audio() -> None:
 
     result = transcriber.transcribe(_read_wav_mono_16k(_REAL_AUDIO))
 
-    # The clip is 10 s of silence; ticket 55 measured that silence produces an
-    # empty transcript (no interims, empty final). The point of the test is that
-    # the real create + recognize_f32 + result accessors round-trip at all.
-    assert result.text == ""
+    # A *speech* clip (the whisper.cpp reference clip), so a real decode produces
+    # words: audio that never reached the decoder would yield "". This is the
+    # real-seam half of review finding F1 (ADR 0014).
+    text = result.text.lower()
+    assert text.strip(), "the real library produced no text on real speech"
+    assert _REAL_SPEECH_WORD in text, (
+        f"expected the reference word {_REAL_SPEECH_WORD!r}; got {result.text!r}"
+    )
     assert result.ttft_ms is None and result.decode_tps is None
     transcriber.close()
 
@@ -683,10 +717,20 @@ def test_real_library_rejects_a_missing_model() -> None:
     if not _REAL_LIBRARY.is_file():
         pytest.skip(f"the nemo_speech library is absent at {_REAL_LIBRARY}")
     library = CtypesNemoSpeechLibrary(_REAL_LIBRARY)
+    missing_model = Path("/nonexistent/model.gguf")
     with pytest.raises(NemoSpeechLoadError) as excinfo:
-        library.create_recognizer(Path("/nonexistent/model.gguf"), use_gpu=False)
-    # The library's own last_error is surfaced, not a generic message.
-    assert "nemo_speech_asr_create failed" in str(excinfo.value)
+        library.create_recognizer(missing_model, use_gpu=False)
+    message = str(excinfo.value)
+    assert "nemo_speech_asr_create failed" in message
+    # The library's own last_error is surfaced, not a generic message: read it
+    # back from the same library and require it to appear in the exception. This
+    # fails if {self.last_error()} is dropped from the create failure message
+    # (review finding F2), without hardcoding the library's wording.
+    surfaced = library.last_error()
+    assert surfaced, "the failed create recorded no last_error to check against"
+    assert surfaced in message, (
+        f"the library's own last_error {surfaced!r} was not surfaced in {message!r}"
+    )
 
 
 def test_status_ok_constant_matches_the_header() -> None:
