@@ -58,3 +58,39 @@ detects the Vulkan **loader** and reports Vulkan-vs-CPU; the engine enumerates G
    `tarfile`, no network).
 
 Working log follows, appended as each step lands.
+
+## Step 2 — `nemo_engine.py` (new), and its falsification
+
+`uv run pytest -q tests/test_nemo_engine.py tests/test_model_store.py` → **108 passed**;
+`uv run mypy tests/test_nemo_engine.py tests/test_model_store.py` → clean.
+
+Every new guard was falsified (rule 6): the mutation was applied to `src/`, the guarded test was run,
+it **failed**, and the file was restored (`git diff` for `src/` empty afterwards; `md5sum` recorded).
+
+| # | mutation applied to `src/` | targeted test | result |
+|---|---|---|---|
+| M1 | `extractall(..., filter="data")` → `extractall(...)` | `test_a_path_traversal_member_is_refused` | **failed** ✔ |
+| M2 | drop the sha256 comparison in `verify_engine` | `test_verify_engine_returns_none_for_a_different_pin` | **failed** ✔ |
+| M3 | drop the entry-library completeness check | `test_an_archive_without_the_entry_library_is_a_typed_error` | **failed** ✔ |
+| M4 | drop the size check in the shared verifier | `test_ensure_{nemo_model_wrong_size…,engine_checks_the_archive_size_alone}` | **2 failed** ✔ |
+| M5 | `import subprocess` added to `nemo_engine.py` | `test_the_engine_module_runs_no_external_command…` | **failed** ✔ |
+| M6 | `NemoEngine.complete()` → `True` | `test_verify_engine_returns_none_when_a_file_was_deleted` | **failed** ✔ |
+| M8 | `_remove_tree(destination)` before the fetch | `test_a_failed_reinstall_keeps_the_previous_install` | **failed** ✔ |
+| M10 | `verify_engine` → always `None` | `test_a_complete_install_is_not_refetched` | **failed** ✔ |
+| M11 | install the GGUF at a wrong destination | `test_ensure_nemo_model_downloads_verifies_and_installs` | **failed** ✔ |
+| M12 | drop the idempotent size gate in `ensure_artifact` | `test_ensure_nemo_model_is_idempotent` | **failed** ✔ |
+
+A first attempt at M11 did not apply (the `str.replace` target did not match) and the test passed —
+recorded here rather than counted as a pass; M11b with a matching target failed the test as intended.
+M2's first run also passed because the "different pin" differed in **size** as well, so the size check
+rejected it before the hash check was reached; the test now uses a same-size, different-hash pin so
+the sha check is isolated.
+
+Two properties worth naming honestly:
+
+- **The wrong-size tests assert the pair, not the size in isolation** — a truncated payload differs in
+  hash too. `test_…_checks_the_size_alone` (added to both suites) closes that hole with a pin whose
+  sha256 is the payload's but whose size is wrong, so only the size check can reject it (M4).
+- **The extraction seam is real.** The tests build a real gzip tar and let `tarfile` open it; no fake
+  models the archive format. The `data` filter's traversal refusal (M1) is therefore a test of the
+  real behaviour, not of a stub.

@@ -599,8 +599,13 @@ def test_verify_engine_returns_none_when_a_file_was_deleted(sandbox: Path) -> No
 def test_verify_engine_returns_none_for_a_different_pin(sandbox: Path) -> None:
     engine = _install(sandbox)
 
+    # Same byte size, different sha256: only the hash comparison can reject this,
+    # so the test isolates the sha check rather than the size check.
     other = ArtifactPin(
-        name="other.tar.gz", url="https://example.invalid/other", sha256="0" * 64, size=1
+        name=engine.archive,
+        url="https://example.invalid/other",
+        sha256="0" * 64,
+        size=engine.size,
     )
 
     assert verify_engine(engine.directory, pin=other) is None
