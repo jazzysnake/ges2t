@@ -115,13 +115,13 @@ they want a **new, engine-specific ADR** and integration by **pure streaming** (
 two-pass agreement). Structural note: the amendment I had proposed *removed* the window for this
 engine; the user prefers that recorded in a new ADR rather than by editing 0011. Honoured.
 
-**ADR 0022 is now WRITTEN** at `docs/adr/0022-nemotron-streaming-pure-streaming-backend.md` — **new,
-engine-specific, status `proposed`**, ~23 ADR files now. It records: opt-in `nemo_speech`; **pure
+**ADR 0022 is ACCEPTED** at `docs/adr/0022-nemotron-streaming-pure-streaming-backend.md` — new,
+engine-specific, **user sign-off 2026-10-14** (23 ADR files). It records: opt-in `nemo_speech`; **pure
 streaming** (append-only interim stream is the commit source; no window, no two-pass); **ADR 0011 not
 amended** and left in force for the Whistle path; tickets 32–34 contract preserved; word-boundary
 commits with the partial held pending; in-process `ctypes`; Vulkan/CPU device rule (never silent);
-the pins; OpenMDW-1.1; and that **the mechanism is designed by ticket 56**. It still needs the user's
-sign-off before the merge that carries it (nothing else is written to `docs/adr/`).
+the pins; OpenMDW-1.1; and that **the mechanism is designed by ticket 56**. No further sign-off is
+needed; ticket 62 is **docs only**.
 
 **Ticket 56 — `nemotron-streaming-backend/nemo-pure-streaming-integration` (M, discovery, DISPATCHED).**
 A **code investigation** (not a measurement): it maps the current streaming path

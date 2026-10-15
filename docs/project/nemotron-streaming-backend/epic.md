@@ -80,7 +80,8 @@ user. The default engine is unchanged and ADR 0011 is untouched.
       the model, and the Vulkan/GPU state when this engine is configured.
 - [ ] The **Hungarian accuracy reality is documented** (published FLEURS vs the reference clips that
       actually exist), not glossed over.
-- [ ] **ADR 0022 is presented in full for user sign-off** before the merge that carries it.
+- [x] **ADR 0022 is presented in full for user sign-off** — **accepted 2026-10-14**; no further
+      sign-off is required and this criterion is met.
 - [ ] Every ticket's `docs/project/README.md` row is `done` (or `obsolete` with the reason).
 
 ## Out of scope for this epic
