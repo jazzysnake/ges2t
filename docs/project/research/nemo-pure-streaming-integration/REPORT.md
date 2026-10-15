@@ -43,14 +43,14 @@ prefix up to the last completed word, hold the trailing token as `pending` — a
 `CommittedTyper` (`src/ges2t/incremental_typing.py:69`) types the committed prefix with its typed
 watermark and applies the single trailing space at `finish` (`:109`). No growing buffer is kept
 (only the cumulative committed **string**, exactly as the Whistle path already keeps `transcript` in
-`streaming.py:167`), and no second pass is needed.
+`streaming.py:160`), and no second pass is needed.
 
 **Recommended seam:** add a small, engine-agnostic **append-only driver**
 `ges2t.streaming.drive_append_only` with a narrow `AppendOnlyDecoder` Protocol (`push`/`finish`),
 reusing the existing chunk-regrouping `streaming._group_chunks` (`src/ges2t/streaming.py:211`) and the
 existing `StreamingPass`/`TranscriptionSegment` vocabulary. The `nemo_speech` adapter supplies a
 `_NemoSpeechDecoder` over a `NemoSpeechLibrary` ctypes Protocol (the ADR 0021 `WhisperLibrary`
-precedent, `src/ges2t/transcribers/whisper_cpp.py:262`). The windowed `drive` and the Whistle path
+precedent, `src/ges2t/transcribers/whisper_cpp.py:223`). The windowed `drive` and the Whistle path
 are untouched.
 
 ---
@@ -63,15 +63,15 @@ are untouched.
   streaming seam. Its docstring already says the quiet part: *"The caller decides how many chunks to
   feed; windowing and commit logic live in the streaming module, not here"* (`:181`).
 - `LiveText(committed, pending)` — `interfaces.py:70`. `committed` is cumulative and append-only;
-  `pending` is the display-only tail; `display = committed + pending` (`:93`–`:94`).
-- `TextTyper.type_text(text)` — `interfaces.py:224`; `LiveTyper.type_committed` / `finish` —
-  `interfaces.py:243`/`:254`.
+  `pending` is the display-only tail; `display = committed + pending` (`:97`–`:99`).
+- `TextTyper.type_text(text)` — `interfaces.py:224` (class) / `:237` (method);
+  `LiveTyper.type_committed` / `finish` — `interfaces.py:243` (class) / `:254`/`:258` (methods).
 - `Injector.inject(text)` — `interfaces.py:215` (batch only; not used on the streaming path).
 
 ### 2.2 The windowed driver (`src/ges2t/streaming.py`, ticket 13 / ADR 0011)
 
 - `StreamingPass(committed, pending, language)` — `streaming.py:44`. `committed` is the **delta**
-  *"the words the engine's two-consecutive-passes-agree rule confirmed"* (`:46`–`:48`); this is where
+  *"the words the engine's two-consecutive-passes-agree rule confirmed"* (`:47`–`:48`); this is where
   the **two-pass agreement rule** is *modelled*. It is **not computed in Python** — it is the Whistle
   engine's own rule (ADR 0011 quotes the `needle.h` contract verbatim) and is surfaced to the driver
   as `committed` vs `pending`.
@@ -117,7 +117,7 @@ are untouched.
   the cumulative `committed` beyond the typed watermark `self._typed` (`:87`, `:134`–`:151`);
   `finish(final_text)` (`:109`) reconciles with the final transcript and applies ADR 0012's trailing
   space **once** via `decide_injection` (`:126`). A non-extension raises `IncrementalTypingError`
-  (`:63`).
+  (`:59`).
 
 ### 2.6 The service (`src/ges2t/service.py`, ticket 21)
 
@@ -210,7 +210,7 @@ def drive_append_only(
 ```
 
 Reuses, unchanged: `StreamingPass` (`streaming.py:44`), `_group_chunks` (`:211`),
-`TranscriptionSegment`/`LiveText` (`interfaces.py:70`/`:104`). The adapter:
+`TranscriptionSegment`/`LiveText` (`interfaces.py:103`/`:70`). The adapter:
 
 ```python
 # src/ges2t/transcribers/nemo_speech.py
@@ -234,7 +234,7 @@ class NemoSpeechTranscriber:
 - **Nothing existing breaks.** `streaming.py` is additive; `drive`/`StreamingDecoder` keep their
   signatures and behaviour. `test_streaming.py` (the driver's spec), `test_whistle_stream.py`
   (the adapter-through-`drive` pins, e.g. `test_drive_is_the_windowing_implementation` at
-  `tests/test_whistle_stream.py:433`), `test_streaming_session.py`, `test_incremental_typing.py`, and
+  `tests/test_whistle_stream.py:430`), `test_streaming_session.py`, `test_incremental_typing.py`, and
   `test_pipeline_streaming.py` are untouched.
 - **New pins needed:** `test_streaming_append_only.py` (driver: no window flush, exactly one final
   segment, committed cumulative/append-only, pending never in the transcript), and
@@ -243,7 +243,7 @@ class NemoSpeechTranscriber:
   `test_whisper_cpp.py`).
 - **One existing test becomes a guard rather than a spec** if `_streaming_chunk_seconds` is
   generalised: `test_defaults_come_from_whistle_config_when_the_block_is_absent`
-  (`tests/test_pipeline_streaming.py:236`) must keep passing for `whistle`, and a new case must pin
+  (`tests/test_pipeline_streaming.py:244`) must keep passing for `whistle`, and a new case must pin
   the Nemo chunk default.
 
 ---
@@ -298,11 +298,17 @@ re-entered by the same thread that pushed, and no callback re-enters ges2t.
    wedges, a recording's `finish()` blocks on the `ges2t-finish` thread (bounded by the service's 5 s
    shutdown join, `service.py:_SHUTDOWN_JOIN_TIMEOUT_SECONDS`). This is the existing, documented
    accepted risk (ADR 0011), inherited, not new.
-3. **The recognizer is process-global and not re-entrant.** The ADR 0022 shape keeps one recognizer
-   resident; the service's state machine guarantees at most one recording at a time
-   (`Service` transition table), and each `stream()` must open a **fresh stream handle**
-   (`nemo_speech_asr_streaming_recognize`) and close it (`nemo_speech_asr_stream_close`) in a
-   `finally`. A leaked stream handle would keep the model busy — flag it as a test pin.
+3. **One recognizer, but the engine supports concurrent calls.** The header documents *"[t]ransparent
+   dynamic batching across concurrent recognition calls. A single recognizer owns one model; callers
+   submit independent utterances from multiple threads and compatible neural work is combined into GPU
+   batches"* (`asr.h:131`–`:134`). It is explicitly designed for concurrent calls, not a
+   single-threaded singleton. ges2t keeps **one** recognizer resident for the process (the ADR 0021
+   shape, created once in `load()`), and the **operational rule still holds**: the service state
+   machine allows at most one recording at a time, so the adapter opens exactly one stream per
+   recording (`nemo_speech_asr_streaming_recognize`) and closes it (`nemo_speech_asr_stream_close`) in
+   a `finally`. The rule holds because of ges2t's single-recording contract, **not** because the
+   engine forbids concurrency; a leaked stream handle would still keep a stream (and its caches)
+   alive — flag it as a test pin.
 4. **`nemo_speech_asr_last_error` is thread-local** (header: *"valid until the next call on the same
    thread"*), so any error string must be read on the worker at the point of failure, never later on
    another thread.
@@ -475,13 +481,13 @@ StreamingDictationSession (unchanged) ──► Service (unchanged) ──► Co
 | file | change | why |
 |---|---|---|
 | `identifiers.py` | add `NEMO_SPEECH_ENGINE = "nemo_speech"` | rule 1: one definition per identifier (`identifiers.py` header). The engine name is compared in the factory, the config, and `doctor`. |
-| `config.py` | add it to `KNOWN_ENGINES` (`config.py:88`); **not** to `BATCH_ONLY_ENGINES` (`:96`) | the engine streams, so an omitted `streaming.enabled` must default to `True` (ticket 50's engine-aware default). |
+| `config.py` | add it to `KNOWN_ENGINES` (`config.py:80`); **not** to `BATCH_ONLY_ENGINES` (`:100`) | the engine streams, so an omitted `streaming.enabled` must default to `True` (ticket 50's engine-aware default). **Owned by ticket 58** (§8). |
 | `transcribers/nemo_speech_config.py` (new) | validate `[engine.nemo_speech]`: `device` (`auto`/`vulkan`/`cpu`), `chunk_seconds` (default 0.16), model override | the block is engine-specific (ADR 0009); a `window_seconds` key gets the existing unknown-key warning, which *"says so rather than silently accepting a value that has no effect"* (ADR 0022 consequence). |
-| `transcribers/nemo_speech.py` (new) | the adapter + `NemoSpeechLibrary` Protocol + ctypes impl + `_NemoSpeechDecoder` | the only module allowed to import the backend (ADR 0010); the ctypes-Protocol seam is the ADR 0021 pattern (`whisper_cpp.py:262`). |
+| `transcribers/nemo_speech.py` (new) | the adapter + `NemoSpeechLibrary` Protocol + ctypes impl + `_NemoSpeechDecoder` | the only module allowed to import the backend (ADR 0010); the ctypes-Protocol seam is the ADR 0021 pattern (`whisper_cpp.py:223`). |
 | `nemo_engine.py` (new) | engine **archive** pin (sha256 + size), extraction, `engine_dir()`, `verify_engine()`, device detection; **no build** | mirrors `whisper_engine.py` so `setup`/`doctor`/service share one definition of the engine (the module docstring's stated reason). |
 | `model_store.py` | add a Nemo model pin (`sha256 a5c435f2…`, size `741,548,352`, revision `1c8deae…`) + `nemo_model_path()`/`ensure_nemo_model()` | acquisition is one module (ADR 0017); reuse `_ensure`/`verify` (`model_store.py:702`/`:611`). |
 | `pipeline.py` | `_build_nemo_speech` + register in `_TRANSCRIBER_BUILDERS`; **generalise `_streaming_chunk_seconds`** (`:430`); dispatch artifact presence for the engine | the factory is the one place concrete engines are chosen (ADR 0010). `_streaming_chunk_seconds` currently hardcodes `WhistleConfig` (`:440`) — it is the one existing coupling. |
-| `doctor.py` | `check_nemo_engine`, `check_nemo_model`, `check_nemo_device` (Vulkan/CPU), gated by the selected engine; register the config validator (`doctor.py:127`) | the epic requires `doctor` to report the library, the model, and the Vulkan/GPU state; the whisper checks (`:742`) are the template. |
+| `doctor.py` | `check_nemo_engine`, `check_nemo_model`, `check_nemo_device` (Vulkan/CPU), gated by the selected engine; register the config validator (`doctor.py:1400`) | the epic requires `doctor` to report the library, the model, and the Vulkan/GPU state; the whisper checks (`:742`) are the template. |
 | `setup_command.py` / `cli.py` | a `nemo_speech` setup backend; `plan_setup`/`run_setup` acquire the archive + GGUF; CLI help | `setup` is the only network command (ADR 0017/0018) and never installs or runs `sudo`. |
 | `docs/` | README engine list, a config reference, an engine doc; **present ADR 0022 in full for sign-off** | the epic's acceptance criteria. |
 
@@ -520,12 +526,23 @@ integration tickets created from this report.
 | # | slug | scope (one line) | files | deps | size |
 |---|---|---|---|---|---|
 | 57 | `nemo-speech-engine-and-model-acquisition` | Pin, acquire and verify the prebuilt NeMo-Speech.cpp archive (sha256 + size) and the q8_0 GGUF (sha256/size/revision); expose them to `setup` and `doctor`. | `identifiers.py`, `nemo_engine.py` (new), `model_store.py`, `setup_command.py`, `cli.py`, tests | 56 | **M** |
-| 58 | `nemo-speech-batch-adapter` | `[engine.nemo_speech]` config + `NemoSpeechTranscriber` behind a `NemoSpeechLibrary` ctypes Protocol: `ensure_model`/`load`/`transcribe` (offline `recognize_f32`)/`close`. `supports_streaming = False` for now (usable batch-only). | `transcribers/nemo_speech_config.py` (new), `transcribers/nemo_speech.py` (new), `tests/test_nemo_speech.py` (new) | 57 | **M** |
+| 58 | `nemo-speech-batch-adapter` | Add `NEMO_SPEECH_ENGINE` to `KNOWN_ENGINES` so the engine is **selectable by name**; `[engine.nemo_speech]` config + `NemoSpeechTranscriber` behind a `NemoSpeechLibrary` ctypes Protocol: `ensure_model`/`load`/`transcribe` (offline `recognize_f32`)/`close`. `supports_streaming = False` for now (usable batch-only). | `config.py`, `transcribers/nemo_speech_config.py` (new), `transcribers/nemo_speech.py` (new), `tests/test_nemo_speech.py` (new) | 57 | **M** |
 | 59 | `nemo-speech-pure-streaming` | The append-only commit mechanism: `streaming.drive_append_only` + `AppendOnlyDecoder` + the string word-boundary rule; `NemoSpeechTranscriber.stream`; flip `supports_streaming = True`; word-boundary/pending/exactly-once tests. | `streaming.py` (additive), `transcribers/nemo_speech.py`, `tests/test_streaming_append_only.py` (new), `tests/test_nemo_speech_stream.py` (new) | 58 | **M** |
-| 60 | `nemo-speech-pipeline-and-doctor` | Register the builder; generalise `_streaming_chunk_seconds`; dispatch artifact-presence for the engine; `doctor` checks (library, model, Vulkan/CPU device); end-to-end wiring test. | `pipeline.py`, `doctor.py`, tests | 57, 59 | **M** |
-| 61 | `nemo-speech-docs-and-adr-signoff` | README/config/engine docs; document the Hungarian and CPU/Vulkan limits; **present ADR 0022 in full for user sign-off** before any merge that carries it. | `docs/`, `docs/project/README.md`, ADR 0022 status | 60 | **S** |
+| 60 | `nemo-speech-pipeline-wiring` | The composition root only: register `_build_nemo_speech` in `_TRANSCRIBER_BUILDERS`; **generalise `_streaming_chunk_seconds`** so it is not Whistle-hardcoded; dispatch artifact-presence for the engine; end-to-end wiring test. | `pipeline.py`, tests | 57, 59 | **M** |
+| 61 | `nemo-speech-doctor` | `doctor` only: `check_nemo_engine`, `check_nemo_model`, `check_nemo_device` (Vulkan/CPU), gated by the selected engine; register the config validator. | `doctor.py`, tests | 57, 58 | **S** |
+| 62 | `nemo-speech-docs` | README/config/engine docs and the documented limits (Hungarian published-FLEURS only; CPU/Vulkan). | `docs/` | 60, 61 | **S** |
 
 Notes:
+- **`config.py` is ticket 58's.** `config.py:80` (`KNOWN_ENGINES`) gates engine selection
+  (`if engine_value not in KNOWN_ENGINES`, `config.py:399`), so `transcriber.engine = "nemo_speech"`
+  is not a valid config until the name is in that tuple. `identifiers.py` (ticket 57) defines the
+  constant first; ticket 58 consumes it in `KNOWN_ENGINES` and in the new `[engine.nemo_speech]`
+  block. Runtime selection through `build_transcriber` (`pipeline.py:256`) still needs ticket 60 to
+  register `_build_nemo_speech` in `_TRANSCRIBER_BUILDERS` (`pipeline.py:250`), so the name is
+  *accepted at 58* and *startable at 60*. **Ticket 59 and ticket 60 must ship together** for the
+  correct feed granularity — 59 flips `supports_streaming = True` while 60 generalises
+  `_streaming_chunk_seconds`, and until 60 lands an un-generalised path would silently run the Nemo
+  stream at Whistle's 1.0 s default instead of 0.16 s.
 - **No ticket modifies `interfaces.py`, `streaming_session.py`, `service.py`, `socket_proto.py`, or
   `incremental_typing.py`** — that is the design's claim of a clean bypass, asserted by ticket 60's
   wiring test rather than trusted.
@@ -553,7 +570,7 @@ re-decode.** Consistent with ADR 0022's falsifier, it would be falsified by any 
    `IncrementalTypingError` would fire — which is the correct, loud failure.
 3. **Carrying the interim requires a growing buffer.** It does not: the adapter stores only the
    cumulative committed **string** (the same O(utterance) string the windowed path already keeps at
-   `streaming.py:167`) and pushes each chunk straight to the engine. The caches that grow live inside
+   `streaming.py:160`) and pushes each chunk straight to the engine. The caches that grow live inside
    the engine, not ges2t.
 4. **The engine call cannot be made under the service lock.** It is not made under it: the C ABI runs
    on `ges2t-streaming-worker` (`streaming_session.py:265`), and the service lock is never held across
@@ -606,7 +623,7 @@ grep -in "callback\|blocking\|poll" $E/include/nemo_speech/asr.h   # no callback
 sed -n '200,260p' $E/include/nemo_speech/asr.h # streaming API: push / force_endpoint / finish / next
 ```
 
-The streaming section (header lines 214–239) is quoted in §4.1; the header is the installed v1 binary
+The streaming section (header lines 213–241) is quoted in §4.1; the header is the installed v1 binary
 contract (append-only structs starting with `size`).
 
 ### 10.2 Re-derive the append-only property from the **committed** traces (repo alone)
@@ -705,6 +722,6 @@ falsifier in ADR 0022 did not fire.
 3. Wire it with the new engine identifier, a `[engine.nemo_speech]` block, `nemo_engine.py` +
    `model_store` pins, `doctor` checks, and `setup nemo_speech` — and generalise the one hard coupling,
    `_streaming_chunk_seconds` (`pipeline.py:430`).
-4. Do it as tickets 57–61 (§8), with ticket 59 as the only one that can invalidate ADR 0022.
+4. Do it as tickets 57–62 (§8), with ticket 59 as the only one that can invalidate ADR 0022.
 5. Present **ADR 0022 in full for the user's sign-off** before the merge that carries it. **ADR 0011
    stays untouched.**

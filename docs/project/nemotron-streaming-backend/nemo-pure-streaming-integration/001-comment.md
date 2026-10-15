@@ -22,7 +22,7 @@ interim, commits the prefix up to the last **string** word boundary and holds th
 only on the final — so the boundary must be string-based). The cumulative `committed` string is fed
 unchanged to the existing `CommittedTyper`, which types exactly once and applies ADR 0012's single
 trailing space at `finish`. No growing buffer (only the committed string, exactly as the windowed path
-already keeps at `streaming.py:167`); no second pass; the windowed `drive` and the Whistle path are
+already keeps at `streaming.py:160`); no second pass; the windowed `drive` and the Whistle path are
 untouched.
 
 ## Why the window can be bypassed cleanly (structural evidence)
@@ -46,10 +46,11 @@ split one hotkey-held utterance).
 | # | slug | scope | files | deps | size |
 |---|---|---|---|---|---|
 | 57 | `nemo-speech-engine-and-model-acquisition` | pin/acquire/verify the prebuilt archive + q8_0 GGUF (sha256+size); `setup`/`doctor` plumbing | `identifiers.py`, `nemo_engine.py` (new), `model_store.py`, `setup_command.py`, `cli.py` | 56 | M |
-| 58 | `nemo-speech-batch-adapter` | `[engine.nemo_speech]` config + `NemoSpeechTranscriber` over a `NemoSpeechLibrary` ctypes Protocol; batch `recognize_f32`; `supports_streaming=False` for now | `transcribers/nemo_speech_config.py` (new), `transcribers/nemo_speech.py` (new), tests | 57 | M |
+| 58 | `nemo-speech-batch-adapter` | add `NEMO_SPEECH_ENGINE` to `KNOWN_ENGINES` (engine selectable by name) + `[engine.nemo_speech]` config + `NemoSpeechTranscriber` over a `NemoSpeechLibrary` ctypes Protocol; batch `recognize_f32`; `supports_streaming=False` for now | `config.py`, `transcribers/nemo_speech_config.py` (new), `transcribers/nemo_speech.py` (new), tests | 57 | M |
 | 59 | `nemo-speech-pure-streaming` | `streaming.drive_append_only` + `AppendOnlyDecoder` + the string word-boundary rule; `NemoSpeechTranscriber.stream`; flip `supports_streaming=True` | `streaming.py` (additive), `nemo_speech.py`, new tests | 58 | M |
-| 60 | `nemo-speech-pipeline-and-doctor` | register the builder; **generalise `_streaming_chunk_seconds`** (`pipeline.py:430`); artifact-presence dispatch; `doctor` checks (library, model, Vulkan/CPU); end-to-end wiring test | `pipeline.py`, `doctor.py`, tests | 57, 59 | M |
-| 61 | `nemo-speech-docs-and-adr-signoff` | README/config/engine docs; document the Hungarian + CPU/Vulkan limits; **present ADR 0022 in full for sign-off** | `docs/` | 60 | S |
+| 60 | `nemo-speech-pipeline-wiring` | composition root only: register `_build_nemo_speech` in `_TRANSCRIBER_BUILDERS`; **generalise `_streaming_chunk_seconds`** (`pipeline.py:430`); artifact-presence dispatch; end-to-end wiring test | `pipeline.py`, tests | 57, 59 | M |
+| 61 | `nemo-speech-doctor` | `doctor` only: `check_nemo_engine`/`check_nemo_model`/`check_nemo_device` (Vulkan/CPU), gated by the selected engine; register the config validator | `doctor.py`, tests | 57, 58 | S |
+| 62 | `nemo-speech-docs` | README/config/engine docs and the documented limits (Hungarian published-FLEURS only; CPU/Vulkan) | `docs/` | 60, 61 | S |
 
 **Ticket 59 is the only one that can invalidate ADR 0022.** If it cannot implement `drive_append_only`
 without a growing buffer or a second pass, it must stop and escalate, not work around it.
@@ -63,7 +64,7 @@ without a growing buffer or a second pass, it must stop and escalate, not work a
 2. **`window_seconds` is meaningless for this engine** (ADR 0022). The `[engine.nemo_speech]` block
    must **warn** if it is set (the generic unknown-key path does this once the block does not declare
    it) rather than silently accept a no-op key.
-3. **ADR 0022 must be presented in full for user sign-off** before the merge that carries it.
-   **ADR 0011 is not amended and not edited.**
+3. **ADR 0022 is accepted; ADR 0011 is not amended and not edited.** The pure-streaming decision is
+   no longer gated on a sign-off — ticket 62 is documentation only.
 4. **Do not relay Hungarian accuracy or CPU/Vulkan parity** — both remain unmeasured / false
    (ticket 55 §1, §6).
