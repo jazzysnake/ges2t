@@ -10,8 +10,9 @@ the abstraction real rather than decorative.
 What it builds
 --------------
 * :func:`build_transcriber` — maps ``config.transcriber.engine`` to a
-  :class:`~ges2t.transcribers.whistle.WhistleTranscriber` or the in-process
-  :class:`~ges2t.transcribers.whisper_cpp.WhisperCppTranscriber` (ADR 0021). The
+  :class:`~ges2t.transcribers.whistle.WhistleTranscriber`, the in-process
+  :class:`~ges2t.transcribers.whisper_cpp.WhisperCppTranscriber` (ADR 0021) or the in-process
+  :class:`~ges2t.transcribers.nemo_speech.NemoSpeechTranscriber` (ADR 0022). The
   ``[engine.<name>]`` block is fetched with ``.get(..., {})``: the generic
   config layer deliberately never synthesises an engine block, so an absent
   ``[engine.whistle]`` is the *normal* case and must mean "all defaults", never a
@@ -60,11 +61,12 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from ges2t import model_store, whisper_engine
+from ges2t import model_store, nemo_engine, whisper_engine
 from ges2t.audio.pw_record import PwRecordAudioSource
 from ges2t.config import Config
 from ges2t.identifiers import (
     CLIPBOARD_BACKEND,
+    NEMO_SPEECH_ENGINE,
     WHISPER_CPP_ENGINE,
     WHISTLE_ENGINE,
     YDOTOOL_BACKEND,
@@ -90,6 +92,8 @@ from ges2t.socket_proto import (
     send_command,
 )
 from ges2t.streaming_session import StreamingDictationSession
+from ges2t.transcribers.nemo_speech import NemoSpeechTranscriber
+from ges2t.transcribers.nemo_speech_config import NemoSpeechConfig
 from ges2t.transcribers.whistle import WhistleTranscriber
 from ges2t.transcribers.whistle_config import WhistleConfig
 from ges2t.transcribers.whisper_cpp import WhisperCppTranscriber
@@ -243,6 +247,26 @@ def _build_whisper_cpp(config: Config) -> Transcriber:
     return WhisperCppTranscriber(whisper_config)
 
 
+def _build_nemo_speech(config: Config) -> Transcriber:
+    """Build the in-process NeMo-Speech.cpp transcriber from ``[engine.nemo_speech]``.
+
+    The block is read with ``.get(..., {})``: the generic layer never synthesises
+    an engine block, so its absence is normal and means all defaults (ADR 0009).
+    The adapter keeps the recognizer resident from :func:`_startup`'s single
+    ``load()`` call -- no per-utterance subprocess or reload (ADR 0021's shape,
+    ADR 0022). The strict *startup validation* of the nemo config (model acquired,
+    engine archive complete) is :func:`_validate_nemo_config`.
+
+    The model override for this engine is the engine block's own ``model`` key
+    (ticket 58's decision: a ``.gguf`` path), not the generic
+    ``transcriber.model_path``; the block's ``model`` is read by the adapter, so it
+    is threaded through :class:`NemoSpeechConfig` and nothing is passed here.
+    """
+    block = config.engine_blocks.get(NEMO_SPEECH_ENGINE, {})
+    nemo_config = NemoSpeechConfig.from_mapping(block).config
+    return NemoSpeechTranscriber(nemo_config)
+
+
 #: The engine identifiers :func:`build_transcriber` can build, mapped to their
 #: builder. The key is matched against ``config.transcriber.engine`` and the
 #: mapping is the factory's single source of truth: an engine absent here gets a
@@ -250,17 +274,18 @@ def _build_whisper_cpp(config: Config) -> Transcriber:
 _TRANSCRIBER_BUILDERS: Mapping[str, Callable[[Config], Transcriber]] = {
     WHISTLE_ENGINE: _build_whistle,
     WHISPER_CPP_ENGINE: _build_whisper_cpp,
+    NEMO_SPEECH_ENGINE: _build_nemo_speech,
 }
 
 
 def build_transcriber(config: Config) -> Transcriber:
     """Choose and construct the configured :class:`~ges2t.interfaces.Transcriber`.
 
-    ``"whistle"`` and ``"whisper_cpp"`` are handled. The engine's own
-    ``[engine.<name>]`` block is selected with ``.get(..., {})``: the generic
-    layer never synthesises an engine block, so its absence is normal and means
-    "all defaults" (ADR 0009). An unhandled engine raises :class:`PipelineError`
-    with the list of engines this build can construct.
+    ``"whistle"``, ``"whisper_cpp"`` and ``"nemo_speech"`` are handled. The
+    engine's own ``[engine.<name>]`` block is selected with ``.get(..., {})``: the
+    generic layer never synthesises an engine block, so its absence is normal and
+    means "all defaults" (ADR 0009). An unhandled engine raises
+    :class:`PipelineError` with the list of engines this build can construct.
     """
     engine = config.transcriber.engine
     builder = _TRANSCRIBER_BUILDERS.get(engine)
@@ -427,17 +452,56 @@ def _shutdown_status_ui(ui: StatusUI) -> None:
             print(f"ges2t: {report.summary()}", file=sys.stderr)
 
 
-def _streaming_chunk_seconds(config: Config) -> float:
-    """Return the streaming feed granularity from ``[engine.whistle]`` (ADR 0011).
+def _whistle_chunk_seconds(config: Config) -> float:
+    """``chunk_seconds`` from ``[engine.whistle]`` (ADR 0011)."""
+    block = config.engine_blocks.get(WHISTLE_ENGINE, {})
+    return WhistleConfig.from_mapping(block).config.chunk_seconds
 
-    The block is read exactly as :func:`_build_whistle` reads it: ``.get(...,
-    {})``, because an absent block is the normal case and means all defaults
-    (ADR 0009). This is the **chunk** size only; the commit window is the
-    transcriber adapter's property (:class:`WhistleConfig`, applied inside
-    ``WhistleTranscriber.stream``), so it is deliberately not returned here.
+
+def _nemo_speech_chunk_seconds(config: Config) -> float:
+    """``chunk_seconds`` from ``[engine.nemo_speech]``, default 0.16 (ADR 0022)."""
+    block = config.engine_blocks.get(NEMO_SPEECH_ENGINE, {})
+    return NemoSpeechConfig.from_mapping(block).config.chunk_seconds
+
+
+def _default_chunk_seconds(config: Config) -> float:
+    """``chunk_seconds`` for an engine that declares no streaming chunk of its own.
+
+    Only reachable for a **batch-only** engine (whisper.cpp), whose feed granularity
+    the batch path never consumes. It reads the selected engine's block through
+    :class:`WhistleConfig` -- byte-for-byte the pre-generalisation behaviour -- and
+    the value is discarded, so no engine silently runs another engine's chunk.
     """
     block = config.engine_blocks.get(config.transcriber.engine, {})
     return WhistleConfig.from_mapping(block).config.chunk_seconds
+
+
+#: Per-engine streaming feed-granularity resolvers, keyed by the engine name the
+#: factory dispatches on. The commit **window** stays the adapter's property;
+#: only the feed granularity is resolved here (ADR 0011, ADR 0022).
+_STREAMING_CHUNK_SECONDS: Mapping[str, Callable[[Config], float]] = {
+    WHISTLE_ENGINE: _whistle_chunk_seconds,
+    NEMO_SPEECH_ENGINE: _nemo_speech_chunk_seconds,
+}
+
+
+def _streaming_chunk_seconds(config: Config) -> float:
+    """Return the streaming feed granularity of the **selected** engine (ADR 0011, ADR 0022).
+
+    It is not Whistle-hardcoded: each streaming engine resolves its own block
+    (``[engine.whistle]`` or ``[engine.nemo_speech]``), and an engine that does not
+    stream falls back to :func:`_default_chunk_seconds` (the pre-generalisation
+    behaviour, whose value the batch path discards). The block is read exactly as
+    its builder reads it -- ``.get(..., {})``, because an absent block is the
+    normal case and means all defaults (ADR 0009). This is the **chunk** size only;
+    the commit window is the transcriber adapter's property
+    (:class:`WhistleConfig` on the Whistle path, no window at all on the
+    NeMo-Speech path, ADR 0022), so it is deliberately not returned here.
+    """
+    resolver = _STREAMING_CHUNK_SECONDS.get(
+        config.transcriber.engine, _default_chunk_seconds
+    )
+    return resolver(config)
 
 
 def _streaming_is_selected(config: Config, transcriber: Transcriber) -> bool:
@@ -585,6 +649,30 @@ def _validate_whisper_config(config: Config) -> None:
             hint=(
                 "run 'ges2t setup whisper.cpp <model>' to build the engine and "
                 "download the model (the only ges2t command that uses the network)"
+            ),
+        )
+
+
+def _validate_nemo_config(config: Config) -> None:
+    """Refuse a nemo_speech config whose artifacts are not present (ticket 60).
+
+    With ``transcriber.engine = "nemo_speech"`` the service refuses to start when
+    the pinned GGUF or the extracted engine archive is missing or incomplete,
+    mirroring :func:`_validate_whisper_config`: the message names the offending
+    artifact and the fix, and it runs **before** the adapter is built, so the user
+    sees the problem even though ``build_transcriber`` would only fail later. The
+    nemo engine **does** stream, so unlike whisper.cpp there is no
+    streaming/enabled contradiction to refuse here (ADR 0022).
+    """
+    if config.transcriber.engine != NEMO_SPEECH_ENGINE:
+        return
+    problems = _nemo_missing_artifacts(config)
+    if problems:
+        raise PipelineError(
+            "; ".join(problems),
+            hint=(
+                "run 'ges2t setup nemo_speech' to acquire the pinned engine "
+                "archive and model (the only ges2t command that uses the network)"
             ),
         )
 
@@ -761,6 +849,36 @@ def _whisper_missing_artifacts(config: Config) -> list[str]:
     return problems
 
 
+def _nemo_missing_artifacts(config: Config) -> list[str]:
+    """Return one problem per nemo_speech artifact missing or the wrong size.
+
+    The model is the ``[engine.nemo_speech] model`` path override when the block set
+    one (caller-owned, exactly like whisper.cpp's override), otherwise the managed
+    pinned GGUF checked against its pinned size. The engine check is
+    :func:`ges2t.nemo_engine.verify_engine`, the engine archive's own completeness
+    test (a readable manifest whose pin matches and every named file present), so a
+    half-extracted tree is reported rather than discovered by a crash in
+    ``ctypes.CDLL``.
+    """
+    problems: list[str] = []
+    nemo_config = NemoSpeechConfig.from_mapping(
+        config.engine_blocks.get(NEMO_SPEECH_ENGINE, {})
+    ).config
+    if nemo_config.model is None:
+        model_path = model_store.nemo_model_path()
+        if not _present(model_path, expected_size=model_store.NEMO_MODEL_PIN.size):
+            problems.append(
+                f"the nemo_speech model is not acquired or is incomplete at {model_path}"
+            )
+    engine_directory = nemo_engine.engine_dir()
+    if nemo_engine.verify_engine(engine_directory) is None:
+        problems.append(
+            f"the nemo_speech engine library is not installed at {engine_directory} "
+            f"({nemo_engine.ENTRY_LIBRARY_NAME} is missing or incomplete)"
+        )
+    return problems
+
+
 def _require_artifacts(config: Config) -> None:
     """Raise :class:`PipelineError` unless both pinned artifacts are already present."""
     problems = _missing_artifacts(config)
@@ -791,6 +909,7 @@ def _startup(config: Config, status_ui: StatusUI) -> Service:
     """
     _validate_injection_backend(config)
     _validate_whisper_config(config)
+    _validate_nemo_config(config)
     _require_artifacts(config)
     transcriber = build_transcriber(config)
     _announce_batch_only_engine(config, transcriber)

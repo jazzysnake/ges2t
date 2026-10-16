@@ -725,3 +725,27 @@ falsifier in ADR 0022 did not fire.
 4. Do it as tickets 57–62 (§8), with ticket 59 as the only one that can invalidate ADR 0022.
 5. **ADR 0022 is accepted (user sign-off 2026-10-14)** — no further sign-off is required; ticket 62
    is **documentation only**. **ADR 0011 stays untouched.**
+
+---
+
+## 12. Addendum — R1 resolved (ticket 60, the wiring ticket)
+
+**The divergence this report left open is now decided, from a measurement.** Ticket 59's review (R1)
+recorded that the offline decode (`recognize_f32`, library-default punctuation **off**) returns
+lowercased/unpunctuated text while `stream()` (punctuation **on**) returns capitalised/punctuated text
+for the **same audio**. Ticket 60 measured both paths on the ticket-55 reference clips (same audio,
+0.16 s feed, ticket 32's `word_diff`) through the real adapter (`measure_r1.py`).
+
+| device | Σ WER offline | Σ WER offline+punc | Σ WER stream→final | mean Δ(stream−offline) |
+|---|---:|---:|---:|---:|
+| Vulkan (the machine default) | 0.7385 | 0.7385 | **0.7385** | **+0.0000** |
+| CPU | 0.7251 | 0.7251 | 0.7541 | +0.0073 |
+
+On the default device the two decodes are **WER-identical** on all four clips; on CPU the difference is
+bidirectional and tiny (stream better on two clips, worse on one). **Aligning** the punctuation flag
+leaves the word-level divergence untouched, so alignment cannot make the two paths agree — only one
+decode path can. Ticket 60 therefore **unified** them: `NemoSpeechTranscriber.transcribe()` now drains
+`stream()` and returns its end-of-stream final, and the offline `recognize_f32` path was removed. The
+batch and streaming sessions now share a single text-producing path; `transcribe()` returns
+capitalised/punctuated text. The numbers and the raw per-clip transcripts are in
+`../../nemotron-streaming-backend/nemo-speech-pipeline-wiring/001-comment.md`.

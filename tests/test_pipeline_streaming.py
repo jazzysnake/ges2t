@@ -24,12 +24,13 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 from typing import TypeVar
 
 import pytest
 
 from ges2t import pipeline
-from ges2t.config import Config, InjectionConfig, StreamingConfig, UIConfig
+from ges2t.config import Config, InjectionConfig, StreamingConfig, TranscriberConfig, UIConfig
 from ges2t.injectors.keymap import KeyEvent, KeySequence
 from ges2t.injectors.ydotool import YdotoolInjector
 from ges2t.interfaces import (
@@ -38,9 +39,17 @@ from ges2t.interfaces import (
     TranscriptionResult,
     TranscriptionSegment,
 )
+from ges2t import nemo_engine, model_store
 from ges2t.pipeline import BatchDictationSession
 from ges2t.service import Service, ServiceState
 from ges2t.streaming_session import StreamingDictationSession
+from ges2t.transcribers.nemo_speech import (
+    ENTRY_LIBRARY_NAME,
+    NemoSpeechTranscriber,
+)
+from ges2t.transcribers.nemo_speech_config import (
+    DEFAULT_CHUNK_SECONDS as NEMO_DEFAULT_CHUNK_SECONDS,
+)
 from ges2t.transcribers.whistle import WhistleTranscriber
 from ges2t.transcribers.whistle_config import (
     DEFAULT_CHUNK_SECONDS,
@@ -48,6 +57,7 @@ from ges2t.transcribers.whistle_config import (
 )
 from ges2t.ui.status import NullStatusUI
 from tests.fakes import FakeAudioSource, FakeInjector, FakeStatusUI, FakeTranscriber
+from tests.test_nemo_speech import FakeNemoSpeechLibrary
 
 SAMPLE_RATE = 16000
 
@@ -255,6 +265,193 @@ def test_defaults_come_from_whistle_config_when_the_block_is_absent() -> None:
     assert session._chunk_seconds == DEFAULT_CHUNK_SECONDS
 
 
+# -- the second streaming engine: nemo_speech (tickets 58-60, ADR 0022) --------
+
+
+def test_nemo_speech_is_dispatched_and_its_default_chunk_is_pinned() -> None:
+    # The composition root builds the nemo_speech transcriber from the config
+    # (ticket 60) and the feed granularity is that engine's own -- 0.16 s, not
+    # Whistle's 1.0 s (the one coupling this ticket generalised).
+    config = Config(transcriber=TranscriberConfig(engine="nemo_speech"))
+
+    adapter = pipeline.build_transcriber(config)
+    assert isinstance(adapter, NemoSpeechTranscriber)
+    assert adapter.name == "nemo_speech"
+    assert adapter.supports_streaming is True
+    assert adapter.config.chunk_seconds == NEMO_DEFAULT_CHUNK_SECONDS
+
+    session = pipeline._session_factory(config, adapter, FakeAudioSource())()
+    assert isinstance(session, StreamingDictationSession)
+    assert session._chunk_seconds == NEMO_DEFAULT_CHUNK_SECONDS
+
+
+def test_the_nemo_chunk_size_comes_from_its_own_block_not_the_whistle_one() -> None:
+    # A ``[engine.whistle]`` chunk must not leak into a nemo_speech run: the old
+    # hardcoded resolver read the *selected* engine's block through WhistleConfig,
+    # so this pins the generalisation. The override is read from the nemo block.
+    config = Config(
+        transcriber=TranscriberConfig(engine="nemo_speech"),
+        engine_blocks={
+            "whistle": {"chunk_seconds": 0.25},
+            "nemo_speech": {"chunk_seconds": 0.5},
+        },
+    )
+
+    assert pipeline._streaming_chunk_seconds(config) == 0.5
+    session = pipeline._session_factory(
+        config, pipeline.build_transcriber(config), FakeAudioSource()
+    )()
+    assert isinstance(session, StreamingDictationSession)
+    assert session._chunk_seconds == 0.5
+
+
+def test_nemo_chunk_ignores_a_whistle_block_when_its_own_is_absent() -> None:
+    # The sharp edge of the old coupling: an absent nemo block must still yield
+    # the nemo default, never the value sitting in ``[engine.whistle]``.
+    config = Config(
+        transcriber=TranscriberConfig(engine="nemo_speech"),
+        engine_blocks={"whistle": {"chunk_seconds": 0.25}},
+    )
+
+    adapter = pipeline.build_transcriber(config)
+    assert isinstance(adapter, NemoSpeechTranscriber)
+    session = pipeline._session_factory(config, adapter, FakeAudioSource())()
+    assert isinstance(session, StreamingDictationSession)
+    assert session._chunk_seconds == NEMO_DEFAULT_CHUNK_SECONDS
+
+
+# -- nemo artifact presence is dispatched (ticket 60; whisper.cpp is the model) -
+
+
+def _nemo_config() -> Config:
+    return Config(transcriber=TranscriberConfig(engine="nemo_speech"))
+
+
+def _fake_nemo_pin(size: int) -> model_store.ArtifactPin:
+    return model_store.ArtifactPin(
+        name="model.gguf", url="", sha256="", size=size
+    )
+
+
+def test_the_generic_missing_artifacts_check_is_whistle_specific_for_nemo() -> None:
+    # Mirror of the whisper.cpp guard: the nemo artifacts have their own check
+    # (_nemo_missing_artifacts), so the Whistle path never assumes a nemo artifact.
+    assert pipeline._missing_artifacts(_nemo_config()) == []  # noqa: SLF001
+
+
+def test_nemo_missing_artifacts_reports_a_missing_model_and_engine(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        model_store, "nemo_model_path", lambda: tmp_path / "missing.gguf"
+    )
+    monkeypatch.setattr(
+        nemo_engine,
+        "engine_dir",
+        lambda version=nemo_engine.NEMO_SPEECH_VERSION: tmp_path / "engine",
+    )
+
+    problems = pipeline._nemo_missing_artifacts(_nemo_config())  # noqa: SLF001
+
+    assert len(problems) == 2
+    assert "model" in problems[0] and "missing.gguf" in problems[0]
+    assert "engine library" in problems[1]
+
+
+def test_nemo_missing_artifacts_accepts_a_present_managed_model_and_engine(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    model = tmp_path / "managed.gguf"
+    model.write_bytes(b"x" * 4)
+    monkeypatch.setattr(model_store, "nemo_model_path", lambda: model)
+    monkeypatch.setattr(model_store, "NEMO_MODEL_PIN", _fake_nemo_pin(4))
+    monkeypatch.setattr(
+        nemo_engine, "verify_engine", lambda directory, *, pin=None: object()
+    )
+
+    assert pipeline._nemo_missing_artifacts(_nemo_config()) == []  # noqa: SLF001
+
+
+def test_nemo_missing_artifacts_detects_a_wrong_sized_managed_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    model = tmp_path / "managed.gguf"
+    model.write_bytes(b"too small")
+    monkeypatch.setattr(model_store, "nemo_model_path", lambda: model)
+    monkeypatch.setattr(model_store, "NEMO_MODEL_PIN", _fake_nemo_pin(999))
+    monkeypatch.setattr(
+        nemo_engine, "verify_engine", lambda directory, *, pin=None: object()
+    )
+
+    problems = pipeline._nemo_missing_artifacts(_nemo_config())  # noqa: SLF001
+
+    assert len(problems) == 1
+    assert "model" in problems[0]
+
+
+def test_nemo_missing_artifacts_skips_the_pin_for_a_caller_supplied_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The block's ``model`` key is the documented override; a caller-owned file is
+    # never gated on our pin (it has no pin of ours), exactly like whisper.cpp.
+    model = tmp_path / "custom.gguf"
+    model.write_bytes(b"caller-supplied")
+    config = Config(
+        transcriber=TranscriberConfig(engine="nemo_speech"),
+        engine_blocks={"nemo_speech": {"model": str(model)}},
+    )
+    monkeypatch.setattr(
+        nemo_engine, "verify_engine", lambda directory, *, pin=None: object()
+    )
+
+    assert pipeline._nemo_missing_artifacts(config) == []  # noqa: SLF001
+
+
+def test_validate_nemo_config_refuses_missing_artifacts_with_the_setup_hint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        model_store, "nemo_model_path", lambda: tmp_path / "missing.gguf"
+    )
+    monkeypatch.setattr(
+        nemo_engine,
+        "engine_dir",
+        lambda version=nemo_engine.NEMO_SPEECH_VERSION: tmp_path / "engine",
+    )
+
+    with pytest.raises(pipeline.PipelineError) as excinfo:
+        pipeline._validate_nemo_config(_nemo_config())  # noqa: SLF001
+
+    assert "nemo_speech" in str(excinfo.value)
+    hint = excinfo.value.hint or ""
+    assert "ges2t setup nemo_speech" in hint
+
+
+def test_validate_nemo_config_is_a_no_op_for_another_engine() -> None:
+    # The whistle default is not a nemo_speech run, so no artifact is consulted.
+    pipeline._validate_nemo_config(Config())  # noqa: SLF001  # does not raise
+
+
+def test_run_service_reports_missing_nemo_artifacts_and_returns_nonzero(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The user-facing "reported by the existing path" half: startup prints the
+    # artifact problem and the fix and returns a failure code instead of crashing.
+    monkeypatch.setattr(
+        pipeline,
+        "_nemo_missing_artifacts",
+        lambda config: ["the nemo_speech model is not acquired"],
+    )
+    monkeypatch.setattr(pipeline, "build_status_ui", lambda config: NullStatusUI())
+
+    result = pipeline.run_service(_nemo_config())
+
+    assert result == 1
+    stderr = capsys.readouterr().err
+    assert "nemo_speech model is not acquired" in stderr
+    assert "ges2t setup nemo_speech" in stderr
+
+
 # -- the wired path: committed text is typed, pending is display-only --------
 
 
@@ -436,6 +633,109 @@ def test_a_streaming_typing_failure_moves_the_service_to_error() -> None:
 
         assert status_ui.errors
         assert "injection failed" in status_ui.errors[-1]
+    finally:
+        service.shutdown()
+
+
+# -- the nemo_speech engine wired end to end (ticket 60) -----------------------
+
+
+def _write_nemo_model(tmp_path: Path) -> Path:
+    """A stand-in GGUF named by the ``model`` key; the fake library never reads it."""
+    model = tmp_path / "nemo.gguf"
+    model.write_bytes(b"not a real gguf")
+    return model
+
+
+def _nemo_end_to_end(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    interims: Sequence[str],
+    final_text: str,
+) -> tuple[Config, NemoSpeechTranscriber, FakeNemoSpeechLibrary]:
+    """Build the nemo transcriber through the composition root, over a fake library.
+
+    The engine is selected from ``transcriber.engine`` (the wiring under test); the
+    native library is replaced at the adapter's own ``_open_library`` seam and the
+    device probe is pinned, so nothing touches the machine. The model is a stand-in
+    GGUF named by the block's ``model`` key (the documented override), so the engine
+    block, the builder and the model path are all exercised by real code.
+    """
+    engine_directory = tmp_path / "engine"
+    (engine_directory / "lib").mkdir(parents=True)
+    (engine_directory / "lib" / ENTRY_LIBRARY_NAME).write_bytes(b"fake")
+    monkeypatch.setattr(
+        nemo_engine,
+        "engine_dir",
+        lambda version=nemo_engine.NEMO_SPEECH_VERSION: engine_directory,
+    )
+    monkeypatch.setattr(
+        nemo_engine,
+        "inspect_device",
+        lambda system=None: nemo_engine.NemoDevice(vulkan_library=None),
+    )
+    fake = FakeNemoSpeechLibrary(
+        interims=interims, final_text=final_text, stream_language="en"
+    )
+    monkeypatch.setattr(
+        NemoSpeechTranscriber, "_open_library", lambda self, library_path: fake
+    )
+
+    config = Config(
+        transcriber=TranscriberConfig(engine="nemo_speech"),
+        engine_blocks={
+            "nemo_speech": {
+                "chunk_seconds": 1.0,
+                "model": str(_write_nemo_model(tmp_path)),
+            }
+        },
+    )
+    transcriber = pipeline.build_transcriber(config)
+    assert isinstance(transcriber, NemoSpeechTranscriber)
+    transcriber.load()
+    return config, transcriber, fake
+
+
+def test_end_to_end_nemo_streaming_types_the_committed_deltas_and_the_final(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The whole pipeline for the second streaming engine: the engine is selected
+    # from ``transcriber.engine``, its audio is fed through the C-ABI streaming
+    # seam, and the committed-delta path (tickets 32-34) types the completed-word
+    # prefix mid-utterance and the single trailing space exactly once at the end.
+    final_text = "Good morning. Last night storm"
+    config, transcriber, fake = _nemo_end_to_end(
+        monkeypatch, tmp_path, interims=["Good morning"], final_text=final_text
+    )
+    audio = FakeAudioSource(buffers=[_buffer(0.5)])
+    injector = FakeInjector()
+    status_ui = FakeStatusUI()
+    service = pipeline._build_service(config, transcriber, audio, injector, status_ui)
+    try:
+        assert service.handle("toggle").state is ServiceState.RECORDING
+        _wait_for(
+            lambda: bool(status_ui.partials), description="a forwarded partial"
+        )
+        assert service.handle("toggle").state is ServiceState.TRANSCRIBING
+        _wait_for(
+            lambda: service.state is ServiceState.IDLE,
+            description="idle after injection",
+        )
+
+        # The engine ran on its streaming API: one stream, one finish, audio pushed.
+        assert len(fake.streams_opened) == 1
+        assert fake.pushed
+        assert fake.streams_finished == fake.streams_opened
+        assert fake.created and fake.created[0][1] is False  # CPU, never the real GPU
+
+        # The committed-delta path is intact: only committed text reached the
+        # injector, the batch injection never fired, and the partial was the
+        # display-only committed + pending ("Good" + " morning").
+        assert injector.injected == []
+        assert "".join(injector.typed) == final_text + " "
+        assert injector.typed[0] == "Good"  # typed mid-utterance from the partial
+        assert status_ui.partials[-1].display == "Good morning"
     finally:
         service.shutdown()
 
