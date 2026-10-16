@@ -79,6 +79,7 @@ def _loaded(
     final_text: str = "",
     language: str | None = None,
     mid_stream_final_at: int | None = None,
+    suppress_final: bool = False,
     chunk_seconds: float = 1.0,
 ) -> tuple[NemoSpeechTranscriber, FakeNemoSpeechLibrary]:
     """Load a transcriber over a stand-in model and a scripted streaming fake."""
@@ -87,6 +88,7 @@ def _loaded(
         final_text=final_text,
         stream_language=language,
         mid_stream_final_at=mid_stream_final_at,
+        suppress_final=suppress_final,
     )
     transcriber = NemoSpeechTranscriber(
         NemoSpeechConfig(chunk_seconds=chunk_seconds),
@@ -324,6 +326,18 @@ def test_a_mid_stream_final_is_rejected(tmp_path: Path) -> None:
         list(transcriber.stream([_seconds(2.0)]))
 
 
+def test_a_finish_without_an_end_of_stream_final_is_rejected(tmp_path: Path) -> None:
+    # The ABI guarantees the final after finish; a stream that ends without one is
+    # a broken contract, so the decoder fails loudly instead of promoting the last
+    # interim (which would inject an unconfirmed partial).
+    transcriber, _ = _loaded(
+        tmp_path, interims=("a",), final_text="a b", suppress_final=True
+    )
+
+    with pytest.raises(NemoSpeechDecodeError, match="end-of-stream final"):
+        list(transcriber.stream([_seconds(1.0)]))
+
+
 # --- the real seam (skipped cleanly when the scratch tree is absent) -----------
 
 _SCRATCH = (
@@ -406,6 +420,10 @@ def test_real_streaming_engine_appends_without_a_window() -> None:
             f"expected the reference word {_REAL_SPEECH_WORD!r}; got {final.text!r}"
         )
         # The committed sequence is append-only and reaches the final transcript.
+        # This is where the `enable_automatic_punctuation` request option is
+        # pinned: with it off the engine lowercases/strips the final while the
+        # interims stay capitalised, so the final does not extend them and this
+        # loop fails (measured; report §4.1's harness sets the flag).
         previous = ""
         for segment in segments:
             assert segment.live.committed.startswith(previous)

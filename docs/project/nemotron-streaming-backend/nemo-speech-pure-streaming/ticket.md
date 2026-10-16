@@ -1,7 +1,7 @@
 # Nemotron pure-streaming integration (append-only, no window)
 
 - **Priority:** P1
-- **Status:** in progress
+- **Status:** in review
 - **Complexity:** M
 - **Epic:** ../epic.md
 
@@ -54,28 +54,28 @@ thread** — there is **no callback**.
 
 ## Definition of done
 
-- [ ] `src/ges2t/streaming.py` gains the **additive** `AppendOnlyDecoder` Protocol and
+- [x] `src/ges2t/streaming.py` gains the **additive** `AppendOnlyDecoder` Protocol and
       `drive_append_only`: **no window flush**, `finish()` called **exactly once** at end of input, and
       it yields the committed-delta sequence the session already consumes. `drive` and
       `StreamingDecoder` keep their signatures and behaviour.
-- [ ] `_NemoSpeechDecoder` in `transcribers/nemo_speech.py` drives the C ABI
+- [x] `_NemoSpeechDecoder` in `transcribers/nemo_speech.py` drives the C ABI
       (`stream_push_f32` → drain `stream_next` → `stream_finish`) and returns `StreamingPass` values.
-- [ ] `NemoSpeechTranscriber.stream()` uses `drive_append_only`, and the class reports
+- [x] `NemoSpeechTranscriber.stream()` uses `drive_append_only`, and the class reports
       **`supports_streaming = True`**.
-- [ ] **Commit policy (ADR 0022 §5):** commit only the **completed-word prefix** of the interim and hold
+- [x] **Commit policy (ADR 0022 §5):** commit only the **completed-word prefix** of the interim and hold
       the trailing **partial token pending** — it is never injected. Committed text is **append-only and
       never revised**; only committed text is injected; the **typed watermark** and the **single
       trailing space** come from the existing `CommittedTyper` path (tickets 32–34), unchanged.
-- [ ] **The boundary rule is string-based**, because interims carry **no word timestamps** (only the
+- [x] **The boundary rule is string-based**, because interims carry **no word timestamps** (only the
       final does — report §10.3). Do not try to use `word_times` on interims.
-- [ ] Nothing in `streaming_session.py`, `service.py`, `socket_proto.py`, or `incremental_typing.py`
+- [x] Nothing in `streaming_session.py`, `service.py`, `socket_proto.py`, or `incremental_typing.py`
       needs to change; if it does, stop and report — that invalidates the design.
-- [ ] `tests/test_streaming_append_only.py` (new) pins the driver: **no** window flush, exactly one
+- [x] `tests/test_streaming_append_only.py` (new) pins the driver: **no** window flush, exactly one
       final segment, committed cumulative/append-only, and **pending never in the transcript**.
       `tests/test_nemo_speech_stream.py` (new) drives the adapter over a **fake `NemoSpeechLibrary`**.
-- [ ] `tests/test_whistle_stream.py` (including `test_drive_is_the_windowing_implementation` at `:430`)
+- [x] `tests/test_whistle_stream.py` (including `test_drive_is_the_windowing_implementation` at `:430`)
       still passes — the Whistle path is unchanged.
-- [ ] `uv run pytest` green, `uv run mypy src/ges2t tests` 0 errors; docs link check 0; README row updated.
+- [x] `uv run pytest` green, `uv run mypy src/ges2t tests` 0 errors; docs link check 0; README row updated.
 
 ## Notes
 

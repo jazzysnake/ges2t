@@ -84,6 +84,7 @@ class FakeNemoSpeechLibrary:
         final_text: str = "",
         stream_language: str | None = None,
         mid_stream_final_at: int | None = None,
+        suppress_final: bool = False,
     ) -> None:
         self.transcript = (
             transcript
@@ -101,6 +102,8 @@ class FakeNemoSpeechLibrary:
         #: When set, the interim after this many pushes is delivered with
         #: ``is_final=True`` -- a mid-stream endpoint, which v1 must reject.
         self.mid_stream_final_at = mid_stream_final_at
+        #: When set, ``finish_stream`` enqueues no final -- a broken contract.
+        self.suppress_final = suppress_final
         self.created: list[tuple[Path, bool]] = []
         self.freed: list[int] = []
         self.recognized: list[tuple[int, tuple[float, ...], int]] = []
@@ -182,6 +185,8 @@ class FakeNemoSpeechLibrary:
         if stream not in self._live_streams:
             raise NemoSpeechDecodeError(f"stream {stream} is not live")
         self.streams_finished.append(stream)
+        if self.suppress_final:
+            return
         self._pending[stream].append(
             NemoSpeechStreamResult(
                 transcript=self.final_text,

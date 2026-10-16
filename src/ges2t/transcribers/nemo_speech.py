@@ -615,15 +615,28 @@ class CtypesNemoSpeechLibrary:
     def open_stream(self, handle: int) -> int:
         """Start a stream with ``nemo_speech_asr_streaming_recognize``.
 
-        The request options come from the library's own default factory with only
+        The request options come from the library's own default factory with
         ``interim_results`` forced **on** -- this is the streaming call and the
-        interims are the whole point (ADR 0022). Endpointing is a recognizer
-        property and stays at its default (off), so exactly one ``is_final`` is
-        emitted, after :meth:`finish_stream` (report §5.4).
+        interims are the whole point (ADR 0022) -- and ``enable_automatic_punctuation``
+        forced **on**. The second flag is not cosmetic: with the library default
+        (off) the engine lowercases and strips the punctuation from the *final*
+        while the interims stay capitalised and punctuated, so the final does not
+        extend the last interim and the append-only contract breaks (measured on
+        this machine, CPU + the pinned GGUF: with it off ``final.startswith(last
+        interim)`` is ``False``, with it on ``True``). Ticket 55 measured the
+        append-only property under exactly this flag (its harness sets it), so on
+        is the **measured** configuration, not a substitution.
+
+        ``enable_word_time_offsets`` is left off: the driver never reads word
+        times (report §10.3), and the probe shows it does not affect the text.
+        Endpointing is a recognizer property and stays at its default (off), so
+        exactly one ``is_final`` is emitted after :meth:`finish_stream` (report
+        §5.4).
         """
         options = self._lib.nemo_speech_asr_recognition_options_default()
         options.size = ctypes.sizeof(_NemoRecognitionOptions)
         options.interim_results = True
+        options.enable_automatic_punctuation = True
         options.language_code = None
 
         stream = ctypes.c_void_p()

@@ -100,3 +100,60 @@ $ uv run pytest -q
 $ rm -rf .mypy_cache __pycache__ && uv run mypy src/ges2t tests
 Success: no issues found in 72 source files
 ```
+
+## Real-seam finding — `enable_automatic_punctuation` is required, not cosmetic
+
+Driving the **real** engine (CPU, pinned v0.2.0 GGUF, `clip5.wav`) exposed an engine behaviour the
+report did not record, so I measured it before deciding (read-only probe in `/tmp`, no `src/` change,
+no network/sudo/mic):
+
+```
+last interim: 'He hoped there would be stew for dinner, turnips and carrots and bruised po'
+final       : 'he hoped there would be stew for dinner turnips and carrots and bruised potatoes'
+final.startswith(last interim)? False          # library default: punc OFF
+```
+With `enable_automatic_punctuation = True` (the request flag ticket 55's harness sets):
+
+```
+last interim: 'He hoped there would be stew for dinner, turnips and carrots and bruised po'
+final       : 'He hoped there would be stew for dinner, turnips and carrots and bruised potatoes'
+final.startswith(last interim)? True
+```
+
+So the **library default** (`punc=False`) makes the *final* lowercased and punctuation-stripped while
+the interims stay capitalised — the final then does **not** extend the last interim, and
+`CommittedTyper._extend` would raise `IncrementalTypingError` at `finish`. `enable_automatic_punctuation
+= True` restores the measured, append-only relationship. I set it in `open_stream` and pinned it with
+the real-seam test (mutation G below). `enable_word_time_offsets` does not affect the text and is left
+off (report §10.3: the boundary is string-based). This is the ADR-0022 configuration ticket 55
+measured, not a workaround — and the falsifier did **not** fire: the append-only stream carries into
+the committed path with no growing buffer and no second pass (the re-decode is *inside* the engine,
+report §9.1(3)).
+
+**Orchestrator note:** the batch path (`transcribe()`) still uses the library default (punc off), so it
+returns lowercased, unpunctuated text, while `stream()` returns capitalised, punctuated text. That is a
+real batch/stream divergence; it is out of ticket 59's scope (ticket 58 owns `transcribe()`), so I did
+not touch it. Ticket 60's wiring should decide whether to align them.
+
+## Falsification — every guard broken, watched to fail, reverted; `src/` byte-identical
+
+`sha256sum -c` against the pre-falsification backup after every revert: both `src/` files `OK`
+(`streaming.py a4bbbc27…`, `nemo_speech.py 6cbd1dab…`).
+
+* **A — driver flushes on a window** (`decoder.finish()` mid-loop):
+  `test_finish_is_called_exactly_once_at_the_very_end` → `assert ['push','finish',…] == ['push',…]` **FAILED**.
+* **B — driver injects the pending tail** (`committed=final_text + pending`):
+  `test_pending_never_reaches_the_transcript` → `assert False` (POISON in committed) **FAILED**.
+* **D — skip the word-boundary hold** (`_committed_prefix` returns the whole interim):
+  `test_the_trailing_partial_word_is_held_pending_and_never_committed` and
+  `test_committed_prefix_is_the_last_completed_word` **FAILED** (`'And so my fel' == 'And so my'`).
+* **E — remove the append-only guard**: `test_the_decoder_raises_when_an_interim_revises_earlier_text`
+  → `DID NOT RAISE NemoSpeechAppendOnlyError` **FAILED**.
+* **F — remove the mid-stream-final guard**: `test_a_mid_stream_final_is_rejected`
+  → `DID NOT RAISE NemoSpeechDecodeError` **FAILED**.
+* **G — drop `enable_automatic_punctuation`** (real seam): `test_real_streaming_engine_appends_without_a_window`
+  → `AssertionError: assert False` (final does not extend the last interim) **FAILED**.
+* **H — remove the missing-final guard**: `test_a_finish_without_an_end_of_stream_final_is_rejected`
+  → `DID NOT RAISE NemoSpeechDecodeError` **FAILED**.
+* **I — remove the abandoned-generator `close()` finally**:
+  `test_the_stream_is_closed_when_the_generator_is_abandoned` → `assert [] == [2]` **FAILED**.
