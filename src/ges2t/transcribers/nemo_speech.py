@@ -199,13 +199,14 @@ class NemoSpeechStreamResult:
     """One result the streaming ABI returned (ADR 0019, ADR 0022).
 
     ``is_final`` is the engine's end-of-stream flag (interims carry ``False``);
-    ``audio_processed_s`` is the encoder watermark in seconds; ``language`` is the
-    language the result reports, or ``None`` when it reports none.
+    ``language`` is the language the result reports, or ``None`` when it reports
+    none. The ABI's ``audio_processed`` watermark is deliberately **not** carried:
+    nothing in the commit path reads it (JSONL measurement is ticket 55's job),
+    and a populated field no code reads is dead weight.
     """
 
     transcript: str
     is_final: bool
-    audio_processed_s: float
     language: str | None
 
 
@@ -486,9 +487,6 @@ class CtypesNemoSpeechLibrary:
         lib.nemo_speech_asr_result_is_final.restype = ctypes.c_bool
         lib.nemo_speech_asr_result_is_final.argtypes = [ctypes.c_void_p]
 
-        lib.nemo_speech_asr_result_audio_processed.restype = ctypes.c_float
-        lib.nemo_speech_asr_result_audio_processed.argtypes = [ctypes.c_void_p]
-
     def last_error(self) -> str:
         """Return the library's thread-local last error message, or ``""``."""
         raw = self._lib.nemo_speech_asr_last_error()
@@ -692,9 +690,6 @@ class CtypesNemoSpeechLibrary:
             return NemoSpeechStreamResult(
                 transcript=transcript,
                 is_final=bool(self._lib.nemo_speech_asr_result_is_final(out)),
-                audio_processed_s=float(
-                    self._lib.nemo_speech_asr_result_audio_processed(out)
-                ),
                 language=self._first_language(out),
             )
         finally:

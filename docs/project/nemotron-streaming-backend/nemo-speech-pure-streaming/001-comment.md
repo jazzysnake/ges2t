@@ -157,3 +157,37 @@ not touch it. Ticket 60's wiring should decide whether to align them.
   → `DID NOT RAISE NemoSpeechDecodeError` **FAILED**.
 * **I — remove the abandoned-generator `close()` finally**:
   `test_the_stream_is_closed_when_the_generator_is_abandoned` → `assert [] == [2]` **FAILED**.
+
+## Final cleanup
+
+`NemoSpeechStreamResult` carries only what the commit path reads — `transcript`, `is_final`,
+`language`. The ABI's `nemo_speech_asr_result_audio_processed` watermark is **not** carried or bound:
+nothing reads it, and a populated field no code reads is dead weight (code-quality rule 10). The
+ticket names it only "as needed"; it is not needed.
+
+## Final verify (committed HEAD)
+
+```
+$ uv run pytest -q
+1374 passed, 3 skipped in 8.29s
+
+$ rm -rf .mypy_cache __pycache__ && uv run mypy src/ges2t tests
+Success: no issues found in 72 source files
+
+$ GES2T_NEMO_REAL_SEAM=1 uv run pytest tests/test_nemo_speech.py tests/test_nemo_speech_stream.py -q
+69 passed in 2.44s         # ticket 58 batch real seam + ticket 59 stream real seam
+
+$ docs link check (orchestrator-state.md §10)
+0 broken references
+
+$ git status --short
+(clean)
+```
+
+Guard confirmation:
+
+* `tests/test_whistle_stream.py::test_drive_is_the_windowing_implementation` — 1 passed.
+* `git diff main -- src/ges2t/streaming.py | grep '^-'` → only the `__all__` line (the two new names).
+  `drive`/`StreamingDecoder`/`_drive` bodies are byte-identical.
+* `streaming_session.py`, `service.py`, `socket_proto.py`, `incremental_typing.py`, `pipeline.py` —
+  all `unchanged` vs `main`.

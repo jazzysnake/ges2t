@@ -170,7 +170,6 @@ class FakeNemoSpeechLibrary:
                 NemoSpeechStreamResult(
                     transcript=self.interims[index],
                     is_final=index == self.mid_stream_final_at,
-                    audio_processed_s=float(index + 1) * 0.16,
                     language=self.stream_language,
                 )
             )
@@ -191,7 +190,6 @@ class FakeNemoSpeechLibrary:
             NemoSpeechStreamResult(
                 transcript=self.final_text,
                 is_final=True,
-                audio_processed_s=float(len(self.pushed)) * 0.16,
                 language=self.stream_language,
             )
         )
