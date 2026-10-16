@@ -48,13 +48,19 @@ The structures below mirror ``include/nemo_speech/asr.h`` from the pinned v0.2.0
 ``linux-x86_64-vulkan`` engine archive. Every symbol used is confirmed against
 that header (ticket 58's ``001-comment.md``): ``nemo_speech_asr_create`` /
 ``_destroy`` for the recognizer, ``nemo_speech_asr_recognition_options_default``
-for the request options, ``nemo_speech_asr_recognize_f32`` for the batch decode,
+for the request options, ``nemo_speech_asr_streaming_recognize`` /
+``_stream_push_f32`` / ``_stream_next`` / ``_stream_finish`` / ``_stream_close``
+for the **one** decode path (the cache-aware streaming API),
 ``nemo_speech_asr_result_transcript`` / ``_result_language_count`` /
-``_result_language_code`` / ``_result_destroy`` for the result, and
-``nemo_speech_asr_last_error`` to surface the library's own message on failure.
-Every subsystem struct starts with ``size_t size``, so the versioning contract is
-"set ``size`` to ``sizeof`` what you built"; fields we do not set are left at the
-linker's zero because the corresponding pointer is ``NULL``.
+``_result_language_code`` / ``_result_destroy`` / ``_result_is_final`` for the
+result, and ``nemo_speech_asr_last_error`` to surface the library's own message
+on failure. Every subsystem struct starts with ``size_t size``, so the versioning
+contract is "set ``size`` to ``sizeof`` what you built"; fields we do not set are
+left at the linker's zero because the corresponding pointer is ``NULL``.
+
+The offline ``nemo_speech_asr_recognize_f32`` call is deliberately **not** mirrored:
+after ticket 60's R1 decision the adapter has a single decode path
+(:meth:`NemoSpeechTranscriber.stream`), so binding a second one would be dead code.
 """
 
 from __future__ import annotations
@@ -100,7 +106,6 @@ __all__ = [
     "NemoSpeechLoadError",
     "NemoSpeechNotLoadedError",
     "NemoSpeechStreamResult",
-    "NemoSpeechTranscript",
     "NemoSpeechTranscriber",
 ]
 
@@ -183,18 +188,6 @@ class NemoSpeechAppendOnlyError(NemoSpeechDecodeError):
 
 
 @dataclass(frozen=True)
-class NemoSpeechTranscript:
-    """What one ``nemo_speech_asr_recognize_f32`` call produced: text and language.
-
-    Engine timings are deliberately **not** here: the C ABI exposes none, so there
-    is nothing to carry (the adapter records its own wall time instead).
-    """
-
-    text: str
-    language: str | None
-
-
-@dataclass(frozen=True)
 class NemoSpeechStreamResult:
     """One result the streaming ABI returned (ADR 0019, ADR 0022).
 
@@ -219,9 +212,9 @@ class NemoSpeechLibrary(Protocol):
 
     :class:`CtypesNemoSpeechLibrary` is the real implementation; the test suite
     substitutes a fake at this Protocol. It is deliberately coarse (create one
-    recognizer, decode once, free) so the fake models the same lifecycle the real
-    library has -- an opaque handle, a create that can fail, a decode that can
-    fail, and an explicit free -- not a simplified one.
+    recognizer, open one stream, push/next/finish/close, free) so the fake models
+    the same lifecycle the real library has -- an opaque handle, a create that can
+    fail, a stream call that can fail, and an explicit free -- not a simplified one.
     """
 
     def version(self) -> str:
@@ -239,20 +232,6 @@ class NemoSpeechLibrary(Protocol):
 
     def free_recognizer(self, handle: int) -> None:
         """Release a recognizer previously returned by :meth:`create_recognizer`."""
-        ...
-
-    def recognize(
-        self,
-        handle: int,
-        samples: Sequence[float],
-        *,
-        sample_rate: int,
-    ) -> NemoSpeechTranscript:
-        """Decode one complete utterance of mono float32 samples at ``sample_rate``.
-
-        A non-zero status raises :class:`NemoSpeechDecodeError`; a failure to
-        convert the samples raises :class:`NemoSpeechInputError`.
-        """
         ...
 
     # -- streaming (ADR 0022): one stream per recording, polled on this thread --
@@ -421,16 +400,6 @@ class CtypesNemoSpeechLibrary:
         )
         lib.nemo_speech_asr_recognition_options_default.argtypes = []
 
-        lib.nemo_speech_asr_recognize_f32.restype = ctypes.c_int
-        lib.nemo_speech_asr_recognize_f32.argtypes = [
-            ctypes.c_void_p,
-            ctypes.POINTER(_NemoRecognitionOptions),
-            ctypes.POINTER(ctypes.c_float),
-            ctypes.c_size_t,
-            ctypes.c_int32,
-            ctypes.POINTER(ctypes.c_void_p),
-        ]
-
         lib.nemo_speech_asr_result_transcript.restype = ctypes.c_char_p
         lib.nemo_speech_asr_result_transcript.argtypes = [
             ctypes.c_void_p,
@@ -542,63 +511,6 @@ class CtypesNemoSpeechLibrary:
     def free_recognizer(self, handle: int) -> None:
         """Release the recognizer with ``nemo_speech_asr_destroy``."""
         self._lib.nemo_speech_asr_destroy(ctypes.c_void_p(handle))
-
-    def recognize(
-        self,
-        handle: int,
-        samples: Sequence[float],
-        *,
-        sample_rate: int,
-    ) -> NemoSpeechTranscript:
-        """Run ``nemo_speech_asr_recognize_f32`` and read back the top hypothesis.
-
-        The request options come from the library's own default factory
-        (``nemo_speech_asr_recognition_options_default``) with ``interim_results``
-        forced off: this is the offline/batch call, and the library's defaults are
-        the honest starting point rather than a hand-built option set.
-        """
-        if len(samples) == 0:
-            return NemoSpeechTranscript(text="", language=None)
-
-        options = self._lib.nemo_speech_asr_recognition_options_default()
-        options.size = ctypes.sizeof(_NemoRecognitionOptions)
-        options.interim_results = False
-        options.language_code = None
-
-        # 16 kHz mono float32 is the declared input; the array is kept alive for
-        # the duration of the call and handed over as a raw pointer.
-        raw = array("f", samples)
-        buffer = (ctypes.c_float * len(raw)).from_buffer(raw)
-        result = ctypes.c_void_p()
-        status = self._lib.nemo_speech_asr_recognize_f32(
-            ctypes.c_void_p(handle),
-            ctypes.byref(options),
-            buffer,
-            len(raw),
-            sample_rate,
-            ctypes.byref(result),
-        )
-        if status != STATUS_OK:
-            raise NemoSpeechDecodeError(
-                f"nemo_speech_asr_recognize_f32 failed with status {status} for "
-                f"{len(raw)} samples at {sample_rate} Hz: {self.last_error()}"
-            )
-        try:
-            return self._read_result(result)
-        finally:
-            if result.value:
-                self._lib.nemo_speech_asr_result_destroy(result)
-
-    def _read_result(self, result: ctypes.c_void_p) -> NemoSpeechTranscript:
-        """Read the top hypothesis's transcript and language from a result handle."""
-        if not result.value:
-            return NemoSpeechTranscript(text="", language=None)
-        raw_text = self._lib.nemo_speech_asr_result_transcript(result, 0)
-        text = raw_text.decode("utf-8", "replace") if raw_text else ""
-        return NemoSpeechTranscript(
-            text=text,
-            language=self._first_language(result),
-        )
 
     def _first_language(self, result: ctypes.c_void_p) -> str | None:
         """Return the first language code the result carries, or ``None``."""
@@ -1074,29 +986,37 @@ class NemoSpeechTranscriber:
             ) from exc
 
     def transcribe(self, buffer: AudioBuffer) -> TranscriptionResult:
-        """Transcribe one complete utterance on the batch path (ADR 0022).
+        """Transcribe one complete utterance by **draining** :meth:`stream` (ADR 0022).
 
-        Validates the 16 kHz contract, then decodes with
-        ``nemo_speech_asr_recognize_f32``. The result carries the engine's text
-        and language unchanged and ``None`` for ``ttft_ms``/``decode_tps`` (the C
-        ABI exposes neither); ges2t's own decode wall time is recorded on
-        :attr:`last_transcribe_seconds` instead.
+        There is a single text-producing path for this engine: the whole buffer is
+        fed through the same append-only streaming decoder the live path uses, and
+        the end-of-stream final is returned. The same audio therefore yields the same
+        text whether it arrives through the batch session or the streaming session
+        (ticket 60's R1 decision). The previous second decoder
+        (``nemo_speech_asr_recognize_f32`` under the library's lowercased, unpunctuated
+        default) returned a different spelling of the same audio and was removed.
+
+        The result carries the engine's text and language and ``None`` for
+        ``ttft_ms``/``decode_tps`` (the C ABI exposes neither); ges2t's own decode
+        wall time is recorded on :attr:`last_transcribe_seconds`.
         """
-        handle = self._require_loaded()
+        self._require_loaded()
         _validate_buffer(buffer)
         if len(buffer.samples) == 0:
             return TranscriptionResult(
                 text="", language=None, ttft_ms=None, decode_tps=None
             )
-        assert self._library is not None  # _require_loaded guarantees this
         started = time.monotonic()
-        transcript = self._library.recognize(
-            handle, buffer.samples, sample_rate=buffer.sample_rate
-        )
+        final_text = ""
+        language: str | None = None
+        for segment in self.stream([buffer]):
+            if segment.is_final:
+                final_text = segment.live.committed
+                language = segment.language
         self.last_transcribe_seconds = time.monotonic() - started
         return TranscriptionResult(
-            text=transcript.text,
-            language=transcript.language,
+            text=final_text,
+            language=language,
             ttft_ms=None,
             decode_tps=None,
         )

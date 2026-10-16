@@ -46,7 +46,6 @@ from ges2t.transcribers.nemo_speech import (
     NemoSpeechLoadError,
     NemoSpeechNotLoadedError,
     NemoSpeechStreamResult,
-    NemoSpeechTranscript,
     NemoSpeechTranscriber,
 )
 from ges2t.transcribers.nemo_speech_config import (
@@ -70,29 +69,21 @@ class FakeNemoSpeechLibrary:
 
     It is deliberately not simpler than the real library: :meth:`create_recognizer`
     returns a **fresh** handle each call (so a close-then-load observes a new
-    recognizer), :meth:`recognize` refuses a handle that has been freed (the real
-    library would fault), and create/recognize failures are injectable.
+    recognizer), every streaming call refuses a handle that has been freed (the
+    real library would fault), and create/push failures are injectable.
     """
 
     def __init__(
         self,
         *,
-        transcript: NemoSpeechTranscript | None = None,
         raise_on_create: Exception | None = None,
-        raise_on_recognize: Exception | None = None,
         interims: Sequence[str] = (),
         final_text: str = "",
         stream_language: str | None = None,
         mid_stream_final_at: int | None = None,
         suppress_final: bool = False,
     ) -> None:
-        self.transcript = (
-            transcript
-            if transcript is not None
-            else NemoSpeechTranscript(text="hello world", language="en")
-        )
         self.raise_on_create = raise_on_create
-        self.raise_on_recognize = raise_on_recognize
         #: Scripted streaming output: ``interims[i]`` is the transcript of the
         #: interim the ``i``-th ``push_audio`` makes available, and ``final_text``
         #: is the end-of-stream final ``finish_stream`` makes available.
@@ -106,8 +97,10 @@ class FakeNemoSpeechLibrary:
         self.suppress_final = suppress_final
         self.created: list[tuple[Path, bool]] = []
         self.freed: list[int] = []
-        self.recognized: list[tuple[int, tuple[float, ...], int]] = []
         self.streams_opened: list[int] = []
+        #: The recognizer handle each opened stream was opened on, so a test can
+        #: prove the adapter reuses the one resident recognizer.
+        self.stream_recognizers: list[int] = []
         self.streams_finished: list[int] = []
         self.streams_closed: list[int] = []
         self.pushed: list[tuple[int, tuple[float, ...], int]] = []
@@ -132,20 +125,6 @@ class FakeNemoSpeechLibrary:
         self._live.discard(handle)
         self.freed.append(handle)
 
-    def recognize(
-        self,
-        handle: int,
-        samples: Sequence[float],
-        *,
-        sample_rate: int,
-    ) -> NemoSpeechTranscript:
-        if handle not in self._live:
-            raise NemoSpeechDecodeError(f"recognizer {handle} has been freed")
-        if self.raise_on_recognize is not None:
-            raise self.raise_on_recognize
-        self.recognized.append((handle, tuple(samples), sample_rate))
-        return self.transcript
-
     # -- streaming: models the same lifecycle the real library has ---------------
 
     def open_stream(self, handle: int) -> int:
@@ -156,6 +135,7 @@ class FakeNemoSpeechLibrary:
         self._live_streams.add(stream)
         self._pending[stream] = []
         self.streams_opened.append(stream)
+        self.stream_recognizers.append(handle)
         return stream
 
     def push_audio(
@@ -231,9 +211,14 @@ def _loaded(
     config: NemoSpeechConfig | None = None,
     library: FakeNemoSpeechLibrary | None = None,
     device: NemoDevice | None = None,
+    final_text: str = "",
 ) -> tuple[NemoSpeechTranscriber, FakeNemoSpeechLibrary]:
     """Construct and load a transcriber over a stand-in model and a fake library."""
-    fake = library if library is not None else FakeNemoSpeechLibrary()
+    fake = (
+        library
+        if library is not None
+        else FakeNemoSpeechLibrary(final_text=final_text)
+    )
     transcriber = NemoSpeechTranscriber(
         config if config is not None else NemoSpeechConfig(),
         model_path_override=_write_model(tmp_path),
@@ -475,7 +460,8 @@ def test_load_is_idempotent_and_the_recognizer_stays_resident(tmp_path: Path) ->
     transcriber.transcribe(_buffer([0.0] * 1600))
 
     assert len(fake.created) == 1  # created once
-    assert [handle for handle, _, _ in fake.recognized] == [1, 1]  # same recognizer
+    # Both decodes opened their stream on the one resident recognizer (handle 1).
+    assert fake.stream_recognizers == [1, 1]
 
 
 def test_load_records_the_load_time(tmp_path: Path) -> None:
@@ -551,15 +537,17 @@ def test_a_freed_recognizer_cannot_be_used(tmp_path: Path) -> None:
     handle = fake.create_recognizer(_write_model(tmp_path), use_gpu=False)
     fake.free_recognizer(handle)
     with pytest.raises(NemoSpeechDecodeError):
-        fake.recognize(handle, [0.0], sample_rate=SAMPLE_RATE)
+        fake.open_stream(handle)
 
 
-# --- transcribe contract ------------------------------------------------------
+# --- transcribe contract (a drain of stream(); ticket 60 R1) ------------------
 
 
 def test_transcribe_returns_text_and_omits_engine_timings(tmp_path: Path) -> None:
+    # ``transcribe`` drains the streaming path, so its text is the streaming
+    # final and its language is the one the interims carried.
     fake = FakeNemoSpeechLibrary(
-        transcript=NemoSpeechTranscript(text="the text", language="en")
+        interims=["hello"], final_text="the text", stream_language="en"
     )
     transcriber, _ = _loaded(tmp_path, library=fake)
     result = transcriber.transcribe(_buffer([0.0] * 1600))
@@ -573,20 +561,20 @@ def test_transcribe_returns_text_and_omits_engine_timings(tmp_path: Path) -> Non
 def test_transcribe_forwards_the_sample_rate(tmp_path: Path) -> None:
     transcriber, fake = _loaded(tmp_path)
     transcriber.transcribe(_buffer([0.0] * 1600))
-    assert fake.recognized[0][2] == SAMPLE_RATE
+    assert fake.pushed[0][2] == SAMPLE_RATE
 
 
 def test_transcribe_forwards_the_actual_audio_payload(tmp_path: Path) -> None:
     # The seam's central data contract: the *actual* float32 samples reach the
-    # library -- correct values, correct length, non-empty -- not merely that
-    # ``recognize`` was called. A mutation that forwards an empty or substituted
-    # buffer must fail here, not sail through green (ADR 0014).
-    transcriber, fake = _loaded(tmp_path)
+    # library -- correct values, correct length, non-empty -- not merely that a
+    # push happened. A mutation that forwards an empty or substituted buffer must
+    # fail here, not sail through green (ADR 0014).
+    transcriber, fake = _loaded(tmp_path, final_text="hello world")
     samples = [0.0, 0.25, -0.5, 1.0, -1.0, 0.125]
     result = transcriber.transcribe(_buffer(samples))
 
-    assert len(fake.recognized) == 1
-    _, forwarded, _ = fake.recognized[0]
+    assert len(fake.pushed) == 1
+    _, forwarded, _ = fake.pushed[0]
     assert forwarded == tuple(samples)
     assert len(forwarded) == len(samples)
     assert forwarded  # the payload is not dropped
@@ -614,7 +602,8 @@ def test_transcribe_of_empty_audio_does_not_decode(tmp_path: Path) -> None:
     transcriber, fake = _loaded(tmp_path)
     result = transcriber.transcribe(_buffer([]))
     assert result.text == ""
-    assert fake.recognized == []
+    assert fake.pushed == []
+    assert fake.streams_opened == []
 
 
 def test_stream_is_no_longer_the_batch_refusal(tmp_path: Path) -> None:
