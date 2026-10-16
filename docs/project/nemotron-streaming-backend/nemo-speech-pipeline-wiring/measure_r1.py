@@ -5,8 +5,9 @@ Compares, on **the same audio and the same normalisation**, three decodes of the
 pinned NeMo-Speech.cpp engine:
 
 * ``offline``   -- ``nemo_speech_asr_recognize_f32`` with the library default
-  options (``enable_automatic_punctuation=False``) -- exactly what
-  :meth:`NemoSpeechTranscriber.transcribe` runs today;
+  options (``enable_automatic_punctuation=False``) -- the pre-ticket-60 batch
+  decode, bound **locally in this harness** because ticket 60 removed the
+  production binding as dead code (the adapter now drains ``stream()``);
 * ``offline+punc`` -- the same offline call with
   ``enable_automatic_punctuation=True`` -- the "align the two paths" option;
 * ``stream``    -- the ``stream()`` path (``enable_automatic_punctuation=True``)
@@ -15,6 +16,11 @@ pinned NeMo-Speech.cpp engine:
 WER is ticket 32's ``word_diff`` (reused by path), i.e. lowercase + punctuation
 stripped, so it is blind to the punctuation/casing difference and measures only
 whether the two paths heard different words.
+
+The offline and ``offline+punc`` columns are the harness's **own** raw-ABI
+:class:`RawOfflineDecode` binding (see there); ``transcribe()`` is deliberately
+*not* used as the offline column because ticket 60 made it the same drain the
+``stream`` column measures, which would collapse the two and mask the divergence.
 
 No download, no network, no ``sudo``, no microphone: it drives the pinned scratch
 engine + GGUF already on this machine, over the reference clips.
@@ -138,31 +144,74 @@ def read_wav_mono_16k(path: Path) -> AudioBuffer:
     return AudioBuffer(samples=[s / 32768.0 for s in samples], sample_rate=16000)
 
 
-def offline_with_punctuation(library: CtypesNemoSpeechLibrary, handle: int, buffer: AudioBuffer) -> str:
-    """Run ``recognize_f32`` with ``enable_automatic_punctuation=True`` (the align option)."""
-    options = library._lib.nemo_speech_asr_recognition_options_default()  # noqa: SLF001
-    options.size = ctypes.sizeof(_NemoRecognitionOptions)
-    options.interim_results = False
-    options.enable_automatic_punctuation = True
-    options.language_code = None
-    raw = array("f", buffer.samples)
-    c_buffer = (ctypes.c_float * len(raw)).from_buffer(raw)
-    result = ctypes.c_void_p()
-    status = library._lib.nemo_speech_asr_recognize_f32(  # noqa: SLF001
-        ctypes.c_void_p(handle),
-        ctypes.byref(options),
-        c_buffer,
-        len(raw),
-        buffer.sample_rate,
-        ctypes.byref(result),
-    )
-    if status != STATUS_OK:
-        raise RuntimeError(f"recognize_f32 (punc on) failed with status {status}")
-    try:
-        return library._read_result(result).text  # noqa: SLF001
-    finally:
-        if result.value:
-            library._lib.nemo_speech_asr_result_destroy(result)  # noqa: SLF001
+class RawOfflineDecode:
+    """The harness's own raw-ABI binding for the offline ``recognize_f32`` decode.
+
+    Ticket 60 unified :meth:`NemoSpeechTranscriber.transcribe` onto :meth:`stream`
+    and **removed** the production offline binding (``nemo_speech_asr_recognize_f32``)
+    as dead code. Measuring the offline path is still this harness's whole job, so it
+    declares the offline symbols itself, against the ``ctypes.CDLL`` the adapter
+    already loaded -- the recognizer handle passed to :meth:`decode` therefore
+    belongs to the same ``.so`` instance. No production code is re-added, and the
+    module's two columns keep measuring two *different* decoders.
+    """
+
+    def __init__(self, lib: ctypes.CDLL) -> None:
+        self._lib = lib
+        lib.nemo_speech_asr_recognize_f32.restype = ctypes.c_int
+        lib.nemo_speech_asr_recognize_f32.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(_NemoRecognitionOptions),
+            ctypes.POINTER(ctypes.c_float),
+            ctypes.c_size_t,
+            ctypes.c_int32,
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        # The result reader/destroyer survive on the adapter's own CDLL (it binds
+        # them for ``next_result``), but they are declared here too so this binding
+        # is self-contained rather than relying on the adapter's argtypes.
+        lib.nemo_speech_asr_result_transcript.restype = ctypes.c_char_p
+        lib.nemo_speech_asr_result_transcript.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+        ]
+        lib.nemo_speech_asr_result_destroy.restype = None
+        lib.nemo_speech_asr_result_destroy.argtypes = [ctypes.c_void_p]
+
+    def decode(self, handle: int, buffer: AudioBuffer, *, punctuation: bool) -> str:
+        """Return ``recognize_f32``'s transcript, with AutoPunctuation as chosen.
+
+        ``punctuation=False`` is the library default the pre-ticket-60 batch path
+        used; ``True`` is the ticket-55/streaming configuration -- the two together
+        are the "keep both decoders and align the flag" option the ticket weighed.
+        """
+        options = self._lib.nemo_speech_asr_recognition_options_default()
+        options.size = ctypes.sizeof(_NemoRecognitionOptions)
+        options.interim_results = False
+        options.enable_automatic_punctuation = punctuation
+        options.language_code = None
+        raw = array("f", buffer.samples)
+        c_buffer = (ctypes.c_float * len(raw)).from_buffer(raw)
+        result = ctypes.c_void_p()
+        status = self._lib.nemo_speech_asr_recognize_f32(
+            ctypes.c_void_p(handle),
+            ctypes.byref(options),
+            c_buffer,
+            len(raw),
+            buffer.sample_rate,
+            ctypes.byref(result),
+        )
+        if status != STATUS_OK:
+            raise RuntimeError(
+                f"recognize_f32 (punctuation={punctuation}) failed with status "
+                f"{status}"
+            )
+        try:
+            text = self._lib.nemo_speech_asr_result_transcript(result, 0)
+            return text.decode("utf-8", "replace") if text else ""
+        finally:
+            if result.value:
+                self._lib.nemo_speech_asr_result_destroy(result)
 
 
 @dataclass(frozen=True)
@@ -197,7 +246,7 @@ class ClipResult:
 
 def measure_clip(
     transcriber: NemoSpeechTranscriber,
-    library: CtypesNemoSpeechLibrary,
+    raw: RawOfflineDecode,
     handle: int,
     ticket32: Ticket32,
     label: str,
@@ -206,8 +255,8 @@ def measure_clip(
 ) -> ClipResult:
     """Run the three decodes for one clip and score each against the reference."""
     buffer = read_wav_mono_16k(path)
-    offline = transcriber.transcribe(buffer).text
-    offline_punc = offline_with_punctuation(library, handle, buffer)
+    offline = raw.decode(handle, buffer, punctuation=False)
+    offline_punc = raw.decode(handle, buffer, punctuation=True)
     segments = list(transcriber.stream([buffer]))
     final = segments[-1]
     if not final.is_final:
@@ -254,6 +303,7 @@ def main(argv: list[str] | None = None) -> int:
     handle = transcriber._handle  # noqa: SLF001
     assert isinstance(library, CtypesNemoSpeechLibrary)
     assert handle is not None
+    raw = RawOfflineDecode(library._lib)  # noqa: SLF001 -- the loaded CDLL
     print(f"device={transcriber.device.value} load_s={transcriber.load_seconds:.2f}")
 
     ticket32 = load_ticket32()
@@ -263,7 +313,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"SKIP {label}: {path} absent", file=sys.stderr)
             continue
         result = measure_clip(
-            transcriber, library, handle, ticket32, label, path, reference
+            transcriber, raw, handle, ticket32, label, path, reference
         )
         results.append(result)
         print(

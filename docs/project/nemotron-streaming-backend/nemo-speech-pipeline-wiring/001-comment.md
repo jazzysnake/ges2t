@@ -3,6 +3,12 @@
 Branch `feat/nemo-speech-pipeline-wiring` · worktree `.worktrees/nemo-speech-pipeline-wiring` ·
 base `66f5235`.
 
+> **Correction note (2026-10-16):** the independent review `002-review.md` asked for changes to this
+> record and to `measure_r1.py` (F1: the harness could not run; F2: a wrong test-count claim; F3:
+> re-verify every number). Those corrections are applied here in place and recorded in full in
+> `003-comment.md`, which is the authoritative account of the fixes. The `src/` change the review
+> passed is untouched.
+
 ## What this ticket is
 
 Tickets 55–59 are merged. `nemo_speech` is selectable (58) and streams (59) but is **not in
@@ -72,12 +78,17 @@ gone). `_validate_nemo_config` turns those into a `PipelineError` with the hint
 
 Harness: `docs/project/nemotron-streaming-backend/nemo-speech-pipeline-wiring/measure_r1.py`, driving
 the **already-downloaded** pinned scratch engine + GGUF
-(`~/.cache/ges2t-discovery/nemotron-3-5-asr-streaming-measurement/…`) through the real adapter's
-`transcribe()` (the offline `recognize_f32`, library default `enable_automatic_punctuation=False`) and
-`stream()` (drained to its end-of-stream final, `enable_automatic_punctuation=True`), plus a raw
-offline call with punctuation on (the "align" option). Same 16 kHz mono clips ticket 55 used
+(`~/.cache/ges2t-discovery/nemotron-3-5-asr-streaming-measurement/…`). The **offline** column is the
+harness's **own** raw-ABI `RawOfflineDecode` binding for `nemo_speech_asr_recognize_f32` (this ticket
+removed the production binding as dead code, so the harness declares it itself rather than re-adding it
+to `src/`), called twice: with the library default `enable_automatic_punctuation=False` (the
+pre-unification batch decode) and with `True` (the "align the two paths" option). The **streaming**
+column is the real adapter's `stream()` (drained to its end-of-stream final,
+`enable_automatic_punctuation=True`). `transcribe()` is deliberately **not** the offline column any
+more: after this ticket it *is* the `stream()` drain, so using it would collapse the two columns and
+mask the divergence. Same 16 kHz mono clips ticket 55 used
 (`~/.cache/ges2t-discovery/whisper-cpp-provider/audio/`), same normalisation (ticket 32's `word_diff`,
-reused by path). Both paths see **the same audio buffer**; `chunk_seconds = 0.16` for the stream.
+reused by path). All three decodes see **the same audio buffer**; `chunk_seconds = 0.16` for the stream.
 
 Command (one for each device):
 
@@ -87,6 +98,32 @@ uv run python docs/project/nemotron-streaming-backend/nemo-speech-pipeline-wirin
 uv run python docs/project/nemotron-streaming-backend/nemo-speech-pipeline-wiring/measure_r1.py \
     --device cpu  --out /tmp/r1_cpu.json
 ```
+
+Real output (re-run 2026-10-16 against the fixed harness, both devices, exit 0):
+
+```
+$ uv run python docs/project/nemotron-streaming-backend/nemo-speech-pipeline-wiring/measure_r1.py --device auto --out /tmp/r1_auto.json
+[asr] model=.nemotron-3.5-asr-streaming-0.6b.q8_0.gguf head=rnnt backend=Vulkan0
+[asr] mode=streaming head=rnnt left=56 center=1 right=1 attention=58 encoder-frames step=160ms
+device=vulkan load_s=0.09
+jfk          wers off=0.000 off+punc=0.000 stream=0.000 segments=70
+quiet-short  wers off=0.259 off+punc=0.259 stream=0.259 segments=86
+quiet-long   wers off=0.167 off+punc=0.167 stream=0.167 segments=150
+commit       wers off=0.312 off+punc=0.312 stream=0.312 segments=158
+
+$ uv run python docs/project/nemotron-streaming-backend/nemo-speech-pipeline-wiring/measure_r1.py --device cpu --out /tmp/r1_cpu.json
+[asr] model=.nemotron-3.5-asr-streaming-0.6b.q8_0.gguf head=rnnt backend=CPU
+[asr] mode=offline head=rnnt attention-left=56 attention-right=3 encoder-frames
+[asr] mode=streaming head=rnnt left=56 center=1 right=1 attention=58 encoder-frames step=160ms
+device=cpu load_s=0.07
+jfk          wers off=0.000 off+punc=0.000 stream=0.000 segments=70
+quiet-short  wers off=0.296 off+punc=0.296 stream=0.259 segments=86
+quiet-long   wers off=0.194 off+punc=0.194 stream=0.167 segments=150
+commit       wers off=0.234 off+punc=0.234 stream=0.328 segments=158
+```
+
+These are the numbers the tables below summarise (4-dp values, e.g. `0.2593` / `0.2963`, are in the
+JSON written to `--out`).
 
 ### Numbers (word_diff WER vs the ticket-55 references)
 
@@ -108,14 +145,16 @@ uv run python docs/project/nemotron-streaming-backend/nemo-speech-pipeline-wirin
 | quiet-short | 13.51 | 0.296 | 0.296 | 0.259 |
 | quiet-long | 23.81 | 0.194 | 0.194 | 0.167 |
 | commit (car) | 25.04 | 0.234 | 0.234 | 0.328 |
-| **Σ / mean Δ(stream−offline)** | | **0.7251** | 0.7251 | **0.7541** (mean **+0.0073**) |
+| **Σ / mean Δ(stream−offline)** | | **0.7251** | 0.7251 | **0.7541** (mean **+0.0072**) |
 
 Confounds stated: **one machine, one driver** (RADV on Radeon 780M); the two paths run on the **same
 audio** with the **same** 0.16 s feed; input is the 16 kHz mono reference clips (**not** clipping —
 they are the ticket-55 fixtures); CPU and Vulkan produce deterministic-but-different text, so the
 numbers are per-device. The Vulkan numbers reproduce ticket 55's exactly (0.000 / 0.259 / 0.167 /
-0.312). A streaming-vs-batch WER **difference** is a divergence number, not an accuracy claim; the
-ground-truth reference is what says which path is closer.
+0.312). The Σ values are the sum of the per-clip values **rounded to 4 dp** (full-precision Σ on Vulkan
+is 0.7384; the review notes this is a rounding artefact, not a discrepancy — Δ reproduces exactly). A
+streaming-vs-batch WER **difference** is a divergence number, not an accuracy claim; the ground-truth
+reference is what says which path is closer.
 
 ### Decision: **unify** — `transcribe()` is now a drain of `stream()`
 
@@ -124,12 +163,17 @@ ground-truth reference is what says which path is closer.
   holds exactly.
 - On **CPU** it is a wash, not a regression: streaming is better on two clips (−0.037, −0.028) and
   worse on one (+0.094 on the car clip, where the offline hears "restore" and the stream "really
-  store"); the mean difference is **+0.0073**. Bidirectional and tiny → within noise.
+  store"); the exact mean difference is **+0.0072** (0.7541 − 0.7251 = 0.0290, ÷ 4). Bidirectional and
+  tiny → within noise.
 - **The decisive point against the "align" option:** aligning `enable_automatic_punctuation`
   (offline+punc column) changes **nothing** in the WER (it is a case/punctuation change that the
-  normalisation strips) and the offline decoder still differs from the streaming decoder **in words**
-  on CPU. So alignment does **not** deliver "the same audio gives consistent text" — only a single
-  decode path does. The measurement therefore rules the align branch out on its own terms.
+  normalisation strips — the offline and offline+punc strings differ only in case and punctuation) and
+  the offline decoder still differs from the streaming decoder **in words** on CPU: scoring
+  offline+punc against the stream final with the same `word_diff` gives WER **0.1852** (quiet-short,
+  5 word errors), **0.1014** (quiet-long, 7) and **0.1061** (car, 7) — and **0.0000** on all four under
+  Vulkan, which is exactly why the default device needs no alignment at all. So alignment does **not**
+  deliver "the same audio gives consistent text" — only a single decode path does. The measurement
+  therefore rules the align branch out on its own terms.
 
 The change (`nemo_speech.py`, tight): `transcribe()` feeds the whole buffer through `stream()` and
 returns that path's end-of-stream final, so the batch session and the streaming session now share **one**
@@ -137,8 +181,10 @@ text-producing path and the divergence is gone by construction. The old second d
 (`nemo_speech_asr_recognize_f32` with the library's lowercased/unpunctuated default) is **removed** —
 `NemoSpeechTranscript`, the `recognize` Protocol method, `CtypesNemoSpeechLibrary.recognize` /
 `_read_result`, and the `nemo_speech_asr_recognize_f32` binding — because leaving it would be dead code
-(rule 10). The ticket-58 tests that pinned the offline seam are migrated to the streaming seam, not
-deleted (test count unchanged +2).
+(rule 10). The ticket-58 tests that pinned the offline seam were rewritten onto the streaming seam, not
+deleted — the nemo test **file is unchanged at 49 tests** (byte-identical test-name set) and the suite
+grows by **+12** (1374 → 1386): all 12 new tests are the wiring tests in `test_pipeline_streaming.py`
+(22 → 34). *(Corrected from an earlier "+2" in response to 002-review F2; see `003-comment.md`.)*
 
 **What would falsify the decision:** a real run where the streaming-drain WER is materially worse than
 the offline WER on the **default** device. It was not observed (identical on Vulkan). The CPU car-clip
