@@ -79,7 +79,7 @@ are `done`**.
 | **56** | `nemotron-streaming-backend/nemo-pure-streaming-integration` | **done** — merged `252b117`. Design report: `docs/project/research/nemo-pure-streaming-integration/REPORT.md`. Reviewed pass (`004-review.md`; three rounds: B1 `config.py` orphan → N1 cites → R1 ADR-status reconciliation). |
 | **57** | `nemotron-streaming-backend/nemo-speech-engine-and-model-acquisition` | **done** — merged `3b1e158` (pushed `d6d05d5`). Review pass `004-review.md`; main now **1294 passed** / mypy 0. |
 | **58** | `nemotron-streaming-backend/nemo-speech-batch-adapter` | **done** — merged `50849ef` (pushed `168b112`). Review pass `004-review.md`; the first review caught an **unpinned float32 payload seam** (F1), fixed test-only at `bd66596`. `main` now **1341 passed, 2 skipped** / mypy 0/70. |
-| **59** | `nemotron-streaming-backend/nemo-speech-pure-streaming` | **to do, M** — `drive_append_only` + `AppendOnlyDecoder`, no window. |
+| **59** | `nemotron-streaming-backend/nemo-speech-pure-streaming` | **in progress** — `drive_append_only` + `AppendOnlyDecoder`, no window. |
 | **60** | `nemotron-streaming-backend/nemo-speech-pipeline-wiring` | **to do, M** — composition root + generalise `_streaming_chunk_seconds`. 59+60 ship together. |
 | **61** | `nemotron-streaming-backend/nemo-speech-doctor` | **to do, S** — engine/model/device doctor checks. |
 | **62** | `nemotron-streaming-backend/nemo-speech-docs` | **to do, S** — docs + documented limits. |
@@ -141,10 +141,9 @@ be carried without a growing buffer or second pass (ADR 0022's falsifier). **No 
 earlier proposed 56–61 integration breakdown was **not** created — the shape is to be derived from
 ticket 56 per the no-assumptions rule.
 
-**HOLD — user instruction (2026-10-15):** after ticket 58 the user said *"do not dispatch more after
-that until I give further permissions"*. **Do NOT start ticket 59 or 61 (or anything else).** The next
-actions after 58 would have been 59 (pure streaming) and 61 (doctor) in parallel; both are **paused
-awaiting explicit permission**. Tickets 59–62 are created and on the board, `to do`.
+**HOLD lifted for ticket 59 only (user permission 2026-10-15):** the user said *"can you please
+dispatch the next ticket? (59)"*, so **59 is dispatched**. **Ticket 61 remains paused** — do not start it,
+or 60/62, without explicit permission. Tickets 60–62 are created and on the board, `to do`.
 
 **Ticket 56 is DONE and merged** (`252b117`). On a pass it delivered the design and the breakdown; the
 user then asked to **split the old combined ticket 60**, so the board now carries **57–62** (see the
