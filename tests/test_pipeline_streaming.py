@@ -432,6 +432,26 @@ def test_validate_nemo_config_is_a_no_op_for_another_engine() -> None:
     pipeline._validate_nemo_config(Config())  # noqa: SLF001  # does not raise
 
 
+def test_run_service_reports_missing_nemo_artifacts_and_returns_nonzero(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The user-facing "reported by the existing path" half: startup prints the
+    # artifact problem and the fix and returns a failure code instead of crashing.
+    monkeypatch.setattr(
+        pipeline,
+        "_nemo_missing_artifacts",
+        lambda config: ["the nemo_speech model is not acquired"],
+    )
+    monkeypatch.setattr(pipeline, "build_status_ui", lambda config: NullStatusUI())
+
+    result = pipeline.run_service(_nemo_config())
+
+    assert result == 1
+    stderr = capsys.readouterr().err
+    assert "nemo_speech model is not acquired" in stderr
+    assert "ges2t setup nemo_speech" in stderr
+
+
 # -- the wired path: committed text is typed, pending is display-only --------
 
 
