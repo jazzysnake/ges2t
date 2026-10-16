@@ -45,7 +45,7 @@ from ges2t.transcribers.nemo_speech import (
     NemoSpeechLibrary,
     NemoSpeechLoadError,
     NemoSpeechNotLoadedError,
-    NemoSpeechStreamingUnsupportedError,
+    NemoSpeechStreamResult,
     NemoSpeechTranscript,
     NemoSpeechTranscriber,
 )
@@ -80,6 +80,10 @@ class FakeNemoSpeechLibrary:
         transcript: NemoSpeechTranscript | None = None,
         raise_on_create: Exception | None = None,
         raise_on_recognize: Exception | None = None,
+        interims: Sequence[str] = (),
+        final_text: str = "",
+        stream_language: str | None = None,
+        mid_stream_final_at: int | None = None,
     ) -> None:
         self.transcript = (
             transcript
@@ -88,11 +92,26 @@ class FakeNemoSpeechLibrary:
         )
         self.raise_on_create = raise_on_create
         self.raise_on_recognize = raise_on_recognize
+        #: Scripted streaming output: ``interims[i]`` is the transcript of the
+        #: interim the ``i``-th ``push_audio`` makes available, and ``final_text``
+        #: is the end-of-stream final ``finish_stream`` makes available.
+        self.interims = tuple(interims)
+        self.final_text = final_text
+        self.stream_language = stream_language
+        #: When set, the interim after this many pushes is delivered with
+        #: ``is_final=True`` -- a mid-stream endpoint, which v1 must reject.
+        self.mid_stream_final_at = mid_stream_final_at
         self.created: list[tuple[Path, bool]] = []
         self.freed: list[int] = []
         self.recognized: list[tuple[int, tuple[float, ...], int]] = []
+        self.streams_opened: list[int] = []
+        self.streams_finished: list[int] = []
+        self.streams_closed: list[int] = []
+        self.pushed: list[tuple[int, tuple[float, ...], int]] = []
         self._next_handle: int = 1
         self._live: set[int] = set()
+        self._live_streams: set[int] = set()
+        self._pending: dict[int, list[NemoSpeechStreamResult]] = {}
 
     def version(self) -> str:
         return "0.2.0-fake"
@@ -123,6 +142,59 @@ class FakeNemoSpeechLibrary:
             raise self.raise_on_recognize
         self.recognized.append((handle, tuple(samples), sample_rate))
         return self.transcript
+
+    # -- streaming: models the same lifecycle the real library has ---------------
+
+    def open_stream(self, handle: int) -> int:
+        if handle not in self._live:
+            raise NemoSpeechDecodeError(f"recognizer {handle} has been freed")
+        stream = self._next_handle
+        self._next_handle += 1
+        self._live_streams.add(stream)
+        self._pending[stream] = []
+        self.streams_opened.append(stream)
+        return stream
+
+    def push_audio(
+        self, stream: int, samples: Sequence[float], *, sample_rate: int
+    ) -> None:
+        if stream not in self._live_streams:
+            raise NemoSpeechDecodeError(f"stream {stream} is not live")
+        self.pushed.append((stream, tuple(samples), sample_rate))
+        index = len(self.pushed) - 1
+        if index < len(self.interims):
+            self._pending[stream].append(
+                NemoSpeechStreamResult(
+                    transcript=self.interims[index],
+                    is_final=index == self.mid_stream_final_at,
+                    audio_processed_s=float(index + 1) * 0.16,
+                    language=self.stream_language,
+                )
+            )
+
+    def next_result(self, stream: int) -> NemoSpeechStreamResult | None:
+        pending = self._pending.get(stream)
+        if not pending:
+            return None
+        return pending.pop(0)
+
+    def finish_stream(self, stream: int) -> None:
+        if stream not in self._live_streams:
+            raise NemoSpeechDecodeError(f"stream {stream} is not live")
+        self.streams_finished.append(stream)
+        self._pending[stream].append(
+            NemoSpeechStreamResult(
+                transcript=self.final_text,
+                is_final=True,
+                audio_processed_s=float(len(self.pushed)) * 0.16,
+                language=self.stream_language,
+            )
+        )
+
+    def close_stream(self, stream: int) -> None:
+        self._live_streams.discard(stream)
+        self._pending.pop(stream, None)
+        self.streams_closed.append(stream)
 
 
 # --- helpers ------------------------------------------------------------------
@@ -310,14 +382,14 @@ def test_an_explicit_streaming_true_is_not_refused_for_nemo_speech(
 # --- Protocol contract --------------------------------------------------------
 
 
-def test_transcriber_satisfies_the_protocol_and_declares_batch_only_for_now() -> None:
+def test_transcriber_satisfies_the_protocol_and_declares_streaming() -> None:
     transcriber = NemoSpeechTranscriber(
         NemoSpeechConfig(), library=FakeNemoSpeechLibrary()
     )
     assert isinstance(transcriber, Transcriber)
     assert transcriber.name == "nemo_speech"
-    # Ticket 58: the engine is batch-only until ticket 59 flips this.
-    assert transcriber.supports_streaming is False
+    # Ticket 59: the append-only engine streams, so the flag is True (ADR 0022).
+    assert transcriber.supports_streaming is True
 
 
 def test_the_fake_satisfies_the_library_protocol() -> None:
@@ -542,10 +614,16 @@ def test_transcribe_of_empty_audio_does_not_decode(tmp_path: Path) -> None:
     assert fake.recognized == []
 
 
-def test_stream_refuses_loudly(tmp_path: Path) -> None:
+def test_stream_is_no_longer_the_batch_refusal(tmp_path: Path) -> None:
+    # Ticket 59 replaced the ticket-58 refusal with the append-only driver. The
+    # detailed streaming behaviour lives in tests/test_nemo_speech_stream.py; here
+    # only that ``stream()`` now yields the committed-delta sequence (one final
+    # segment) instead of raising.
     transcriber, _ = _loaded(tmp_path)
-    with pytest.raises(NemoSpeechStreamingUnsupportedError):
-        transcriber.stream([_buffer([0.0] * 160)])
+    segments = list(transcriber.stream([_buffer([0.0] * 160)]))
+    # One partial per regrouped chunk, then exactly one final segment.
+    assert segments[-1].is_final is True
+    assert not any(segment.is_final for segment in segments[:-1])
 
 
 # --- device rule --------------------------------------------------------------

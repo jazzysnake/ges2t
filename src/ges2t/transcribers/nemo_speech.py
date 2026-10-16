@@ -11,9 +11,13 @@ loaded once at service start.
 
 What this adapter guarantees
 ----------------------------
-* **Batch only, for now.** ``supports_streaming = False`` (ticket 58);
-  :meth:`stream` refuses with a typed error rather than pretending. Ticket 59 adds
-  the append-only streaming driver and flips the flag to ``True`` (ADR 0022).
+* **Streams append-only (ADR 0022).** ``supports_streaming = True``.
+  :meth:`stream` drives the C ABI's streaming API through the pure-streaming
+  :func:`ges2t.streaming.drive_append_only`: no sliding window, no two-pass
+  agreement rule. The adapter commits only the **completed-word prefix** of each
+  engine interim and holds the trailing partial token ``pending`` (never
+  injected); the commit boundary is the last space in the interim string, because
+  interims carry **no word timestamps** (report §10.3).
 * **The audio contract is 16 kHz mono float32.** A non-16 kHz buffer raises rather
   than being resampled silently. The engine *can* resample 8-96 kHz input (the C
   header says so), but ges2t's canonical rate is 16 kHz (ADR 0005) and the
@@ -66,7 +70,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from ges2t import model_store, nemo_engine
+from ges2t import model_store, nemo_engine, streaming
 from ges2t.identifiers import NEMO_SPEECH_ENGINE
 from ges2t.interfaces import (
     AudioBuffer,
@@ -74,6 +78,7 @@ from ges2t.interfaces import (
     TranscriptionResult,
     TranscriptionSegment,
 )
+from ges2t.streaming import StreamingPass
 from ges2t.transcribers.nemo_speech_config import (
     NemoDevicePreference,
     NemoSpeechConfig,
@@ -87,13 +92,14 @@ __all__ = [
     "STATUS_OK",
     "CtypesNemoSpeechLibrary",
     "Device",
+    "NemoSpeechAppendOnlyError",
     "NemoSpeechDecodeError",
     "NemoSpeechError",
     "NemoSpeechInputError",
     "NemoSpeechLibrary",
     "NemoSpeechLoadError",
     "NemoSpeechNotLoadedError",
-    "NemoSpeechStreamingUnsupportedError",
+    "NemoSpeechStreamResult",
     "NemoSpeechTranscript",
     "NemoSpeechTranscriber",
 ]
@@ -158,17 +164,18 @@ class NemoSpeechInputError(NemoSpeechError):
 
 
 class NemoSpeechDecodeError(NemoSpeechError):
-    """``nemo_speech_asr_recognize_f32`` returned a non-zero status for this buffer."""
+    """A C-ABI call returned a non-zero status (recognize or a stream call)."""
 
 
-class NemoSpeechStreamingUnsupportedError(NemoSpeechError):
-    """``stream()`` was called on a backend that is not streaming yet (ADR 0022).
+class NemoSpeechAppendOnlyError(NemoSpeechDecodeError):
+    """An interim did not extend the previously committed prefix (ADR 0022).
 
-    ``supports_streaming = False`` is a declared capability, not a runtime probe:
-    callers branch on the flag and never reach this. It exists because the
-    Protocol declares the method, and it fails loudly rather than returning an
-    empty iterator that would look like "no speech". Ticket 59 replaces it with
-    the append-only streaming driver.
+    The pure-streaming decision rests on the interims being **append-only** (ticket
+    55 measured it). If an interim ever rewrites an earlier token, the delta the
+    adapter computes from the string prefix would silently drop the revision, so
+    the decoder stops and reports instead -- the loud failure report §9.1(2)
+    expects. A subclass of :class:`NemoSpeechDecodeError` so existing handlers
+    still catch it.
     """
 
 
@@ -184,6 +191,21 @@ class NemoSpeechTranscript:
     """
 
     text: str
+    language: str | None
+
+
+@dataclass(frozen=True)
+class NemoSpeechStreamResult:
+    """One result the streaming ABI returned (ADR 0019, ADR 0022).
+
+    ``is_final`` is the engine's end-of-stream flag (interims carry ``False``);
+    ``audio_processed_s`` is the encoder watermark in seconds; ``language`` is the
+    language the result reports, or ``None`` when it reports none.
+    """
+
+    transcript: str
+    is_final: bool
+    audio_processed_s: float
     language: str | None
 
 
@@ -230,6 +252,50 @@ class NemoSpeechLibrary(Protocol):
         A non-zero status raises :class:`NemoSpeechDecodeError`; a failure to
         convert the samples raises :class:`NemoSpeechInputError`.
         """
+        ...
+
+    # -- streaming (ADR 0022): one stream per recording, polled on this thread --
+
+    def open_stream(self, handle: int) -> int:
+        """Start a streaming recognition and return its opaque stream handle.
+
+        ``handle`` is the recognizer from :meth:`create_recognizer`. The stream has
+        no callback: the caller advances it with :meth:`push_audio`, polls it with
+        :meth:`next_result`, ends it with :meth:`finish_stream`, and releases it
+        with :meth:`close_stream` (report §4.1). A failure raises
+        :class:`NemoSpeechDecodeError`.
+        """
+        ...
+
+    def push_audio(
+        self, stream: int, samples: Sequence[float], *, sample_rate: int
+    ) -> None:
+        """Buffer ``samples`` into ``stream``; **no decode** happens here.
+
+        The rate cannot change within a stream. Decoding is driven by
+        :meth:`next_result`. A failure raises :class:`NemoSpeechDecodeError`.
+        """
+        ...
+
+    def next_result(self, stream: int) -> NemoSpeechStreamResult | None:
+        """Pull **one** result, or ``None`` when nothing is ready yet.
+
+        Called in a loop until it returns ``None``; a single push may yield zero,
+        one, or several results, so the caller keeps every one (report §4.1). A
+        failure raises :class:`NemoSpeechDecodeError`.
+        """
+        ...
+
+    def finish_stream(self, stream: int) -> None:
+        """End input on ``stream``: flush the tail so the final can be pulled.
+
+        The end-of-stream result (``is_final=True``) is then returned by
+        :meth:`next_result`. A failure raises :class:`NemoSpeechDecodeError`.
+        """
+        ...
+
+    def close_stream(self, stream: int) -> None:
+        """Release a stream handle previously returned by :meth:`open_stream`."""
         ...
 
 
@@ -386,6 +452,43 @@ class CtypesNemoSpeechLibrary:
         lib.nemo_speech_asr_result_destroy.restype = None
         lib.nemo_speech_asr_result_destroy.argtypes = [ctypes.c_void_p]
 
+        # Streaming (ADR 0022). Every symbol is confirmed against the pinned v0.2.0
+        # header (include/nemo_speech/asr.h, the streaming section). There is no
+        # callback in the ABI: `stream_next` is the only reader, polled on the
+        # calling thread (report §4.1).
+        lib.nemo_speech_asr_streaming_recognize.restype = ctypes.c_int
+        lib.nemo_speech_asr_streaming_recognize.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(_NemoRecognitionOptions),
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+
+        lib.nemo_speech_asr_stream_push_f32.restype = ctypes.c_int
+        lib.nemo_speech_asr_stream_push_f32.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_float),
+            ctypes.c_size_t,
+            ctypes.c_int32,
+        ]
+
+        lib.nemo_speech_asr_stream_next.restype = ctypes.c_int
+        lib.nemo_speech_asr_stream_next.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+
+        lib.nemo_speech_asr_stream_finish.restype = ctypes.c_int
+        lib.nemo_speech_asr_stream_finish.argtypes = [ctypes.c_void_p]
+
+        lib.nemo_speech_asr_stream_close.restype = None
+        lib.nemo_speech_asr_stream_close.argtypes = [ctypes.c_void_p]
+
+        lib.nemo_speech_asr_result_is_final.restype = ctypes.c_bool
+        lib.nemo_speech_asr_result_is_final.argtypes = [ctypes.c_void_p]
+
+        lib.nemo_speech_asr_result_audio_processed.restype = ctypes.c_float
+        lib.nemo_speech_asr_result_audio_processed.argtypes = [ctypes.c_void_p]
+
     def last_error(self) -> str:
         """Return the library's thread-local last error message, or ``""``."""
         raw = self._lib.nemo_speech_asr_last_error()
@@ -507,6 +610,96 @@ class CtypesNemoSpeechLibrary:
         raw = self._lib.nemo_speech_asr_result_language_code(result, 0, 0)
         return raw.decode("utf-8", "replace") if raw else None
 
+    # -- streaming (ADR 0022) ---------------------------------------------------
+
+    def open_stream(self, handle: int) -> int:
+        """Start a stream with ``nemo_speech_asr_streaming_recognize``.
+
+        The request options come from the library's own default factory with only
+        ``interim_results`` forced **on** -- this is the streaming call and the
+        interims are the whole point (ADR 0022). Endpointing is a recognizer
+        property and stays at its default (off), so exactly one ``is_final`` is
+        emitted, after :meth:`finish_stream` (report §5.4).
+        """
+        options = self._lib.nemo_speech_asr_recognition_options_default()
+        options.size = ctypes.sizeof(_NemoRecognitionOptions)
+        options.interim_results = True
+        options.language_code = None
+
+        stream = ctypes.c_void_p()
+        status = self._lib.nemo_speech_asr_streaming_recognize(
+            ctypes.c_void_p(handle), ctypes.byref(options), ctypes.byref(stream)
+        )
+        if status != STATUS_OK or not stream.value:
+            raise NemoSpeechDecodeError(
+                f"nemo_speech_asr_streaming_recognize failed with status {status}: "
+                f"{self.last_error()}"
+            )
+        return int(stream.value)
+
+    def push_audio(
+        self, stream: int, samples: Sequence[float], *, sample_rate: int
+    ) -> None:
+        """Buffer ``samples`` with ``nemo_speech_asr_stream_push_f32`` (no decode)."""
+        if len(samples) == 0:
+            return
+        raw = array("f", samples)
+        buffer = (ctypes.c_float * len(raw)).from_buffer(raw)
+        status = self._lib.nemo_speech_asr_stream_push_f32(
+            ctypes.c_void_p(stream), buffer, len(raw), sample_rate
+        )
+        if status != STATUS_OK:
+            raise NemoSpeechDecodeError(
+                f"nemo_speech_asr_stream_push_f32 failed with status {status} for "
+                f"{len(raw)} samples at {sample_rate} Hz: {self.last_error()}"
+            )
+
+    def next_result(self, stream: int) -> NemoSpeechStreamResult | None:
+        """Pull one result with ``nemo_speech_asr_stream_next``, or ``None``.
+
+        A NULL out-handle is the ABI's "need more audio" signal, not an error. A
+        non-NULL result is read on this thread -- ``last_error`` is thread-local,
+        so the message must be read here, at the point of failure, never later
+        elsewhere (report §4.3) -- and destroyed before returning.
+        """
+        out = ctypes.c_void_p()
+        status = self._lib.nemo_speech_asr_stream_next(
+            ctypes.c_void_p(stream), ctypes.byref(out)
+        )
+        if status != STATUS_OK:
+            raise NemoSpeechDecodeError(
+                f"nemo_speech_asr_stream_next failed with status {status}: "
+                f"{self.last_error()}"
+            )
+        if not out.value:
+            return None
+        try:
+            raw_text = self._lib.nemo_speech_asr_result_transcript(out, 0)
+            transcript = raw_text.decode("utf-8", "replace") if raw_text else ""
+            return NemoSpeechStreamResult(
+                transcript=transcript,
+                is_final=bool(self._lib.nemo_speech_asr_result_is_final(out)),
+                audio_processed_s=float(
+                    self._lib.nemo_speech_asr_result_audio_processed(out)
+                ),
+                language=self._first_language(out),
+            )
+        finally:
+            self._lib.nemo_speech_asr_result_destroy(out)
+
+    def finish_stream(self, stream: int) -> None:
+        """Flush the tail with ``nemo_speech_asr_stream_finish``."""
+        status = self._lib.nemo_speech_asr_stream_finish(ctypes.c_void_p(stream))
+        if status != STATUS_OK:
+            raise NemoSpeechDecodeError(
+                f"nemo_speech_asr_stream_finish failed with status {status}: "
+                f"{self.last_error()}"
+            )
+
+    def close_stream(self, stream: int) -> None:
+        """Release a stream handle with ``nemo_speech_asr_stream_close``."""
+        self._lib.nemo_speech_asr_stream_close(ctypes.c_void_p(stream))
+
 
 def _validate_buffer(buffer: AudioBuffer) -> None:
     """Raise :class:`NemoSpeechInputError` unless the buffer is 16 kHz mono.
@@ -522,6 +715,172 @@ def _validate_buffer(buffer: AudioBuffer) -> None:
             f"{buffer.sample_rate} Hz; resample before the transcriber rather than "
             "expecting it to do so silently (ADR 0005)"
         )
+
+
+def _committed_prefix(interim: str) -> str:
+    """The longest prefix of ``interim`` that ends at a completed word boundary.
+
+    Interims are plain space-separated tokens and carry **no word timestamps**
+    (only the final does -- report §10.3), so the boundary is the last space: the
+    text before it is a completed word, the trailing whitespace-delimited token
+    may still be extended by the next interim and is held pending (ADR 0022 §5).
+    Ticket 55 measured 1,841 interims with no leading or trailing whitespace, so
+    the ``rstrip`` is belt-and-braces; an interim with no space has no completed
+    word and commits nothing.
+    """
+    stripped = interim.rstrip()
+    cut = stripped.rfind(" ")
+    if cut < 0:
+        return ""
+    return stripped[:cut]
+
+
+class _NemoSpeechDecoder:
+    """The append-only decoder behind :meth:`NemoSpeechTranscriber.stream` (ADR 0022).
+
+    It drives one C-ABI stream handle: :meth:`push` feeds a group and polls the
+    interims, :meth:`finish` ends the stream and returns the whole final text. It
+    keeps only the cumulative committed **string** and the latest interim string --
+    no growing audio buffer and no second pass; the caches that grow live inside
+    the engine (report §9.1(3)). The stream is opened lazily on the first push and
+    released by :meth:`finish` or :meth:`close`; :meth:`close` is idempotent, so an
+    abandoned generator cannot leak the handle.
+
+    The commit rule is ADR 0022 §5: report the delta up to the completed-word
+    prefix of the latest interim and hold the trailing token pending. It is
+    **string-based** because interims carry no word timestamps (report §10.3).
+    """
+
+    def __init__(self, library: NemoSpeechLibrary, handle: int) -> None:
+        self._library = library
+        self._handle = handle
+        self._stream: int | None = None
+        self._committed = ""
+        self._interim = ""
+
+    def push(self, buffer: AudioBuffer) -> StreamingPass:
+        """Feed one group and return the newly committed delta and the pending tail."""
+        _validate_buffer(buffer)
+        stream = self._ensure_stream()
+        self._library.push_audio(
+            stream, buffer.samples, sample_rate=buffer.sample_rate
+        )
+        language = self._pump_interims(stream)
+        target = _committed_prefix(self._interim)
+        if not target.startswith(self._committed):
+            raise NemoSpeechAppendOnlyError(
+                "the nemo_speech engine revised an earlier word: the interim "
+                f"{self._interim!r} does not extend the committed prefix "
+                f"{self._committed!r}, so the append-only contract (ADR 0022) is "
+                "broken and the pure-streaming delta cannot be computed"
+            )
+        delta = target[len(self._committed) :]
+        self._committed = target
+        return StreamingPass(
+            committed=delta,
+            pending=self._interim[len(target) :],
+            language=language,
+        )
+
+    def finish(self) -> str:
+        """End input and return the whole final transcript; call exactly once.
+
+        With no audio ever pushed there is no stream to end and the empty string
+        is the whole transcript -- the same empty final the silence case yields.
+        """
+        stream = self._stream
+        if stream is None:
+            return ""
+        try:
+            self._library.finish_stream(stream)
+            return self._drain_final(stream)
+        finally:
+            self.close()
+
+    def close(self) -> None:
+        """Release the stream handle; idempotent and safe after :meth:`finish`."""
+        stream = self._stream
+        if stream is None:
+            return
+        self._stream = None
+        self._library.close_stream(stream)
+
+    def _ensure_stream(self) -> int:
+        """Open the stream on first use and return its handle."""
+        if self._stream is None:
+            self._stream = self._library.open_stream(self._handle)
+        return self._stream
+
+    def _pump_interims(self, stream: int) -> str | None:
+        """Drain every ready interim; keep the latest transcript and return its language.
+
+        A single push may yield zero, one, or several results, so every one is read
+        (report §4.1). A mid-stream ``is_final`` is impossible with endpointing off
+        (report §5.4); if one ever appears the driver has no rule for it, so it fails
+        loudly rather than folding half an utterance in as a continuation.
+        """
+        language: str | None = None
+        while True:
+            result = self._library.next_result(stream)
+            if result is None:
+                break
+            if result.is_final:
+                raise NemoSpeechDecodeError(
+                    "the nemo_speech engine emitted an is_final result in the middle "
+                    "of the stream; endpointing must stay off for this engine and "
+                    "v1 has no reopen rule for a mid-stream final (ADR 0022, report "
+                    "§5.4)"
+                )
+            self._interim = result.transcript
+            if result.language is not None:
+                language = result.language
+        return language
+
+    def _drain_final(self, stream: int) -> str:
+        """Drain the post-``finish`` results and return the end-of-stream final.
+
+        The ABI guarantees the final arrives here; a stream that ends without one
+        is a broken contract, so it fails loudly instead of silently promoting the
+        last interim (which would inject an unconfirmed partial).
+        """
+        final_text: str | None = None
+        while True:
+            result = self._library.next_result(stream)
+            if result is None:
+                break
+            if result.is_final:
+                final_text = result.transcript
+            else:
+                self._interim = result.transcript
+        if final_text is None:
+            raise NemoSpeechDecodeError(
+                "the nemo_speech engine did not return an end-of-stream final after "
+                "nemo_speech_asr_stream_finish"
+            )
+        return final_text
+
+
+def _stream_append_only(
+    library: NemoSpeechLibrary,
+    handle: int,
+    chunks: Iterable[AudioBuffer],
+    *,
+    chunk_seconds: float,
+) -> Iterator[TranscriptionSegment]:
+    """Drive the append-only decoder, guaranteeing the native stream is closed.
+
+    :func:`ges2t.streaming.drive_append_only` calls ``decoder.finish()`` exactly
+    once at end of input; the ``finally`` here releases the stream handle if the
+    consumer abandons the generator first (a cancelled recording), so a native
+    stream and its encoder caches never leak (report §4.3).
+    """
+    decoder = _NemoSpeechDecoder(library, handle)
+    try:
+        yield from streaming.drive_append_only(
+            decoder, chunks, chunk_seconds=chunk_seconds
+        )
+    finally:
+        decoder.close()
 
 
 class NemoSpeechTranscriber:
@@ -559,9 +918,8 @@ class NemoSpeechTranscriber:
         library: NemoSpeechLibrary | None = None,
     ) -> None:
         self.name: str = NEMO_SPEECH_ENGINE
-        #: Ticket 58 ships the batch path only; ticket 59 adds the append-only
-        #: streaming driver and flips this to ``True`` (ADR 0022).
-        self.supports_streaming: bool = False
+        #: The engine emits append-only interims, so it streams (ADR 0022).
+        self.supports_streaming: bool = True
         self.config = config
         self._model_path_override: Path | None = (
             Path(model_path_override) if model_path_override is not None else None
@@ -739,25 +1097,41 @@ class NemoSpeechTranscriber:
         """Return the recognizer handle or raise a clear "call load() first" error."""
         if self._handle is None:
             raise NemoSpeechNotLoadedError(
-                "NemoSpeechTranscriber.transcribe() was called before load(); call "
-                "ensure_model() and load() first (ADR 0010)"
+                "NemoSpeechTranscriber was used before load(); call ensure_model() "
+                "and load() first (ADR 0010)"
             )
         return self._handle
 
     def stream(
         self, chunks: Iterable[AudioBuffer]
     ) -> Iterator[TranscriptionSegment]:
-        """Refuse: nemo_speech is batch-only in ticket 58 (ADR 0022).
+        """Transcribe a live chunk iterable on the append-only streaming path (ADR 0022).
 
-        ``supports_streaming = False`` is the contract; callers branch on it and
-        never call this. Reaching here is a wiring bug, so it raises rather than
-        yielding nothing (which would be indistinguishable from "no speech").
-        Ticket 59 replaces this with the append-only streaming driver.
+        The commit fold is :func:`ges2t.streaming.drive_append_only` -- the sibling
+        of the Whistle path's :func:`ges2t.streaming.drive` with **no window and no
+        flush**. The adapter supplies only the engine-facing
+        :class:`_NemoSpeechDecoder`, which commits the completed-word prefix of each
+        interim and holds the trailing token ``pending`` (never injected);
+        ``finish()`` is called exactly once at end of input and returns the whole
+        transcript, which the existing :class:`~ges2t.incremental_typing.CommittedTyper`
+        then types with its watermark and single trailing space (tickets 32-34).
+
+        The silence gate is deliberately absent: ticket 55 measured that the engine
+        emits zero interims and an empty final on digital silence, so a second
+        energy gate would re-derive a Whistle-specific fix for a defect this engine
+        does not have (report §5.4).
+
+        The call fails eagerly with :class:`NemoSpeechNotLoadedError` when
+        :meth:`load` has not run, rather than at first iteration, so a caller does
+        not start capturing audio for a stream that cannot run.
         """
-        raise NemoSpeechStreamingUnsupportedError(
-            "nemo_speech does not support streaming yet: the append-only streaming "
-            "driver lands in ticket 59 and flips supports_streaming to True (ADR "
-            "0022). Branch on Transcriber.supports_streaming and use the batch path."
+        handle = self._require_loaded()
+        assert self._library is not None  # _require_loaded guarantees this
+        return _stream_append_only(
+            self._library,
+            handle,
+            chunks,
+            chunk_seconds=self.config.chunk_seconds,
         )
 
     def close(self) -> None:

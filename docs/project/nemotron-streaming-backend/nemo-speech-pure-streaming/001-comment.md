@@ -70,3 +70,33 @@ $ uv run pytest tests/test_streaming_append_only.py -q
 $ uv run pytest tests/test_streaming.py tests/test_whistle_stream.py -q
 53 passed in 0.72s
 ```
+
+## Step 2 — `transcribers/nemo_speech.py` (the adapter + decoder), + tests
+
+* `NemoSpeechLibrary` gained the streaming half of the same real library:
+  `open_stream` / `push_audio` / `next_result` / `finish_stream` / `close_stream`, and a frozen
+  `NemoSpeechStreamResult` (transcript, is_final, audio_processed_s, language) — ADR 0019. The one
+  `CtypesNemoSpeechLibrary` implements both halves; the ticket-58 fake was extended to model the
+  streaming lifecycle too (it must not be simpler than the real library).
+* `_NemoSpeechDecoder` (`push` -> `StreamingPass`, `finish` -> whole final text) drives the real ABI:
+  `stream_push_f32` (no decode) -> drain `stream_next` until NULL -> `stream_finish` -> drain the
+  final. `stream_close` runs in a `finally` (`_stream_append_only`), so an abandoned generator cannot
+  leak the native handle.
+* `_committed_prefix` — the **string** word boundary (`rstrip` then cut at the last space), exactly the
+  report §5.1 rule; interims carry no word timestamps (report §10.3).
+* `NemoSpeechTranscriber.supports_streaming = True`; `stream()` returns
+  `drive_append_only(_NemoSpeechDecoder(...), chunks, chunk_seconds=self.config.chunk_seconds)`.
+  `NemoSpeechStreamingUnsupportedError` (ticket 58's refusal) is removed as dead code.
+* **No change** to `streaming_session.py`, `service.py`, `socket_proto.py`, `incremental_typing.py`.
+* Tests: new `tests/test_streaming_append_only.py` (driver) and `tests/test_nemo_speech_stream.py`
+  (adapter + payload + guards + opt-in real seam). The two ticket-58 tests that pinned the old batch-only
+  refusal were repurposed (not weakened) — `supports_streaming is True` and `stream()` now yields the
+  sequence — and `test_whisper_backend_config.py`'s cross-engine capability guard dropped its
+  ticket-58 `nemo_speech` exception (the two sets now agree).
+
+```
+$ uv run pytest -q
+1373 passed, 3 skipped in 6.10s
+$ rm -rf .mypy_cache __pycache__ && uv run mypy src/ges2t tests
+Success: no issues found in 72 source files
+```

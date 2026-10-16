@@ -350,11 +350,9 @@ def test_batch_only_engines_agree_with_the_transcriber_capability() -> None:
     # declared supports_streaming. The two must not drift: one guard test over
     # every known engine, constructed directly so no machine is probed.
     #
-    # nemo_speech is the one deliberate exception (ticket 58): it is a *streaming*
-    # engine (ADR 0022) whose adapter does not stream yet -- ticket 59 flips
-    # supports_streaming to True -- so BATCH_ONLY_ENGINES must stay without it
-    # (an omitted streaming.enabled defaults to True). Excluding exactly this
-    # engine keeps the guard live for every other engine.
+    # Ticket 59 flipped nemo_speech's supports_streaming to True (ADR 0022), so
+    # the earlier ticket-58 exception is gone: the two sets must now agree for
+    # every engine, with no exclusion.
     from ges2t.identifiers import NEMO_SPEECH_ENGINE
     from ges2t.transcribers.nemo_speech import NemoSpeechTranscriber
     from ges2t.transcribers.nemo_speech_config import NemoSpeechConfig
@@ -370,12 +368,10 @@ def test_batch_only_engines_agree_with_the_transcriber_capability() -> None:
     }
     assert set(declared) == set(config_module.KNOWN_ENGINES)
     assert config_module.BATCH_ONLY_ENGINES == {
-        engine
-        for engine, streams in declared.items()
-        if not streams and engine != NEMO_SPEECH_ENGINE
+        engine for engine, streams in declared.items() if not streams
     }
     assert NEMO_SPEECH_ENGINE not in config_module.BATCH_ONLY_ENGINES
-    assert declared[NEMO_SPEECH_ENGINE] is False
+    assert declared[NEMO_SPEECH_ENGINE] is True
 
 
 def test_omitted_streaming_with_a_batch_only_engine_starts(
