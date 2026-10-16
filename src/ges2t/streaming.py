@@ -27,6 +27,12 @@ The window/chunk sizes are engine-specific configuration (ADR 0009, ADR 0011)
 and are passed in; this module only sanity-checks them so a programming error
 cannot become an infinite loop. The authoritative validation lives in
 ``ges2t/transcribers/whistle_config.py`` (ADR 0011).
+
+This module also holds the **additive** pure-streaming sibling, ADR 0022's
+:class:`AppendOnlyDecoder` + :func:`drive_append_only`. That driver serves a
+cache-aware engine whose interims are append-only; it has **no window and no
+flush**, and the windowed :func:`drive` and :class:`StreamingDecoder` above keep
+their signatures and behaviour untouched (the Whistle path is unchanged).
 """
 
 from __future__ import annotations
@@ -37,7 +43,13 @@ from typing import Protocol, runtime_checkable
 
 from ges2t.interfaces import AudioBuffer, LiveText, TranscriptionSegment
 
-__all__ = ["StreamingDecoder", "StreamingPass", "drive"]
+__all__ = [
+    "AppendOnlyDecoder",
+    "StreamingDecoder",
+    "StreamingPass",
+    "drive",
+    "drive_append_only",
+]
 
 
 @dataclass(frozen=True)
@@ -88,6 +100,43 @@ class StreamingDecoder(Protocol):
 
         This models the engine's ``stop()``: after it returns, the next
         :meth:`process` call begins a fresh stream whose timestamps start over.
+        """
+        ...
+
+
+@runtime_checkable
+class AppendOnlyDecoder(Protocol):
+    """A cache-aware streaming engine that emits append-only interims (ADR 0022).
+
+    This is the sibling of :class:`StreamingDecoder` for an engine that keeps its
+    own caches and commits **append-only** frames, so the driver never resets it
+    and never needs a window. The seam therefore has no ``flush``: a windowed
+    engine's ``flush`` means *reset and continue*, while this engine has only one
+    end, ``finish``, which is *end and stop*. Conflating the two on one loop is
+    exactly the silent coupling ADR 0022 and report §6-C reject.
+
+    The engine-specific implementation lives in the adapter, the only place
+    allowed to import the backend (ADR 0010); tests supply a deterministic fake.
+    """
+
+    def push(self, buffer: AudioBuffer) -> StreamingPass:
+        """Feed ``buffer`` to the engine and return this pass's result.
+
+        ``committed`` is the delta this pass newly committed and is appended to
+        the running transcript; ``pending`` is the display-only tail, never
+        injected. The engine's own caches persist across calls, so no reset
+        happens here (ADR 0022).
+        """
+        ...
+
+    def finish(self) -> str:
+        """End of input: flush the engine and return the **whole** final transcript.
+
+        Called exactly once, at end of input, never mid-stream: there is no
+        boundary at which a caches-aware engine needs to be reset (ADR 0022).
+        The returned text extends every ``committed`` value the earlier
+        :meth:`push` calls reported, so it is safe as the final, cumulative
+        committed value the committed-delta path consumes.
         """
         ...
 
@@ -202,6 +251,104 @@ def _drive(
     transcript += decoder.flush()
     yield TranscriptionSegment(
         live=LiveText(committed=transcript, pending=""),
+        language=language,
+        is_final=True,
+        pass_ms=None,
+    )
+
+
+def drive_append_only(
+    decoder: AppendOnlyDecoder,
+    chunks: Iterable[AudioBuffer],
+    *,
+    chunk_seconds: float,
+    on_partial: Callable[[LiveText], None] | None = None,
+) -> Iterator[TranscriptionSegment]:
+    """Fold an append-only interim stream into the committed-delta contract (ADR 0022).
+
+    This is the pure-streaming sibling of :func:`drive` for a cache-aware engine
+    whose interims only ever extend the previous one (ticket 55 measured the
+    property; report §7). Because the engine does that work itself there is **no
+    window and no flush**: ``decoder.finish()`` is called **exactly once**, at end
+    of input, and contributes the whole final transcript. The rest of the fold is
+    identical to :func:`drive`, so the session and the service -- which only see
+    the resulting :class:`~ges2t.interfaces.TranscriptionSegment` values -- are
+    unchanged and window-blind (ADR 0011, report §1).
+
+    1. regroup the incoming audio into ``chunk_seconds``-sized groups by sample
+       count, reusing :func:`_group_chunks` exactly as the windowed path does (a
+       short or long incoming buffer is split or combined; the partial final
+       group is delivered, never dropped);
+    2. feed each group to ``decoder.push()`` and append its ``committed`` delta
+       to the running transcript;
+    3. yield one non-final segment per group whose ``live`` is the cumulative
+       committed transcript plus the current pending tail -- display-only, never
+       injected -- and pass the same value to ``on_partial`` when one is supplied;
+    4. at end of input, call ``decoder.finish()`` once and yield exactly one final
+       segment (``is_final=True``) whose ``committed`` is the whole final
+       transcript and whose ``pending`` is empty.
+
+    The final text is the decoder's own end-of-stream transcript, never
+    reconstructed from ``pending``; the committed sequence stays cumulative and
+    append-only because ``finish`` extends every earlier ``committed`` value. The
+    function returns a lazy iterator, so the guards below run eagerly at call time
+    and a bad argument raises immediately rather than on first iteration.
+
+    ``chunk_seconds`` is only sanity-checked here (positive); the authoritative
+    validation lives in the engine's config block (report §7.1). The engine's own
+    decoding step (its ``chunk_size``) is a model property the adapter does not
+    set here -- ``chunk_seconds`` is ges2t's feed/poll granularity.
+    """
+    if chunk_seconds <= 0:
+        raise ValueError(f"chunk_seconds must be positive, got {chunk_seconds!r}")
+    return _drive_append_only(
+        decoder,
+        chunks,
+        chunk_seconds=chunk_seconds,
+        on_partial=on_partial,
+    )
+
+
+def _drive_append_only(
+    decoder: AppendOnlyDecoder,
+    chunks: Iterable[AudioBuffer],
+    *,
+    chunk_seconds: float,
+    on_partial: Callable[[LiveText], None] | None,
+) -> Iterator[TranscriptionSegment]:
+    """The generator behind :func:`drive_append_only`; arguments already validated."""
+    transcript = ""
+    pending = ""
+    # The engine reports the language per result and an early pass may not have
+    # one yet, so a later ``None`` must not erase a language already seen: track
+    # the most recent non-``None`` value and carry it forward, onto the final
+    # segment too (ADR 0011, and the same rule ``drive`` applies).
+    language: str | None = None
+    for group in _group_chunks(chunks, chunk_seconds=chunk_seconds):
+        pass_ = decoder.push(group)
+        transcript += pass_.committed
+        pending = pass_.pending
+        if pass_.language is not None:
+            language = pass_.language
+
+        # No sample accounting and no boundary test: this engine has no window,
+        # so the loop has no condition under which it would reset the decoder
+        # (ADR 0022). The committed prefix stays cumulative and append-only; the
+        # pending tail is carried separately and is never merged into it.
+        live = LiveText(committed=transcript, pending=pending)
+        if on_partial is not None:
+            on_partial(live)
+        yield TranscriptionSegment(
+            live=live, language=language, is_final=False, pass_ms=None
+        )
+
+    # The one and only end: no window boundary flush exists, and this call is
+    # unconditional -- even for empty input -- so ``finish()`` runs exactly once
+    # and the segment count stays deterministic. ``finish()`` returns the whole
+    # final transcript, so the final segment is cumulative with no pending tail.
+    final_text = decoder.finish()
+    yield TranscriptionSegment(
+        live=LiveText(committed=final_text, pending=""),
         language=language,
         is_final=True,
         pass_ms=None,
