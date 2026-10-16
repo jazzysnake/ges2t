@@ -1,7 +1,7 @@
 # Nemotron pure-streaming integration (append-only, no window)
 
 - **Priority:** P1
-- **Status:** to do
+- **Status:** in progress
 - **Complexity:** M
 - **Epic:** ../epic.md
 
