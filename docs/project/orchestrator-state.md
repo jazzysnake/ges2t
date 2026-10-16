@@ -80,7 +80,7 @@ are `done`**.
 | **57** | `nemotron-streaming-backend/nemo-speech-engine-and-model-acquisition` | **done** — merged `3b1e158` (pushed `d6d05d5`). Review pass `004-review.md`; main now **1294 passed** / mypy 0. |
 | **58** | `nemotron-streaming-backend/nemo-speech-batch-adapter` | **done** — merged `50849ef` (pushed `168b112`). Review pass `004-review.md`; the first review caught an **unpinned float32 payload seam** (F1), fixed test-only at `bd66596`. `main` now **1341 passed, 2 skipped** / mypy 0/70. |
 | **59** | `nemotron-streaming-backend/nemo-speech-pure-streaming` | **done** — merged `32078ae` (pushed `c7db405`). Review pass `002-review.md`; additive claim AST-proven, real `.so` instrumented (`opens=1 finishes=1 … finals=1`), all commit-policy guards falsified. `main` now **1374 passed, 3 skipped** / mypy 0/72. |
-| **60** | `nemotron-streaming-backend/nemo-speech-pipeline-wiring` | **to do, M** — composition root + generalise `_streaming_chunk_seconds` + **R1** (measure offline `recognize_f32` vs streaming-drain, then unify `transcribe()` on `stream()` or align the config). **HELD — do not dispatch without user permission.** |
+| **60** | `nemotron-streaming-backend/nemo-speech-pipeline-wiring` | **in progress** — composition root + generalise `_streaming_chunk_seconds` + **R1** (measure offline `recognize_f32` vs streaming-drain, then unify/the-align). |
 | **61** | `nemotron-streaming-backend/nemo-speech-doctor` | **to do, S** — engine/model/device doctor checks. |
 | **62** | `nemotron-streaming-backend/nemo-speech-docs` | **to do, S** — docs + documented limits. |
 
@@ -141,9 +141,8 @@ be carried without a growing buffer or second pass (ADR 0022's falsifier). **No 
 earlier proposed 56–61 integration breakdown was **not** created — the shape is to be derived from
 ticket 56 per the no-assumptions rule.
 
-**HOLD after ticket 59 (user instruction 2026-10-15):** the user authorised **59 only**; after that
-*"do not dispatch more … until I give further permissions"* stands. **Do NOT start ticket 60, 61 or 62**
-without explicit permission. Tickets 60–62 are created and on the board, `to do`.
+**HOLD status (2026-10-15):** the user authorised **59**, then **60**. **Ticket 61 and 62 remain paused** —
+do not start them without explicit permission. (62 depends on 60+61 anyway.)
 
 **R1 (batch/stream text divergence) is owed by ticket 60** and is now written into its ticket: the
 offline `recognize_f32` path returns lowercased/unpunctuated text while `stream()` (flag `True`, the
