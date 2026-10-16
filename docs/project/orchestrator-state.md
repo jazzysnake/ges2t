@@ -79,8 +79,8 @@ are `done`**.
 | **56** | `nemotron-streaming-backend/nemo-pure-streaming-integration` | **done** — merged `252b117`. Design report: `docs/project/research/nemo-pure-streaming-integration/REPORT.md`. Reviewed pass (`004-review.md`; three rounds: B1 `config.py` orphan → N1 cites → R1 ADR-status reconciliation). |
 | **57** | `nemotron-streaming-backend/nemo-speech-engine-and-model-acquisition` | **done** — merged `3b1e158` (pushed `d6d05d5`). Review pass `004-review.md`; main now **1294 passed** / mypy 0. |
 | **58** | `nemotron-streaming-backend/nemo-speech-batch-adapter` | **done** — merged `50849ef` (pushed `168b112`). Review pass `004-review.md`; the first review caught an **unpinned float32 payload seam** (F1), fixed test-only at `bd66596`. `main` now **1341 passed, 2 skipped** / mypy 0/70. |
-| **59** | `nemotron-streaming-backend/nemo-speech-pure-streaming` | **in progress** — `drive_append_only` + `AppendOnlyDecoder`, no window. |
-| **60** | `nemotron-streaming-backend/nemo-speech-pipeline-wiring` | **to do, M** — composition root + generalise `_streaming_chunk_seconds`. 59+60 ship together. |
+| **59** | `nemotron-streaming-backend/nemo-speech-pure-streaming` | **done** — merged `32078ae` (pushed `c7db405`). Review pass `002-review.md`; additive claim AST-proven, real `.so` instrumented (`opens=1 finishes=1 … finals=1`), all commit-policy guards falsified. `main` now **1374 passed, 3 skipped** / mypy 0/72. |
+| **60** | `nemotron-streaming-backend/nemo-speech-pipeline-wiring` | **to do, M** — composition root + generalise `_streaming_chunk_seconds` + **R1** (measure offline `recognize_f32` vs streaming-drain, then unify `transcribe()` on `stream()` or align the config). **HELD — do not dispatch without user permission.** |
 | **61** | `nemotron-streaming-backend/nemo-speech-doctor` | **to do, S** — engine/model/device doctor checks. |
 | **62** | `nemotron-streaming-backend/nemo-speech-docs` | **to do, S** — docs + documented limits. |
 
@@ -141,9 +141,16 @@ be carried without a growing buffer or second pass (ADR 0022's falsifier). **No 
 earlier proposed 56–61 integration breakdown was **not** created — the shape is to be derived from
 ticket 56 per the no-assumptions rule.
 
-**HOLD lifted for ticket 59 only (user permission 2026-10-15):** the user said *"can you please
-dispatch the next ticket? (59)"*, so **59 is dispatched**. **Ticket 61 remains paused** — do not start it,
-or 60/62, without explicit permission. Tickets 60–62 are created and on the board, `to do`.
+**HOLD after ticket 59 (user instruction 2026-10-15):** the user authorised **59 only**; after that
+*"do not dispatch more … until I give further permissions"* stands. **Do NOT start ticket 60, 61 or 62**
+without explicit permission. Tickets 60–62 are created and on the board, `to do`.
+
+**R1 (batch/stream text divergence) is owed by ticket 60** and is now written into its ticket: the
+offline `recognize_f32` path returns lowercased/unpunctuated text while `stream()` (flag `True`, the
+measured config) returns punctuated/capitalised text. Ticket 60 must **measure** offline vs
+streaming-drained-to-final on the reference clips first, then either reimplement `transcribe()` as a
+drain of `stream()` (one path — the user's suggestion) or align the two configurations, on the evidence.
+Whenever 60 is dispatched, **fold that measurement into it** — do not decide without the numbers.
 
 **Ticket 56 is DONE and merged** (`252b117`). On a pass it delivered the design and the breakdown; the
 user then asked to **split the old combined ticket 60**, so the board now carries **57–62** (see the
