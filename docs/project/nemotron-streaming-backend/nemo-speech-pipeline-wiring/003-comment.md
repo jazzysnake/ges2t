@@ -21,14 +21,18 @@ $ sha256sum src/ges2t/pipeline.py src/ges2t/transcribers/nemo_speech.py
 684ebc7cde99cb3b6eb4cdc976fad33cef3c6f26456ad60b31c7ed10e72b06ee  src/ges2t/transcribers/nemo_speech.py
 ```
 
-Both match the recorded prefixes `pipeline.py 055c44c7…`, `nemo_speech.py 684ebc7c…`. Only these files
-are modified in this pass:
+Both match the recorded prefixes `pipeline.py 055c44c7…`, `nemo_speech.py 684ebc7c…`. The only files
+this pass touches are the three documentation artifacts; the final branch state is:
 
 ```
+$ git diff --name-only 8ca6641..HEAD
+docs/project/nemotron-streaming-backend/nemo-speech-pipeline-wiring/001-comment.md
+docs/project/nemotron-streaming-backend/nemo-speech-pipeline-wiring/003-comment.md
+docs/project/nemotron-streaming-backend/nemo-speech-pipeline-wiring/measure_r1.py
+$ git diff --name-only 8ca6641..HEAD -- src/ tests/
+(empty)
 $ git status --short
- M docs/project/nemotron-streaming-backend/nemo-speech-pipeline-wiring/001-comment.md
- M docs/project/nemotron-streaming-backend/nemo-speech-pipeline-wiring/measure_r1.py
-?? docs/project/nemotron-streaming-backend/nemo-speech-pipeline-wiring/003-comment.md
+(empty)
 ```
 
 <!-- appended incrementally as work proceeds -->
@@ -243,8 +247,8 @@ $ <docs link check §10>
 ```
 
 `1386 passed` matches the comment's final count (the runtime differs run-to-run; the count does not).
-The link check covers the new `003-comment.md` and the edited `001-comment.md`. `git status` is clean
-except this pass's three documentation files, all committed on the branch.
+The link check covers the new `003-comment.md` and the edited `001-comment.md`. `git status --short` is
+empty after the commits.
 
 ## Status
 
