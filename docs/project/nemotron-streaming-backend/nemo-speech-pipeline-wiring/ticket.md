@@ -1,7 +1,7 @@
 # Nemotron pipeline wiring (composition root)
 
 - **Priority:** P1
-- **Status:** in review
+- **Status:** done
 - **Complexity:** M
 - **Epic:** ../epic.md
 
